@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goalcoach"
+version = "0.1.0"
+description = "Adaptive agentic learning coach for HSK Chinese"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "pydantic>=2.8,<3",
+  "pydantic-settings>=2.4,<3",
+  "uvicorn[standard]>=0.30,<1",
+]
+
+[project.optional-dependencies]
+web = ["httpx>=0.27,<1", "streamlit>=1.37,<2"]
+ai = ["openai>=1.40,<2"]
+retrieval = ["chromadb>=0.5,<1"]
+workflow = ["langgraph>=0.2,<1"]
+dev = [
+  "httpx>=0.27,<1",
+  "pytest>=8.2,<9",
+  "pytest-asyncio>=0.23,<1",
+  "ruff>=0.6,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
