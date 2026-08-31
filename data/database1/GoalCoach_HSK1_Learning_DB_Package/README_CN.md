@@ -1,4 +1,4 @@
-# GoalCoach HSK1 学习内容数据库（SQLite）
+# GoalCoach HSK1 学习内容数据库（SQLite + SQLAlchemy）
 
 ## 为什么从 PostgreSQL 改成 SQLite
 
@@ -10,6 +10,12 @@
 
 - `goalcoach_hsk1_learning.db`：已经建好并填充数据，可直接接入 Python。
 - `goalcoach_hsk1_learning_db_sqlite.sql`：完整 schema + seed data，可重新生成数据库。
+
+项目中的默认位置是：
+
+```text
+data/database1/goalcoach_hsk1_learning.db
+```
 
 ## 表
 
@@ -40,6 +46,7 @@ repository = ContentRepository(session_factory)
 concepts = repository.list_concepts()
 cards = repository.get_teaching_cards("hsk1_c04")
 exercises = repository.get_exercises("hsk1_c04", limit=3)
+remedial = repository.get_remedial_exercises("word_order", limit=5)
 ```
 
 ## JSON 字段
@@ -75,6 +82,18 @@ WHERE EXISTS (
 )
 ORDER BY RANDOM()
 LIMIT 5;
+```
+
+应用代码使用：
+
+```python
+remedial = repository.get_remedial_exercises("word_order", limit=5)
+```
+
+## 测试
+
+```bash
+pytest tests/integration/test_content_repository.py -q
 ```
 
 ## 当前职责

@@ -143,6 +143,8 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 cp .env.example .env
+sqlite3 data/database1/goalcoach_hsk1_learning.db \
+  < data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
 pytest
 uvicorn apps.api.main:app --reload
 ```
@@ -153,11 +155,19 @@ In another terminal, the placeholder client can be started with:
 streamlit run apps/web/app.py
 ```
 
-The API currently exposes health and interface-level placeholder endpoints. Features that require an LLM or persistence adapter intentionally return `501` until wired. Background-work interfaces are separated from the synchronous answer path so integration cannot accidentally create the latency-heavy sequential agent chain warned about in the review.
+Database #1 structured content is available through the SQLAlchemy `ContentRepository`, with
+typed mappings for concepts, teaching cards, exercises, prerequisites, and JSON fields. The API
+still exposes health and interface-level placeholder endpoints: learner-state persistence and the
+complete learning loop are not wired yet, so those endpoints intentionally return `501`.
+Background-work interfaces are separated from the synchronous answer path so integration cannot
+accidentally create the latency-heavy sequential agent chain warned about in the review.
 
 ## Configuration
 
-See [`.env.example`](.env.example). The LLM interface is OpenAI-compatible so a hosted gateway and local Ollama can share the same adapter.
+See [`.env.example`](.env.example). `GOALCOACH_CONTENT_DATABASE_URL` configures Database #1;
+its default is `sqlite:///./data/database1/goalcoach_hsk1_learning.db`. The separate
+`GOALCOACH_DATABASE_URL` is reserved for learner-state persistence. The LLM interface is
+OpenAI-compatible so a hosted gateway and local Ollama can share the same adapter.
 
 The senior verdict recommends OpenRouter for hosted model experimentation and Ollama with Gemma/Qwen as the local fallback. The supplementary review asks the team to confirm OpenRouter versus Bedrock with the mentor, so this remains `TODO(decision)` rather than being silently fixed. Regardless of provider, adapters must remain OpenAI-compatible and configuration-driven.
 

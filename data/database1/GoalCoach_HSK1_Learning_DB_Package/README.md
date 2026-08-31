@@ -1,4 +1,4 @@
-# GoalCoach HSK1 Learning Content Database (SQLite)
+# GoalCoach HSK1 Learning Content Database (SQLite + SQLAlchemy)
 
 ## 1. Purpose
 
@@ -27,12 +27,13 @@ Put it in your project, for example:
 ```text
 GoalCoach/
 ├── data/
-│   └── goalcoach_hsk1_learning.db
+│   └── database1/
+│       └── goalcoach_hsk1_learning.db
 ├── src/
 └── README.md
 ```
 
-Your Python application can connect to this file directly.
+GoalCoach accesses this file through the SQLAlchemy content repository.
 
 ### Recommended to keep in the GitHub repository
 
@@ -61,7 +62,7 @@ SQLite is a good fit for the current HSK1 MVP because:
 - the entire database is stored in one file;
 - it is easy for all team members to run locally;
 - the current dataset is small;
-- Python has built-in SQLite support through `sqlite3`;
+- SQLAlchemy provides a typed ORM and repository layer while retaining SQLite;
 - it keeps the MVP architecture simple.
 
 PostgreSQL can be introduced later if GoalCoach needs a production database server, higher concurrency, or more complex deployment.
@@ -261,32 +262,38 @@ This retrieves three exercises for the `吗` knowledge point.
 
 ---
 
-## 7. Connecting from Python
+## 7. Connecting from Python with SQLAlchemy
 
-Python includes SQLite support, so no additional database package is required for the basic version.
+Install the project dependencies first:
 
-```python
-import sqlite3
-
-conn = sqlite3.connect("data/goalcoach_hsk1_learning.db")
-conn.row_factory = sqlite3.Row
-
-exercises = conn.execute(
-    '''
-    SELECT *
-    FROM v_exercise_bank
-    WHERE concept_id = ?
-    ORDER BY RANDOM()
-    LIMIT 3
-    ''',
-    ("hsk1_c04",),
-).fetchall()
-
-for exercise in exercises:
-    print(dict(exercise))
+```bash
+pip install -e '.[dev]'
 ```
 
-Use parameterized queries (`?`) rather than inserting user input directly into SQL strings.
+Use the configured session factory and content repository:
+
+```python
+from goalcoach.infrastructure.config import Settings
+from goalcoach.infrastructure.persistence import (
+    ContentRepository,
+    create_session_factory,
+)
+
+settings = Settings()
+session_factory = create_session_factory(settings.content_database_url)
+repository = ContentRepository(session_factory)
+
+concepts = repository.list_concepts()
+cards = repository.get_teaching_cards("hsk1_c04")
+exercises = repository.get_exercises("hsk1_c04", limit=3)
+remedial = repository.get_remedial_exercises("word_order", limit=5)
+
+for exercise in exercises:
+    print(exercise.prompt, exercise.answer)
+```
+
+The repository builds parameterized SQLAlchemy statements; callers should pass values to its
+methods rather than constructing SQL strings.
 
 ---
 
@@ -306,13 +313,11 @@ Examples include:
 - `metadata`
 - `payload`
 
-Parse them in Python with `json.loads()`:
+The SQLAlchemy `JSON` mapping automatically converts them to Python dictionaries and lists:
 
 ```python
-import json
-
-answer = json.loads(exercise["answer"])
-target_tokens = json.loads(exercise["target_tokens"])
+answer = exercises[0].answer
+target_tokens = exercises[0].target_tokens
 ```
 
 ---
@@ -336,6 +341,12 @@ LIMIT 5;
 ```
 
 This allows GoalCoach to select targeted remedial practice without vector search.
+
+The equivalent application-level call is:
+
+```python
+exercises = repository.get_remedial_exercises("word_order", limit=5)
+```
 
 ---
 
@@ -412,14 +423,17 @@ It can then update the learner's mastery, retention, error profile, and review s
 
 If the `.db` file needs to be recreated, use the SQL file:
 
+From the GoalCoach repository root:
+
 ```bash
-sqlite3 goalcoach_hsk1_learning.db < goalcoach_hsk1_learning_db_sqlite.sql
+sqlite3 data/database1/goalcoach_hsk1_learning.db \
+  < data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
 ```
 
 You can then inspect the database:
 
 ```bash
-sqlite3 goalcoach_hsk1_learning.db
+sqlite3 data/database1/goalcoach_hsk1_learning.db
 ```
 
 Inside SQLite:
@@ -455,6 +469,12 @@ Exit:
 
 ```text
 .quit
+```
+
+Run the SQLAlchemy integration tests:
+
+```bash
+pytest tests/integration/test_content_repository.py -q
 ```
 
 ---
