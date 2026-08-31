@@ -1,6 +1,6 @@
-"""Persistence adapters.
+"""SQLAlchemy persistence adapters."""
 
-SQLite is the MVP system of record for learner, curriculum, mastery, retention, errors,
-review schedule, plans, and sessions. TODO(interface): implement LearnerRepository and
-ExerciseRepository, migrations, transactions, and multi-session integration tests.
-"""
+from goalcoach.infrastructure.persistence.database import create_session_factory
+from goalcoach.infrastructure.persistence.repositories import ContentRepository
+
+__all__ = ["ContentRepository", "create_session_factory"]
