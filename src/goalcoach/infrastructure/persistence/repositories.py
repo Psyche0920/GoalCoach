@@ -58,9 +58,7 @@ class ContentRepository:
         with self._session_factory() as session:
             return list(session.scalars(statement))
 
-    def get_remedial_exercises(
-        self, error_tag: str, *, limit: int = 5
-    ) -> list[ContentExercise]:
+    def get_remedial_exercises(self, error_tag: str, *, limit: int = 5) -> list[ContentExercise]:
         error_tags = func.json_each(ContentExercise.error_tags).table_valued("key", "value")
         statement = (
             select(ContentExercise)

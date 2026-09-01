@@ -81,7 +81,7 @@ apps/
   web/                 Streamlit MVP client
 src/goalcoach/
   domain/              Stable Pydantic models and enums
-  application/         Use cases and workflow orchestration
+  ui/                  Workflow orchestration and application interfaces
   agents/
     goal_planning.py   Goal Planning Agent
     progress_mastery.py Progress & Mastery Agent
@@ -119,7 +119,7 @@ The initial contracts live in [`src/goalcoach/domain/models.py`](src/goalcoach/d
 
 Protocols in [`src/goalcoach/agents/interfaces.py`](src/goalcoach/agents/interfaces.py) allow each team member to build an adapter without coupling the core to a particular model, database, or framework.
 
-The Workflow Orchestrator is located in [`src/goalcoach/application/orchestrator.py`](src/goalcoach/application/orchestrator.py), not under `agents/`, because the proposal explicitly defines it as a deterministic controller rather than an LLM reasoning agent.
+The Workflow Orchestrator is located in [`src/goalcoach/ui/orchestrator.py`](src/goalcoach/ui/orchestrator.py), not under `agents/`, because the proposal explicitly defines it as a deterministic controller rather than an LLM reasoning agent.
 
 ## Progress and grading
 
