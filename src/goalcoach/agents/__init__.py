@@ -1,6 +1,6 @@
 """Named GoalCoach components from the project proposal.
 
-The orchestrator lives in ``goalcoach.application`` because it is a deterministic
+The orchestrator lives in ``goalcoach.ui`` because it is a deterministic
 controller, not an LLM agent.
 """
 

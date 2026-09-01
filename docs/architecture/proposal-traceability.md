@@ -4,9 +4,9 @@ This matrix makes the Senior AI Engineering Review actionable. “Planned” mea
 
 | Senior-review verdict | Project response | Status / location |
 |---|---|---|
-| Deterministic top-level routing | Plain Python priority router | Implemented in `application/orchestrator.py` |
+| Deterministic top-level routing | Plain Python priority router | Implemented in `ui/orchestrator.py` |
 | Explicit specialized components | Named Goal Planning, Progress & Mastery, Retrieval, Teaching, and Grader modules | Scaffolded in `agents/` |
-| Avoid sequential agent/LLM latency | Short answer path plus background state-update boundary | Contract in `application/interfaces.py`; integration TODO |
+| Avoid sequential agent/LLM latency | Short answer path plus background state-update boundary | Contract in `ui/interfaces.py`; integration TODO |
 | Interfaces first | Strict Pydantic domain contracts and Protocols | Implemented in `domain/models.py` and `agents/interfaces.py` |
 | FastAPI + Pydantic v2 | API composition root and strict dependency versions | Scaffolded in `apps/api` and `pyproject.toml` |
 | SQLite for durable learner state | Dedicated persistence adapter boundary | Content repository implemented with SQLAlchemy; learner-state repository planned |
