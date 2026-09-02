@@ -10,9 +10,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
+  "httpx>=0.28.1",
   "pydantic>=2.8,<3",
   "pydantic-settings>=2.4,<3",
   "sqlalchemy>=2.0,<3",
+  "streamlit>=1.62.0",
   "uvicorn[standard]>=0.30,<1",
 ]
 

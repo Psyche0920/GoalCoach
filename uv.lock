@@ -733,6 +733,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy" },
+    { name = "streamlit" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -761,7 +762,7 @@ workflow = [
 requires-dist = [
     { name = "chromadb", marker = "extra == 'retrieval'", specifier = ">=0.5,<1" },
     { name = "fastapi", specifier = ">=0.115,<1" },
-    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27,<1" },
     { name = "httpx", marker = "extra == 'web'", specifier = ">=0.27,<1" },
     { name = "langgraph", marker = "extra == 'workflow'", specifier = ">=0.2,<1" },
@@ -772,6 +773,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23,<1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6,<1" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
+    { name = "streamlit", specifier = ">=1.62.0" },
     { name = "streamlit", marker = "extra == 'web'", specifier = ">=1.37,<2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
 ]
