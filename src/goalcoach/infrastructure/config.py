@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str = "sqlite:///./goalcoach.db"
     content_database_url: str = "sqlite:///./data/database1/goalcoach_hsk1_learning.db"
+    planning_item_minutes: int = Field(default=5, gt=0, le=120)
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None

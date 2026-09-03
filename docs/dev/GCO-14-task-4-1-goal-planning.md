@@ -63,13 +63,11 @@ The tests verify:
 | [GCO-14](https://psyche97.atlassian.net/browse/GCO-14) | Parent Goal Planning task | Partial / In Progress |
 | [GCO-62](https://psyche97.atlassian.net/browse/GCO-62) | Process learning goal | Complete |
 | [GCO-64](https://psyche97.atlassian.net/browse/GCO-64) | Generate learning plan | Complete |
-| [GCO-63](https://psyche97.atlassian.net/browse/GCO-63) | Select learning concepts | Partially complete |
+| [GCO-63](https://psyche97.atlassian.net/browse/GCO-63) | Select learning concepts | Complete |
 | [GCO-67](https://psyche97.atlassian.net/browse/GCO-67) | Read learner state | Planner-level consumption only |
 
 ## Not included / follow-up work
 
-- Read concept metadata and prerequisite relationships from the curriculum repository.
-- Enforce prerequisite-aware selection before marking GCO-63 complete.
 - Load `LearnerState` through the learner repository and persist the generated plan in the application integration layer.
 - Validate the `0.60` remedial threshold and five-minute default item duration with the team or empirical evaluation.
 - Complete integration tests for the database-to-planner workflow.

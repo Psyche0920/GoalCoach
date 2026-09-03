@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -11,8 +11,7 @@ from goalcoach.domain.models import (
     LearningGoal,
 )
 
-
-NOW = datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
 
 
 def make_goal(minutes: int = 20) -> LearningGoal:
@@ -73,9 +72,7 @@ async def test_plan_orders_review_remedial_and_new() -> None:
     assert plan.items[2].concept_id == "hsk1_c03"
     assert plan.items[2].kind == PlanItemKind.NEW
 
-    assert sum(
-        item.estimated_minutes for item in plan.items
-    ) == 15
+    assert sum(item.estimated_minutes for item in plan.items) == 15
 
 
 @pytest.mark.asyncio
@@ -95,10 +92,7 @@ async def test_new_learner_starts_from_first_concept() -> None:
         "hsk1_c02",
     ]
 
-    assert all(
-        item.kind == PlanItemKind.NEW
-        for item in plan.items
-    )
+    assert all(item.kind == PlanItemKind.NEW for item in plan.items)
 
 
 @pytest.mark.asyncio
@@ -113,9 +107,7 @@ async def test_plan_does_not_exceed_available_time() -> None:
 
     plan = await planner.create_plan(state)
 
-    assert sum(
-        item.estimated_minutes for item in plan.items
-    ) == 7
+    assert sum(item.estimated_minutes for item in plan.items) == 7
 
     assert plan.items[0].estimated_minutes == 5
     assert plan.items[1].estimated_minutes == 2
@@ -145,9 +137,7 @@ async def test_due_concept_is_not_duplicated_as_remedial() -> None:
 
     plan = await planner.create_plan(state)
 
-    concept_ids = [
-        item.concept_id for item in plan.items
-    ]
+    concept_ids = [item.concept_id for item in plan.items]
 
     assert concept_ids.count("hsk1_c01") == 1
     assert plan.items[0].kind == PlanItemKind.REVIEW
@@ -166,3 +156,72 @@ async def test_missing_goal_raises_error() -> None:
         match="LearningGoal is required",
     ):
         await planner.create_plan(state)
+
+
+@pytest.mark.asyncio
+async def test_new_concept_is_blocked_until_prerequisite_is_mastered() -> None:
+    state = LearnerState(goal=make_goal(10))
+    planner = DeterministicGoalPlanner(
+        concept_ids=("hsk1_c01", "hsk1_c02"),
+        prerequisites={"hsk1_c02": {"hsk1_c01"}},
+        now_provider=lambda: NOW,
+    )
+
+    plan = await planner.create_plan(state)
+
+    assert [item.concept_id for item in plan.items] == ["hsk1_c01"]
+
+
+@pytest.mark.asyncio
+async def test_mastered_prerequisite_unlocks_new_concept() -> None:
+    prerequisite = ConceptMastery(
+        concept_id="hsk1_c01",
+        mastery_score=0.60,
+        evidence_count=1,
+        next_review_at=NOW + timedelta(days=1),
+    )
+    state = LearnerState(
+        goal=make_goal(5),
+        mastery={prerequisite.concept_id: prerequisite},
+    )
+    planner = DeterministicGoalPlanner(
+        concept_ids=("hsk1_c01", "hsk1_c02"),
+        prerequisites={"hsk1_c02": {"hsk1_c01"}},
+        now_provider=lambda: NOW,
+    )
+
+    plan = await planner.create_plan(state)
+
+    assert plan.items[0].concept_id == "hsk1_c02"
+    assert plan.items[0].kind == PlanItemKind.NEW
+
+
+@pytest.mark.asyncio
+async def test_prerequisite_requires_evidence_and_threshold_mastery() -> None:
+    prerequisite = ConceptMastery(
+        concept_id="hsk1_c01",
+        mastery_score=0.59,
+        evidence_count=1,
+        next_review_at=NOW + timedelta(days=1),
+    )
+    state = LearnerState(
+        goal=make_goal(5),
+        mastery={prerequisite.concept_id: prerequisite},
+    )
+    planner = DeterministicGoalPlanner(
+        concept_ids=("hsk1_c01", "hsk1_c02"),
+        prerequisites={"hsk1_c02": {"hsk1_c01"}},
+        now_provider=lambda: NOW,
+    )
+
+    plan = await planner.create_plan(state)
+
+    assert all(item.concept_id != "hsk1_c02" for item in plan.items)
+
+
+def test_prerequisites_must_reference_known_curriculum_concepts() -> None:
+    with pytest.raises(ValueError, match="unknown concept_ids"):
+        DeterministicGoalPlanner(
+            concept_ids=("hsk1_c01",),
+            prerequisites={"hsk1_c02": {"hsk1_c01"}},
+        )
