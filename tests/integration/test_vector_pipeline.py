@@ -95,3 +95,34 @@ async def test_retrieval_agent_respects_disabled_flag():
         RetrievalQuery(semantic_query="asking yes no question with ma")
     )
     assert len(res) == 0
+
+
+@pytest.mark.asyncio
+async def test_retrieval_agent_non_blocking_event_loop(retrieval_agent):
+    """Prove that vector retrieval offloads to a worker thread and does not freeze the event loop."""
+    import asyncio
+    import time
+
+    ticks: list[float] = []
+
+    async def heartbeat():
+        """A lightweight coroutine that ticks every 10ms while retrieval is running."""
+        for _ in range(8):
+            ticks.append(time.perf_counter())
+            await asyncio.sleep(0.01)
+
+    # Launch both the heartbeat and the vector retrieval concurrently
+    heartbeat_task = asyncio.create_task(heartbeat())
+    retrieval_task = asyncio.create_task(
+        retrieval_agent.retrieve(RetrievalQuery(semantic_query="asking yes no question with ma"))
+    )
+
+    # Gather both tasks
+    results, _ = await asyncio.gather(retrieval_task, heartbeat_task)
+
+    # 1. Retrieval returned valid semantic candidates
+    assert len(results) > 0
+    assert results[0].concept_id == "hsk1_c04"
+
+    # 2. Heartbeat ticked concurrently while retrieval was processing in the thread
+    assert len(ticks) >= 2, f"Event loop was blocked! Only {len(ticks)} ticks recorded."

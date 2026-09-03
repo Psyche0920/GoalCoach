@@ -13,3 +13,4 @@ build/
 .DS_Store
 # Dev docs
 docs/dev/
+data/database2/chroma_db/*/

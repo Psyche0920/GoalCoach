@@ -62,6 +62,27 @@ class CurriculumVectorStore:
         if self.sqlite_path.exists():
             return self.sqlite_path
 
+        # If .db is missing (e.g. freshly cloned repo), bootstrap from raw SQL seed package
+        sql_seed = (
+            self.base_dir
+            / "data"
+            / "database1"
+            / "GoalCoach_HSK1_Learning_DB_Package"
+            / "data"
+            / "goalcoach_hsk1_learning_db_sqlite.sql"
+        )
+        if sql_seed.exists():
+            logger.info(
+                "SQLite DB missing at %s. Bootstrapping from SQL seed: %s",
+                self.sqlite_path,
+                sql_seed,
+            )
+            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(str(self.sqlite_path)) as conn:
+                conn.executescript(sql_seed.read_text(encoding="utf-8"))
+            logger.info("Successfully bootstrapped SQLite database at %s", self.sqlite_path)
+            return self.sqlite_path
+
         raise FileNotFoundError(f"Curriculum SQLite DB not found at: {self.sqlite_path}")
 
     def fetch_cards(self, db_path: Path) -> list[tuple[Any, ...]]:
