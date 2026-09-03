@@ -2,179 +2,91 @@
 
 ## Summary
 
-This work completes prerequisite-aware concept selection and connects deterministic daily-plan generation to learner-state persistence.
+This document records the second implementation phase of **GCO-14 (Goal Planning)**. Its scope is GCO-63 and GCO-67: selecting prerequisite-safe learning concepts and reading the current learner state through the repository boundary.
 
-The application now reads the current `LearnerState`, generates a prerequisite-safe `DailyPlan`, assigns the plan to a copied learner aggregate, and atomically persists the updated state. Planning remains deterministic and does not invoke an LLM.
+This phase also completes the orchestrator handoff requested during review. The generated `DailyPlan` is assigned to a copied `LearnerState.active_plan` and atomically persisted without mutating the state supplied to the planner.
 
----
+The initial goal-processing and deterministic-plan-generation work is documented in [`GCO-62-GCO-64-goal-planning-core.md`](GCO-62-GCO-64-goal-planning-core.md).
 
-## Scope completed
+## What changed
 
-### GCO-63: Prerequisite-aware concept selection
+- Added prerequisite-aware selection for `NEW` concepts:
+  - loads all 18 prerequisite relationships from `goalcoach_hsk1_learning.db`;
+  - requires every prerequisite to exist in `state.mastery`;
+  - requires mastery evidence before a prerequisite is accepted;
+  - requires prerequisite mastery to meet the configured threshold;
+  - rejects unknown concepts and self-dependencies during planner construction.
+- Preserved deterministic plan-item prioritization:
+  1. `REVIEW` - concepts whose scheduled review is due.
+  2. `REMEDIAL` - studied concepts below the remedial threshold.
+  3. `NEW` - unseen concepts whose prerequisites are satisfied.
+- Added `SqlAlchemyLearnerRepository` for validated learner-state reads and atomic snapshot persistence.
+- Added `PlanningOrchestrator` to perform:
 
-When the planner selects a `NEW` concept, it now checks the prerequisite relationships stored in `goalcoach_hsk1_learning.db`.
+  ```text
+  Load LearnerState -> Create DailyPlan -> Copy state -> Assign active_plan -> Save state
+  ```
 
-A new concept is eligible only when every required prerequisite:
+- Added FastAPI dependency assembly and endpoints for reading learner state and generating plans.
+- Made the planning item duration configurable through `GOALCOACH_PLANNING_ITEM_MINUTES`.
+- Added unit and integration tests for prerequisites, configuration, orchestration, and persistence.
+- Removed temporary Chinese learning comments after the implementation was understood; business behavior was unchanged by that cleanup.
 
-- exists in `LearnerState.mastery`;
-- has at least one item of learning evidence;
-- meets the configured mastery threshold.
+## Design decisions
 
-Invalid prerequisite configuration, including unknown concepts and self-dependencies, fails fast during planner construction.
-
-The existing planning priority remains:
-
-```text
-REVIEW -> REMEDIAL -> NEW
-```
-
-### GCO-67: Learner-state read and persistence handoff
-
-The planner continues to treat its input `LearnerState` as read-only. The application-level orchestrator now owns the state transition:
-
-```text
-Load LearnerState
-    -> Create DailyPlan
-    -> Deep-copy LearnerState
-    -> Assign active_plan
-    -> Update updated_at
-    -> Persist the complete aggregate
-```
-
-The original state object is not mutated.
-
-### Configurable planning item duration
-
-The previous fixed five-minute allocation is now supplied through application settings:
-
-```text
-GOALCOACH_PLANNING_ITEM_MINUTES=5
-```
-
-The default remains five minutes, while deployments and tests can provide a different validated value.
-
----
-
-## Architecture and design decisions
-
-- **Deterministic planning:** prerequisite checks, prioritization, and time allocation are implemented as rules rather than LLM calls.
-- **Dependency injection:** prerequisite data and item duration are injected into `DeterministicGoalPlanner` at application startup.
-- **Domain immutability:** `PlanningOrchestrator` creates a deep copy before assigning `active_plan`.
-- **Repository boundary:** orchestration depends on the `LearnerRepository` protocol rather than SQLAlchemy directly.
-- **Boundary validation:** persisted JSON is rebuilt through `LearnerState.model_validate()` when loaded.
-- **Atomic persistence:** a learner snapshot and its timestamp are inserted or updated in one SQLAlchemy transaction.
-- **Resource cleanup:** application lifespan management disposes both database engines during shutdown.
-- **Failure translation:** persistence failures are exposed through `LearnerRepositoryError`; the API maps missing learners to HTTP 404 and storage failures to HTTP 503.
-
-### Trade-offs
-
-- Learner state is stored as one complete JSON snapshot. This makes aggregate replacement simple and atomic, but is less suitable for querying individual nested fields.
-- The current SQLAlchemy driver is synchronous, so learner repository calls use `asyncio.to_thread()` to avoid blocking the FastAPI event loop. A native asynchronous driver may be preferable at higher concurrency.
-- A single save is atomic, but the complete read-plan-save sequence does not yet use optimistic locking. Concurrent updates to the same learner could overwrite each other.
-
----
+- Planning remains deterministic and does not call an LLM.
+- `DeterministicGoalPlanner` receives prerequisite data and item duration through dependency injection.
+- The planner consumes `LearnerState` without loading, saving, or mutating it.
+- `PlanningOrchestrator` owns the application-level read-plan-save workflow.
+- The orchestrator uses `model_copy(deep=True)` before assigning `active_plan`.
+- Persistence is accessed through the `LearnerRepository` protocol rather than directly from planning code.
+- Learner state is stored as a complete JSON snapshot and validated with Pydantic when loaded.
+- A single repository save uses one SQLAlchemy transaction and therefore commits or rolls back as a unit.
+- Synchronous SQLAlchemy operations run through `asyncio.to_thread()` so they do not block the FastAPI event loop.
+- FastAPI lifespan management creates shared dependencies at startup and disposes database engines at shutdown.
 
 ## Files changed
 
-### Planning
-
-- `src/goalcoach/agents/goal_planning.py`
-  - validates prerequisite configuration;
-  - filters infeasible `NEW` concepts;
-  - accepts configurable item duration and mastery thresholds.
-
-### Persistence
-
-- `src/goalcoach/infrastructure/persistence/models.py`
-  - defines `LearnerStateRecord` for complete learner-state snapshots.
-- `src/goalcoach/infrastructure/persistence/repositories.py`
-  - adds curriculum prerequisite lookup;
-  - implements learner-state load and atomic save operations;
-  - translates SQLAlchemy and Pydantic failures into a repository-specific exception.
-- `src/goalcoach/infrastructure/persistence/database.py`
-  - exposes the bound engine;
-  - creates only the learner-state table in the learner database.
-- `src/goalcoach/infrastructure/persistence/__init__.py`
-  - exports the persistence components used by the application.
-
-### Application integration
-
-- `src/goalcoach/ui/orchestrator.py`
-  - coordinates read, plan, copy, and save operations.
-- `apps/api/main.py`
-  - builds repositories and the planner during application startup;
-  - injects prerequisite data from the content database;
-  - exposes learner retrieval and daily-plan generation endpoints;
-  - disposes database engines during shutdown.
-
-### Configuration
-
-- `src/goalcoach/infrastructure/config.py`
-  - adds validated `planning_item_minutes` configuration.
 - `.env.example`
-  - documents `GOALCOACH_PLANNING_ITEM_MINUTES`.
-
-### Tests
-
-- `tests/unit/test_goal_planning.py`
-- `tests/unit/test_orchestrator.py`
-- `tests/unit/test_config.py`
+- `apps/api/main.py`
+- `src/goalcoach/agents/goal_planning.py`
+- `src/goalcoach/infrastructure/config.py`
+- `src/goalcoach/infrastructure/persistence/__init__.py`
+- `src/goalcoach/infrastructure/persistence/database.py`
+- `src/goalcoach/infrastructure/persistence/models.py`
+- `src/goalcoach/infrastructure/persistence/repositories.py`
+- `src/goalcoach/ui/orchestrator.py`
 - `tests/integration/test_content_repository.py`
 - `tests/integration/test_learner_repository.py`
+- `tests/unit/test_config.py`
+- `tests/unit/test_goal_planning.py`
+- `tests/unit/test_orchestrator.py`
 
----
-
-## API behavior
-
-### Read learner state
-
-```text
-GET /api/v1/learners/{learner_id}
-```
-
-- returns the validated learner state when found;
-- returns `404` when the learner does not exist;
-- returns `503` when persistence is unavailable.
-
-### Generate and persist a daily plan
-
-```text
-POST /api/v1/learners/{learner_id}/plans
-```
-
-- loads the learner state;
-- creates a deterministic prerequisite-aware plan;
-- persists the plan in `state.active_plan`;
-- returns the generated plan with HTTP `201`.
-
----
-
-## Verification
-
-Run the complete test suite:
+## Tests
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-Verified result:
+Result:
 
 ```text
 58 passed
 ```
 
-Run focused tests:
+The tests verify:
 
-```bash
-.venv/bin/python -m pytest \
-  tests/unit/test_goal_planning.py \
-  tests/unit/test_orchestrator.py \
-  tests/unit/test_config.py \
-  tests/integration/test_content_repository.py \
-  tests/integration/test_learner_repository.py -v
-```
+- all 18 prerequisite relationships are loaded from the content database;
+- a new concept remains blocked until its prerequisites have evidence and sufficient mastery;
+- invalid prerequisite configuration fails fast;
+- configurable item duration is validated and injected into the planner;
+- the orchestrator assigns the plan to a copied learner state;
+- the original learner state remains unmodified;
+- learner snapshots survive database round trips and replace the previous snapshot;
+- an unknown learner produces the expected application error;
+- the existing `REVIEW -> REMEDIAL -> NEW` behavior remains intact.
 
-Run static checks for the implementation files:
+Static verification:
 
 ```bash
 .venv/bin/python -m ruff check \
@@ -185,21 +97,50 @@ Run static checks for the implementation files:
   src/goalcoach/ui/orchestrator.py
 ```
 
----
+Result:
 
-## Completion status
+```text
+All checks passed!
+```
 
-| Work item | Result |
-|---|---|
-| GCO-63 prerequisite checking | Complete |
-| GCO-67 learner-state repository read | Complete |
-| Orchestrator persistence handoff | Complete |
-| Configurable item duration | Complete |
-| Zero-LLM deterministic planning | Preserved |
-| Input `LearnerState` mutation | None |
+## Jira scope
 
-## Remaining engineering work
+| Issue | Scope in this phase | Status |
+|---|---|---|
+| [GCO-14](https://psyche97.atlassian.net/browse/GCO-14) | Parent Goal Planning task | Complete across both phases |
+| [GCO-63](https://psyche97.atlassian.net/browse/GCO-63) | Prerequisite-aware concept selection | Complete |
+| [GCO-67](https://psyche97.atlassian.net/browse/GCO-67) | Read learner state | Complete |
+| Orchestrator handoff | Assign and persist `active_plan` | Complete |
+| Configurable item duration | Replace fixed five-minute allocation | Complete |
 
-- Add optimistic concurrency control before multiple requests can update the same learner concurrently.
-- Connect the answer, grading, mastery-update, and re-planning loop.
-- Validate planning thresholds and duration defaults with product evidence.
+## Not included / follow-up work
+
+- Add optimistic concurrency control before multiple requests update the same learner simultaneously.
+- Connect the answer, grading, mastery-update, and automatic re-planning loop.
+- Validate the mastery thresholds and item-duration default with product evidence.
+- Add a full API-to-database end-to-end test for plan generation.
+
+## Reviewer checklist
+
+- [x] Reuses the existing Pydantic domain contracts.
+- [x] Preserves the existing `GoalPlanner` and `LearnerRepository` protocols.
+- [x] Validates all 18 curriculum prerequisite relationships.
+- [x] Prevents infeasible `NEW` concept selection.
+- [x] Preserves deterministic, zero-LLM planning.
+- [x] Does not mutate the planner's input `LearnerState`.
+- [x] Assigns the generated plan to `active_plan` in the orchestration layer.
+- [x] Persists the updated learner aggregate atomically.
+- [x] Makes item duration configuration-driven.
+- [x] Adds focused unit and integration tests.
+- [x] Does not include secrets, generated databases, or personal learner data.
+
+## Suggested PR title
+
+```text
+feat(planning): complete prerequisite-aware orchestration and persistence
+```
+
+> This phase implements GCO-63 and GCO-67 and completes the prerequisite, orchestration, persistence, and configuration follow-up work for GCO-14.
+
+
+[GCO-14]: https://psyche97.atlassian.net/browse/GCO-14?atlOrigin=eyJpIjoiNWRkNTljNzYxNjVmNDY3MDlhMDU5Y2ZhYzA5YTRkZjUiLCJwIjoiZ2l0aHViLWNvbS1KU1cifQ
