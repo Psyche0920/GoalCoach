@@ -33,8 +33,6 @@ def get_engine(session_factory: sessionmaker[Session]) -> Engine:
 
 def create_learner_schema(session_factory: sessionmaker[Session]) -> None:
     """Create only the application-state table in the configured learner database."""
-    # 只创建 learner_states，而不是 Base.metadata.create_all()；这样不会把
-    # 课程内容表误建到学习者状态数据库中。checkfirst=True 让重复启动保持幂等。
     LearnerStateRecord.__table__.create(
         bind=get_engine(session_factory),
         checkfirst=True,

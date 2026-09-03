@@ -1,8 +1,10 @@
-# Summary
+# GCO-62 and GCO-64 Goal Planning Core
 
-This pull request delivers a **partial implementation of GCO-14 (Goal Planning)**. It adds the deterministic core that consumes the existing `LearningGoal` and `ConceptMastery` state and produces a validated `DailyPlan` containing ordered `PlanItem` entries.
+## Summary
 
-This PR completes the goal-processing and daily-plan-generation portions of GCO-14. Curriculum prerequisite integration and learner repository integration remain follow-up work.
+This document records the first implementation phase of **GCO-14 (Goal Planning)**. Its scope is GCO-62 and GCO-64: processing the existing learning goal and generating a deterministic daily plan.
+
+Curriculum prerequisite checking, learner-state loading, and persistence were not part of this phase. Those later changes are documented in [`GCO-63-GCO-67-planning-integration.md`](GCO-63-GCO-67-planning-integration.md).
 
 ## What changed
 
@@ -58,19 +60,26 @@ The tests verify:
 
 ## Jira scope
 
-| Issue | Scope in this PR | Status |
+| Issue | Scope in this phase | Status |
 |---|---|---|
 | [GCO-14](https://psyche97.atlassian.net/browse/GCO-14) | Parent Goal Planning task | Partial / In Progress |
 | [GCO-62](https://psyche97.atlassian.net/browse/GCO-62) | Process learning goal | Complete |
 | [GCO-64](https://psyche97.atlassian.net/browse/GCO-64) | Generate learning plan | Complete |
-| [GCO-63](https://psyche97.atlassian.net/browse/GCO-63) | Select learning concepts | Complete |
-| [GCO-67](https://psyche97.atlassian.net/browse/GCO-67) | Read learner state | Planner-level consumption only |
+| [GCO-63](https://psyche97.atlassian.net/browse/GCO-63) | Prerequisite-aware concept selection | Not included in this phase |
+| [GCO-67](https://psyche97.atlassian.net/browse/GCO-67) | Read learner state | Not included in this phase |
 
-## Not included / follow-up work
+## Follow-up work completed separately
 
-- Load `LearnerState` through the learner repository and persist the generated plan in the application integration layer.
-- Validate the `0.60` remedial threshold and five-minute default item duration with the team or empirical evaluation.
-- Complete integration tests for the database-to-planner workflow.
+The following work was completed after this initial planner phase and is documented separately:
+
+- GCO-63 prerequisite-aware `NEW` concept selection;
+- GCO-67 learner-state loading through `LearnerRepository`;
+- assignment of the generated plan to `LearnerState.active_plan`;
+- atomic persistence of the updated learner aggregate;
+- configurable planning item duration;
+- database-to-planner integration coverage.
+
+See [`GCO-63-GCO-67-planning-integration.md`](GCO-63-GCO-67-planning-integration.md).
 
 ## Reviewer checklist
 
@@ -80,8 +89,8 @@ The tests verify:
 - [x] Adds focused unit tests.
 - [x] Does not change teammate-owned ORM, persistence, retrieval, grading, or orchestration code.
 - [x] Does not include secrets, generated databases, or personal learner data.
-- [ ] Prerequisite-aware concept selection will be completed separately.
-- [ ] Learner repository integration will be completed separately.
+- [x] This phase remains limited to GCO-62 and GCO-64.
+- [x] Follow-up prerequisite and persistence work is documented separately.
 
 ## Suggested PR title
 
@@ -89,7 +98,7 @@ The tests verify:
 feat(planning): add deterministic daily plan generation
 ```
 
-> This PR does not close GCO-14; it implements GCO-62 and GCO-64 and provides the deterministic foundation for the remaining integration work.
+> This phase implements GCO-62 and GCO-64. Later GCO-63 and GCO-67 integration work is intentionally recorded in a separate development document so that the scope of this original planner implementation remains clear.
 
 
 [GCO-14]: https://psyche97.atlassian.net/browse/GCO-14?atlOrigin=eyJpIjoiNWRkNTljNzYxNjVmNDY3MDlhMDU5Y2ZhYzA5YTRkZjUiLCJwIjoiZ2l0aHViLWNvbS1KU1cifQ
