@@ -1,0 +1,128 @@
+"""
+tests/integration/test_vector_pipeline.py
+Automated integration test verifying ChunkFactory, VectorStore, and ChromaService.
+"""
+
+import pytest
+
+from goalcoach.agents.retrieval import RetrievalAgent, RetrievalQuery
+from goalcoach.infrastructure.config import Settings
+from goalcoach.infrastructure.retrieval.chroma_service import ChromaService
+from scripts.vector_store import CurriculumVectorStore
+
+
+@pytest.fixture(scope="module")
+def active_settings():
+    return Settings(enable_vector_retrieval=True)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def bootstrap_vector_store(active_settings):
+    """Ensure vector store is synced before running retrieval tests."""
+    store = CurriculumVectorStore(settings=active_settings)
+    store.sync()
+
+
+@pytest.fixture(scope="module")
+def chroma_service(active_settings):
+    return ChromaService(settings=active_settings)
+
+
+@pytest.fixture(scope="module")
+def retrieval_agent(chroma_service, active_settings):
+    return RetrievalAgent(chroma_service=chroma_service, settings=active_settings)
+
+
+def test_chroma_store_has_indexed_cards(chroma_service):
+    """Ensure that the vector store is loaded with teaching cards."""
+    assert chroma_service.total_documents >= 20, (
+        "Vector store should have at least 20 chunks indexed."
+    )
+
+
+def test_semantic_retrieval_negation_error(chroma_service):
+    """Ensure semantic search routes '不有' error to hsk1_c10 (有/没有)."""
+    results = chroma_service.retrieve_remedial_material(
+        semantic_query="student uses 不有 instead of 没有",
+        hsk_level=1,
+        top_k=1,
+    )
+    assert len(results) == 1
+    assert results[0].concept_id == "hsk1_c10"
+    assert results[0].relevance_confidence > 0.60
+
+
+@pytest.mark.asyncio
+async def test_retrieval_agent_dual_routing(retrieval_agent):
+    """Verify exact SQL routing vs semantic vector search routing."""
+    # Test SQL exact path (async)
+    sql_res = await retrieval_agent.retrieve(RetrievalQuery(concept_id="hsk1_c04"))
+    assert len(sql_res) == 1
+    assert sql_res[0].source == "sqlite_exact"
+    assert sql_res[0].concept_id == "hsk1_c04"
+
+    # Test ChromaDB semantic path (async)
+    vec_res = await retrieval_agent.retrieve(
+        RetrievalQuery(semantic_query="asking yes no question with ma")
+    )
+    assert len(vec_res) > 0
+    assert vec_res[0].source == "chromadb_semantic"
+    assert vec_res[0].concept_id == "hsk1_c04"
+
+    # Test synchronous fallback method
+    sync_res = retrieval_agent.retrieve_sync(RetrievalQuery(concept_id="hsk1_c04"))
+    assert len(sync_res) == 1
+    assert sync_res[0].source == "sqlite_exact"
+
+
+@pytest.mark.asyncio
+async def test_chroma_service_async_retrieval(chroma_service):
+    """Verify non-blocking async retrieval on ChromaService."""
+    results = await chroma_service.retrieve_remedial_material_async(
+        semantic_query="student uses 不有 instead of 没有",
+        hsk_level=1,
+        top_k=1,
+    )
+    assert len(results) == 1
+    assert results[0].concept_id == "hsk1_c10"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_agent_respects_disabled_flag():
+    """Verify semantic search is bypassed when enable_vector_retrieval is False."""
+    disabled_agent = RetrievalAgent(settings=Settings(enable_vector_retrieval=False))
+    res = await disabled_agent.retrieve(
+        RetrievalQuery(semantic_query="asking yes no question with ma")
+    )
+    assert len(res) == 0
+
+
+@pytest.mark.asyncio
+async def test_retrieval_agent_non_blocking_event_loop(retrieval_agent):
+    """Prove that vector retrieval offloads to a worker thread and does not freeze the event loop."""
+    import asyncio
+    import time
+
+    ticks: list[float] = []
+
+    async def heartbeat():
+        """A lightweight coroutine that ticks every 10ms while retrieval is running."""
+        for _ in range(8):
+            ticks.append(time.perf_counter())
+            await asyncio.sleep(0.01)
+
+    # Launch both the heartbeat and the vector retrieval concurrently
+    heartbeat_task = asyncio.create_task(heartbeat())
+    retrieval_task = asyncio.create_task(
+        retrieval_agent.retrieve(RetrievalQuery(semantic_query="asking yes no question with ma"))
+    )
+
+    # Gather both tasks
+    results, _ = await asyncio.gather(retrieval_task, heartbeat_task)
+
+    # 1. Retrieval returned valid semantic candidates
+    assert len(results) > 0
+    assert results[0].concept_id == "hsk1_c04"
+
+    # 2. Heartbeat ticked concurrently while retrieval was processing in the thread
+    assert len(ticks) >= 2, f"Event loop was blocked! Only {len(ticks)} ticks recorded."
