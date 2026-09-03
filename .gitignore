@@ -7,10 +7,10 @@ __pycache__/
 *.db
 *.sqlite*
 .chromadb/
+data/database2/chroma_db/*/
 dist/
 build/
 *.egg-info/
 .DS_Store
 # Dev docs
 docs/dev/
-data/database2/chroma_db/*/
