@@ -1,7 +1,11 @@
 """Unit test suite for the deterministic workflow orchestrator and routing rules."""
 
 from datetime import timedelta
+from uuid import UUID
 
+import pytest
+
+from goalcoach.agents.goal_planning import DeterministicGoalPlanner
 from goalcoach.domain.enums import PlanItemKind, PlanStatus
 from goalcoach.domain.models import (
     ConceptMastery,
@@ -11,7 +15,28 @@ from goalcoach.domain.models import (
     PlanItem,
     utc_now,
 )
-from goalcoach.ui.orchestrator import NextAction, route
+from goalcoach.ui.orchestrator import (
+    LearnerNotFoundError,
+    NextAction,
+    PlanningOrchestrator,
+    route,
+)
+
+
+class InMemoryLearnerRepository:
+    """Deterministic repository double preserving saved snapshots."""
+
+    def __init__(self, state: LearnerState | None) -> None:
+        self.state = state
+        self.saved_state: LearnerState | None = None
+
+    async def get(self, learner_id: UUID) -> LearnerState | None:
+        return (
+            self.state if self.state is not None and self.state.learner_id == learner_id else None
+        )
+
+    async def save(self, state: LearnerState) -> None:
+        self.saved_state = state
 
 
 def create_state_with_active_plan() -> LearnerState:
@@ -129,3 +154,26 @@ def test_invalid_plan_routes_to_regenerate_plan() -> None:
 def test_active_plan_with_no_due_reviews_routes_to_teaching() -> None:
     state = create_state_with_active_plan()
     assert route(state) == NextAction.TEACH
+
+
+@pytest.mark.asyncio
+async def test_planning_orchestrator_persists_plan_without_mutating_loaded_state() -> None:
+    state = LearnerState(goal=LearningGoal(title="Pass HSK 1", target_hsk_level=1))
+    repository = InMemoryLearnerRepository(state)
+    orchestrator = PlanningOrchestrator(DeterministicGoalPlanner(), repository)
+
+    plan = await orchestrator.generate_daily_plan(state.learner_id)
+
+    assert state.active_plan is None
+    assert repository.saved_state is not None
+    assert repository.saved_state.active_plan == plan
+    assert repository.saved_state is not state
+
+
+@pytest.mark.asyncio
+async def test_planning_orchestrator_rejects_unknown_learner() -> None:
+    repository = InMemoryLearnerRepository(None)
+    orchestrator = PlanningOrchestrator(DeterministicGoalPlanner(), repository)
+
+    with pytest.raises(LearnerNotFoundError):
+        await orchestrator.generate_daily_plan(UUID(int=0))

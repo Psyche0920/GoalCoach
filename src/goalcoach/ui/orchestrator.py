@@ -3,9 +3,40 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from uuid import UUID
 
+from goalcoach.agents.interfaces import GoalPlanner, LearnerRepository
 from goalcoach.domain.enums import PlanStatus
-from goalcoach.domain.models import LearnerState
+from goalcoach.domain.models import DailyPlan, LearnerState, utc_now
+
+
+class LearnerNotFoundError(LookupError):
+    """Raised when an orchestration request targets an unknown learner."""
+
+
+class PlanningOrchestrator:
+    """Coordinates deterministic plan creation and durable aggregate replacement."""
+
+    def __init__(self, planner: GoalPlanner, repository: LearnerRepository) -> None:
+        self._planner = planner
+        self._repository = repository
+
+    async def generate_daily_plan(self, learner_id: UUID) -> DailyPlan:
+        """Generate and atomically persist a plan without mutating loaded state."""
+        state = await self._repository.get(learner_id)
+        if state is None:
+            raise LearnerNotFoundError(f"Learner {learner_id} was not found")
+
+        plan = await self._planner.create_plan(state)
+
+        updated_state = state.model_copy(
+            update={"active_plan": plan, "updated_at": utc_now()},
+            deep=True,
+        )
+
+        await self._repository.save(updated_state)
+
+        return plan
 
 
 class NextAction(StrEnum):
@@ -33,6 +64,7 @@ def route(state: LearnerState) -> NextAction:
     Returns:
         The selected `NextAction` to be handled by the execution layer.
     """
+
     if state.goal is None or state.goal_changed:
         return NextAction.PLAN_GOAL
     if state.review_due():

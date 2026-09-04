@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -56,13 +58,13 @@ class TeachingCard(Base):
     )
     card_order: Mapped[int] = mapped_column(Integer)
     card_type: Mapped[str] = mapped_column(String)
-    prompt_zh: Mapped[Optional[str]] = mapped_column(Text)
-    pinyin: Mapped[Optional[str]] = mapped_column(Text)
-    meaning_en: Mapped[Optional[str]] = mapped_column(Text)
-    explanation_en: Mapped[Optional[str]] = mapped_column(Text)
-    example_zh: Mapped[Optional[str]] = mapped_column(Text)
-    example_pinyin: Mapped[Optional[str]] = mapped_column(Text)
-    example_en: Mapped[Optional[str]] = mapped_column(Text)
+    prompt_zh: Mapped[str | None] = mapped_column(Text)
+    pinyin: Mapped[str | None] = mapped_column(Text)
+    meaning_en: Mapped[str | None] = mapped_column(Text)
+    explanation_en: Mapped[str | None] = mapped_column(Text)
+    example_zh: Mapped[str | None] = mapped_column(Text)
+    example_pinyin: Mapped[str | None] = mapped_column(Text)
+    example_en: Mapped[str | None] = mapped_column(Text)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     concept: Mapped[CurriculumConcept] = relationship(back_populates="teaching_cards")
@@ -79,10 +81,10 @@ class ContentExercise(Base):
     exercise_order: Mapped[int] = mapped_column(Integer)
     exercise_type: Mapped[str] = mapped_column(String)
     prompt: Mapped[str] = mapped_column(Text)
-    prompt_pinyin: Mapped[Optional[str]] = mapped_column(Text)
+    prompt_pinyin: Mapped[str | None] = mapped_column(Text)
     instruction: Mapped[str] = mapped_column(Text)
     answer: Mapped[dict[str, Any]] = mapped_column(JSON)
-    options: Mapped[Optional[list[str]]] = mapped_column(JSON)
+    options: Mapped[list[str] | None] = mapped_column(JSON)
     accepted_answers: Mapped[list[str]] = mapped_column(JSON, default=list)
     explanation: Mapped[str] = mapped_column(Text)
     target_tokens: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -104,3 +106,13 @@ class ConceptPrerequisite(Base):
     prerequisite_id: Mapped[str] = mapped_column(
         ForeignKey("curriculum_concepts.concept_id", ondelete="CASCADE"), primary_key=True
     )
+
+
+class LearnerStateRecord(Base):
+    """Database record storing one learner's complete state as a JSON snapshot."""
+
+    __tablename__ = "learner_states"
+
+    learner_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    state_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

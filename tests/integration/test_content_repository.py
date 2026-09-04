@@ -4,7 +4,6 @@ import pytest
 
 from goalcoach.infrastructure.persistence import ContentRepository, create_session_factory
 
-
 DATABASE_PATH = Path("data/database1/goalcoach_hsk1_learning.db")
 
 
@@ -45,3 +44,11 @@ def test_finds_remedial_exercises_by_exact_error_tag(
 
     assert len(exercises) == 5
     assert all("word_order" in exercise.error_tags for exercise in exercises)
+
+
+def test_loads_all_prerequisite_relationships(repository: ContentRepository) -> None:
+    prerequisites = repository.get_prerequisites()
+
+    assert sum(len(required_ids) for required_ids in prerequisites.values()) == 18
+    assert prerequisites["hsk1_c02"] == frozenset({"hsk1_c01"})
+    assert prerequisites["hsk1_c20"] == frozenset({"hsk1_c11"})
