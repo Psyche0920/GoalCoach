@@ -1,0 +1,153 @@
+"""
+src/goalcoach/infrastructure/retrieval/chunk_factory.py
+Semantic Chunk Factory: validates token budgets and formats HSK teaching cards.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+
+class CardChunk(BaseModel):
+    """Pydantic model representing an atomic, token-bounded retrieval chunk."""
+
+    chunk_id: str
+    concept_id: str
+    card_id: int
+    sequence_no: int
+    hsk_level: int = 1
+    card_type: str
+    chunk_type: Literal["full_card", "example_only"]
+    text: str
+    token_estimate: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CardChunkFactory:
+    """Factory creating validated and token-bounded chunks from curriculum rows."""
+
+    def __init__(self, max_tokens: int = 300, split_examples: bool = False) -> None:
+        self.max_tokens = max_tokens
+        self.split_examples = split_examples
+
+    @staticmethod
+    def estimate_tokens(text: str) -> int:
+        """Estimates token count for mixed Chinese and English text.
+        Chinese characters typically count as ~1.5 tokens each; English words count as ~1.3 tokens.
+        """
+        zh_count = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+        en_words = len([w for w in text.split() if any(c.isascii() and c.isalpha() for c in w)])
+        punctuation = len(text) - (zh_count + en_words)
+        return int((zh_count * 1.5) + (en_words * 1.3) + (max(0, punctuation) * 0.5))
+
+    def _truncate_safely(self, text: str, max_tokens: int) -> str:
+        """Truncates text safely preserving word and sentence boundaries."""
+        lines = text.splitlines(keepends=True)
+        accumulated: list[str] = []
+        for line in lines:
+            test_content = "".join(accumulated) + line
+            if self.estimate_tokens(test_content) <= max_tokens:
+                accumulated.append(line)
+            else:
+                break
+        result = "".join(accumulated).strip()
+        if not result:
+            result = text[: int(max_tokens * 2.0)].strip()
+        return result
+
+    def create_chunks_from_row(self, row: tuple[Any, ...]) -> list[CardChunk]:
+        """Transforms a raw SQLite row into one or more token-bounded CardChunk objects."""
+        (
+            concept_id,
+            sequence_no,
+            title_zh,
+            title_en,
+            communicative_goal,
+            card_id,
+            card_type,
+            prompt_zh,
+            explanation_en,
+            example_zh,
+            example_en,
+        ) = row
+
+        chunks: list[CardChunk] = []
+
+        # 1. Primary Full-Card Chunk
+        full_text = (
+            f"Concept: {title_zh} ({title_en})\n"
+            f"Communicative Goal: {communicative_goal or ''}\n"
+            f"Card Type: {card_type or ''}\n"
+            f"Pattern: {prompt_zh or ''}\n"
+            f"Explanation: {explanation_en or ''}\n"
+            f"Example: {example_zh or ''} ({example_en or ''})"
+        )
+
+        full_tokens = self.estimate_tokens(full_text)
+        if full_tokens > self.max_tokens:
+            logger.warning(
+                "Card %s_%s exceeds %d tokens (%d estimated). Truncating safely.",
+                concept_id,
+                card_id,
+                self.max_tokens,
+                full_tokens,
+            )
+            full_text = self._truncate_safely(full_text, self.max_tokens)
+            full_tokens = self.estimate_tokens(full_text)
+
+        full_meta = {
+            "concept_id": str(concept_id),
+            "card_id": int(card_id),
+            "sequence_no": int(sequence_no),
+            "hsk_level": 1,
+            "card_type": str(card_type or ""),
+            "chunk_type": "full_card",
+        }
+
+        chunks.append(
+            CardChunk(
+                chunk_id=f"card_{concept_id}_{card_id}",
+                concept_id=str(concept_id),
+                card_id=int(card_id),
+                sequence_no=int(sequence_no),
+                hsk_level=1,
+                card_type=str(card_type or ""),
+                chunk_type="full_card",
+                text=full_text,
+                token_estimate=full_tokens,
+                metadata=full_meta,
+            )
+        )
+
+        # 2. Optional Fine-Grained Example Chunk
+        if self.split_examples and example_zh:
+            example_text = (
+                f"Context: {title_zh} ({title_en}) Example Dialogue\n"
+                f"Pattern: {prompt_zh or ''}\n"
+                f"Example: {example_zh} ({example_en or ''})"
+            )
+            ex_tokens = self.estimate_tokens(example_text)
+            ex_meta = dict(full_meta)
+            ex_meta["chunk_type"] = "example_only"
+
+            chunks.append(
+                CardChunk(
+                    chunk_id=f"card_{concept_id}_{card_id}_ex",
+                    concept_id=str(concept_id),
+                    card_id=int(card_id),
+                    sequence_no=int(sequence_no),
+                    hsk_level=1,
+                    card_type=str(card_type or ""),
+                    chunk_type="example_only",
+                    text=example_text,
+                    token_estimate=ex_tokens,
+                    metadata=ex_meta,
+                )
+            )
+
+        return chunks

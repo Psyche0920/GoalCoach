@@ -1,5 +1,11 @@
+import os
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Disable third-party telemetry globally for clean offline and test execution
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 
 class Settings(BaseSettings):
@@ -11,6 +17,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./goalcoach.db"
     content_database_url: str = "sqlite:///./data/database1/goalcoach_hsk1_learning.db"
     planning_item_minutes: int = Field(default=5, gt=0, le=120)
+    content_database_path: str = "./data/database1/goalcoach_hsk1_learning.db"
+    vector_store_path: str = "./data/database2/chroma_db"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
