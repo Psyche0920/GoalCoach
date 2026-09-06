@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 API_HOST = os.getenv("GOALCOACH_API_HOST", "127.0.0.1")
@@ -25,7 +26,7 @@ def _ollama_running() -> bool:
     try:
         with urllib.request.urlopen(f"{OLLAMA_URL}/", timeout=2) as resp:
             return resp.status == 200
-    except Exception:
+    except (urllib.error.URLError, OSError):
         return False
 
 
@@ -42,7 +43,9 @@ def start_ollama() -> None:
 
 
 def start_api() -> subprocess.Popen:
-    return _run_python(["-m", "uvicorn", "apps.api.main:app", "--host", API_HOST, "--port", API_PORT])
+    return _run_python(
+        ["-m", "uvicorn", "apps.api.main:app", "--host", API_HOST, "--port", API_PORT]
+    )
 
 
 def start_web() -> subprocess.Popen:

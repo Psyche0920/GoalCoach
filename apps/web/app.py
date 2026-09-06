@@ -80,8 +80,7 @@ def stream_reply(messages: list[dict]) -> str:
                     for line in response.iter_lines():
                         if not line:
                             continue
-                        if line.startswith("data: "):
-                            line = line[6:]
+                        line = line.removeprefix("data: ")
                         if line == "[DONE]":
                             break
                         try:
@@ -93,9 +92,7 @@ def stream_reply(messages: list[dict]) -> str:
                         if added:
                             text += added
                             placeholder.markdown(text)
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": text}
-                    )
+                    st.session_state.messages.append({"role": "assistant", "content": text})
                     return text
         except httpx.HTTPError as exc:
             failures.append(f"{name} ({base_url} / {model}): {exc}")

@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
+
 import pytest
 from pydantic import ValidationError
 
@@ -21,7 +22,6 @@ from goalcoach.domain.models import (
     SessionSummary,
     utc_now,
 )
-
 
 # --- Score & Boundary Clamping Tests ---
 
@@ -83,7 +83,7 @@ def test_learning_goal_validation() -> None:
 
 
 def test_concept_mastery_retention_and_due_check() -> None:
-    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
     cm = ConceptMastery(
         concept_id="grammar_le_completed",
         mastery_score=0.8,
@@ -113,9 +113,9 @@ def test_concept_mastery_retention_and_due_check() -> None:
 
 def test_concept_mastery_is_review_due_timezone_mismatch() -> None:
     # Test naive next_review_at with aware current_time and vice-versa
-    naive_dt = datetime(2026, 9, 1, 12, 0, 0)
-    aware_future = datetime(2026, 9, 2, 12, 0, 0, tzinfo=timezone.utc)
-    aware_past = datetime(2026, 8, 31, 12, 0, 0, tzinfo=timezone.utc)
+    naive_dt = datetime(2026, 9, 1, 12, 0, 0)  # noqa: DTZ001
+    aware_future = datetime(2026, 9, 2, 12, 0, 0, tzinfo=UTC)
+    aware_past = datetime(2026, 8, 31, 12, 0, 0, tzinfo=UTC)
 
     cm = ConceptMastery(concept_id="c1", next_review_at=naive_dt)
     assert cm.is_review_due(at=aware_future)
@@ -123,10 +123,10 @@ def test_concept_mastery_is_review_due_timezone_mismatch() -> None:
 
     cm_aware = ConceptMastery(
         concept_id="c2",
-        next_review_at=datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc),
+        next_review_at=datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC),
     )
-    assert cm_aware.is_review_due(at=datetime(2026, 9, 2, 12, 0, 0))
-    assert not cm_aware.is_review_due(at=datetime(2026, 8, 31, 12, 0, 0))
+    assert cm_aware.is_review_due(at=datetime(2026, 9, 2, 12, 0, 0))  # noqa: DTZ001
+    assert not cm_aware.is_review_due(at=datetime(2026, 8, 31, 12, 0, 0))  # noqa: DTZ001
 
 
 # --- Weighted Progress Calculations ---
@@ -138,7 +138,7 @@ def test_learner_state_overall_progress_empty() -> None:
 
 
 def test_learner_state_overall_progress_single_concept() -> None:
-    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
     cm = ConceptMastery(
         concept_id="c1",
         mastery_score=1.0,
@@ -151,7 +151,7 @@ def test_learner_state_overall_progress_single_concept() -> None:
 
 
 def test_learner_state_overall_progress_weighted_multi_concept() -> None:
-    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
     cm1 = ConceptMastery(
         concept_id="c1",
         mastery_score=1.0,
@@ -173,7 +173,7 @@ def test_learner_state_overall_progress_weighted_multi_concept() -> None:
 
 
 def test_learner_state_review_due_aggregate() -> None:
-    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
     cm1 = ConceptMastery(concept_id="c1", next_review_at=now + timedelta(days=2))
     cm2 = ConceptMastery(concept_id="c2", next_review_at=now - timedelta(hours=1))
 
@@ -393,7 +393,7 @@ def test_retrieval_request_structured_mode() -> None:
 
 
 def test_learner_state_json_roundtrip_serialization() -> None:
-    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
     learner_id = uuid4()
     goal = LearningGoal(
         title="Pass HSK 3 Exam",
