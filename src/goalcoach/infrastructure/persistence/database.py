@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
+from goalcoach.infrastructure.persistence.models import LearnerStateRecord
+
 
 def create_session_factory(database_url: str) -> sessionmaker[Session]:
     """Create the SQLAlchemy engine and session factory used by repositories."""
@@ -25,5 +27,13 @@ def get_engine(session_factory: sessionmaker[Session]) -> Engine:
 
     engine = session_factory.kw.get("bind")
     if not isinstance(engine, Engine):
-        raise RuntimeError("The session factory is not bound to an engine")
+        raise TypeError("The session factory is not bound to an engine")
     return engine
+
+
+def create_learner_schema(session_factory: sessionmaker[Session]) -> None:
+    """Create only the application-state table in the configured learner database."""
+    LearnerStateRecord.__table__.create(
+        bind=get_engine(session_factory),
+        checkfirst=True,
+    )

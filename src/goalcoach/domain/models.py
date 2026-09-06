@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -21,7 +21,7 @@ Score = Annotated[float, Field(ge=0.0, le=1.0)]
 
 def utc_now() -> datetime:
     """Returns the current timezone-aware UTC datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class DomainBaseModel(BaseModel):
@@ -82,9 +82,9 @@ class ConceptMastery(DomainBaseModel):
         current_time = at or utc_now()
         next_review = self.next_review_at
         if next_review.tzinfo is None and current_time.tzinfo is not None:
-            next_review = next_review.replace(tzinfo=timezone.utc)
+            next_review = next_review.replace(tzinfo=UTC)
         elif next_review.tzinfo is not None and current_time.tzinfo is None:
-            current_time = current_time.replace(tzinfo=timezone.utc)
+            current_time = current_time.replace(tzinfo=UTC)
         return next_review <= current_time
 
 
