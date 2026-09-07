@@ -44,7 +44,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             create_learner_schema(session_factory)
             application.state.learner_repository = SqlAlchemyLearnerRepository(session_factory)
-            prerequisites = ContentRepository(content_session_factory).get_prerequisites()
+            content_repo = ContentRepository(content_session_factory)
+            application.state.content_repository = content_repo
+            from goalcoach.infrastructure.retrieval.chroma_service import ChromaService
+
+            application.state.chroma_service = ChromaService(settings=resolved_settings)
+            prerequisites = content_repo.get_prerequisites()
             application.state.goal_planner = create_goal_planner(
                 resolved_settings,
                 prerequisites,
@@ -55,6 +60,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             get_engine(content_session_factory).dispose()
 
     application = FastAPI(title="GoalCoach API", version="0.1.0", lifespan=lifespan)
+    from apps.api.routes.tutoring import router as tutoring_router
+
+    application.include_router(tutoring_router, prefix="/api/v1")
     application.add_api_route("/health", health, methods=["GET"])
     application.add_api_route(
         "/api/v1/learners/{learner_id}",
