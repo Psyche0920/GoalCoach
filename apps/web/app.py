@@ -1,109 +1,66 @@
-"""Streamlit chat box to test the configured LLMs (.env) directly."""
+"""
+apps/web/app.py
+Streamlit prototype chat UI for testing GoalCoach PydanticAI tutoring endpoint.
+"""
 
-import json
+from __future__ import annotations
 
 import httpx
 import streamlit as st
 
-from goalcoach.infrastructure.config import Settings
+API_URL = "http://localhost:8000/api/v1"
 
-st.set_page_config(page_title="GoalCoach Chat Test", page_icon="🎯")
-st.title("GoalCoach Chat Test")
-st.caption("Streaming chat against a selected provider")
+st.set_page_config(page_title="GoalCoach — HSK Tutor", page_icon="🇨🇳", layout="wide")
+st.title("GoalCoach: Adaptive Chinese Tutor (PydanticAI)")
 
-settings = Settings()
-
-
-def candidates() -> list[tuple[str, str, str | None, str]]:
-    endpoints = []
-    if settings.llm_base_url and settings.llm_model:
-        endpoints.append(
-            (settings.llm_base_url, settings.llm_model, settings.llm_api_key, "OpenRouter")
-        )
-    if settings.fallback_llm_base_url and settings.fallback_llm_model:
-        endpoints.append(
-            (
-                settings.fallback_llm_base_url,
-                settings.fallback_llm_model,
-                None,
-                "Ollama",
-            )
-        )
-    return endpoints
-
-
-all_candidates = candidates()
-options = []
-for base_url, model, _, name in all_candidates:
-    options.append(f"{name} — {model}")
-options.insert(0, "Auto (first reachable)")
-
-selection = st.sidebar.radio("LLM provider", options, key="llm_choice")
-if selection == options[0]:
-    targets = all_candidates
-else:
-    index = options.index(selection) - 1
-    targets = [all_candidates[index]]
-st.sidebar.metric("Selected", selection.split(" — ")[0])
-st.sidebar.metric("Endpoint", targets[0][0] if targets else "none")
-
-if not targets:
-    st.error("No LLM configured. Set GOALCOACH_LLM_* and GOALCOACH_FALLBACK_LLM_* in .env.")
-    st.stop()
-
+if "learner_id" not in st.session_state:
+    st.session_state.learner_id = "00000000-0000-0000-0000-000000000001"
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# Sidebar info
+st.sidebar.header("Learner Profile")
+st.sidebar.text(f"ID: {st.session_state.learner_id}")
+st.sidebar.caption("Orchestrator: Deterministic State Machine")
+st.sidebar.caption("Agents: PydanticAI (OpenRouter + Ollama Gemma 4)")
 
+# Render chat history
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if "grammar_points" in msg and msg["grammar_points"]:
+            st.caption(f"Grammar points: {', '.join(msg['grammar_points'])}")
 
-def stream_reply(messages: list[dict]) -> str:
-    failures: list[str] = []
-    for base_url, model, api_key, name in targets:
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        try:
-            with httpx.stream(
-                "POST",
-                base_url.rstrip("/") + "/chat/completions",
-                headers=headers,
-                json={"model": model, "messages": messages, "stream": True},
-                timeout=120,
-            ) as response:
-                response.raise_for_status()
-                with st.chat_message("assistant"):
-                    placeholder = st.empty()
-                    text = ""
-                    for line in response.iter_lines():
-                        if not line:
-                            continue
-                        line = line.removeprefix("data: ")
-                        if line == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = chunk["choices"][0].get("delta", {})
-                        added = delta.get("content") or delta.get("reasoning") or ""
-                        if added:
-                            text += added
-                            placeholder.markdown(text)
-                    st.session_state.messages.append({"role": "assistant", "content": text})
-                    return text
-        except httpx.HTTPError as exc:
-            failures.append(f"{name} ({base_url} / {model}): {exc}")
-    raise RuntimeError("All selected LLM endpoints failed: " + " | ".join(failures))
-
-
-if prompt := st.chat_input("Chat with the model…"):
+# Chat input
+if prompt := st.chat_input("Ask a question about HSK1 Chinese..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    try:
-        stream_reply(st.session_state.messages)
-    except RuntimeError as exc:
-        st.error(str(exc))
+
+    with st.chat_message("assistant"):
+        with st.spinner("Consulting curriculum..."):
+            try:
+                res = httpx.post(
+                    f"{API_URL}/tutoring/chat",
+                    json={"learner_id": st.session_state.learner_id, "message": prompt},
+                    timeout=60.0,
+                )
+                if res.status_code == 200:
+                    payload = res.json()
+                    tutor_data = payload["response"]
+                    st.markdown(tutor_data["reply"])
+                    if tutor_data.get("suggested_practice"):
+                        st.info(f"💡 Practice: {tutor_data['suggested_practice']}")
+                    st.caption(f"Inference: `{payload['provider']}`")
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": tutor_data["reply"],
+                            "grammar_points": tutor_data.get("grammar_points", []),
+                        }
+                    )
+                else:
+                    st.error(f"API Error {res.status_code}: {res.text}")
+            except Exception as e:
+                st.error(f"Could not connect to backend: {e}")
