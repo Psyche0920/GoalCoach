@@ -1,6 +1,7 @@
 import os
 
-from pydantic import Field
+from typing import Self
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Disable third-party telemetry globally for clean offline and test execution
@@ -19,6 +20,22 @@ class Settings(BaseSettings):
     planning_item_minutes: int = Field(default=5, gt=0, le=120)
     content_database_path: str = "./data/database1/goalcoach_hsk1_learning.db"
     vector_store_path: str = "./data/database2/chroma_db"
+    chroma_persist_directory: str = "./data/database2/chroma_db"
+
+    @model_validator(mode="after")
+    def _sync_vector_paths(self) -> Self:
+        if (
+            self.vector_store_path != "./data/database2/chroma_db"
+            and self.chroma_persist_directory == "./data/database2/chroma_db"
+        ):
+            self.chroma_persist_directory = self.vector_store_path
+        elif (
+            self.chroma_persist_directory != "./data/database2/chroma_db"
+            and self.vector_store_path == "./data/database2/chroma_db"
+        ):
+            self.vector_store_path = self.chroma_persist_directory
+        return self
+
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
