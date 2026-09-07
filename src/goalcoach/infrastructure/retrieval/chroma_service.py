@@ -1,14 +1,17 @@
 """
 src/goalcoach/infrastructure/retrieval/chroma_service.py
-ChromaDB semantic retrieval service with typed Pydantic payloads.
+ChromaDB semantic retrieval service with typed Pydantic payloads and non-blocking queries.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
+import anyio
 import chromadb
+from chromadb.config import Settings as ChromaSettings
 from chromadb.utils import embedding_functions
 from pydantic import BaseModel, Field
 
@@ -44,8 +47,12 @@ class ChromaService:
     ) -> None:
         self.settings = settings or Settings()
         if persist_dir is None:
-            base_dir = Path(__file__).resolve().parents[4]
-            self.persist_dir = (base_dir / self.settings.vector_store_path).resolve()
+            raw_path = Path(self.settings.chroma_persist_directory)
+            if raw_path.is_absolute():
+                self.persist_dir = raw_path
+            else:
+                base_dir = Path(__file__).resolve().parents[4]
+                self.persist_dir = (base_dir / self.settings.chroma_persist_directory).resolve()
         else:
             self.persist_dir = Path(persist_dir).resolve()
 
@@ -53,7 +60,10 @@ class ChromaService:
         self.embedding_model_name = embedding_model_name
 
         self.persist_dir.mkdir(parents=True, exist_ok=True)
-        self._client = chromadb.PersistentClient(path=str(self.persist_dir))
+        self._client = chromadb.PersistentClient(
+            path=str(self.persist_dir),
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
         self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=self.embedding_model_name
         )
@@ -67,6 +77,32 @@ class ChromaService:
     def total_documents(self) -> int:
         """Returns the number of indexed card chunks."""
         return self._collection.count()
+
+    def _sync_query(
+        self, query_text: str, top_k: int = 3, level: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Synchronous query filtering on metadata hsk_level."""
+        where_filter = {"hsk_level": level} if level else None
+        try:
+            results = self._collection.query(
+                query_texts=[query_text],
+                n_results=top_k,
+                where=where_filter,
+            )
+            chunks: list[dict[str, Any]] = []
+            if results and results.get("documents") and results.get("metadatas"):
+                for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+                    chunks.append({"content": doc, "metadata": meta})
+            return chunks
+        except Exception:
+            logger.exception("ChromaService _sync_query failure for query '%s'", query_text)
+            return []
+
+    async def query_chunks_async(
+        self, query_text: str, top_k: int = 3, level: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Non-blocking asynchronous query wrapping ChromaDB execution in a thread pool."""
+        return await anyio.to_thread.run_sync(self._sync_query, query_text, top_k, level)
 
     def retrieve_remedial_material(
         self,
@@ -116,8 +152,6 @@ class ChromaService:
         top_k: int = 2,
     ) -> list[RetrievedCardPayload]:
         """Non-blocking asynchronous wrapper offloading CPU-bound Chroma query to a worker thread."""
-        import anyio
-
         return await anyio.to_thread.run_sync(
             self.retrieve_remedial_material,
             semantic_query,

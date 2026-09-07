@@ -47,6 +47,14 @@ class CurriculumConcept(Base):
         back_populates="concept", cascade="all, delete-orphan"
     )
 
+    @property
+    def name_en(self) -> str:
+        return self.title_en
+
+    @property
+    def description_en(self) -> str:
+        return self.communicative_goal
+
 
 class TeachingCard(Base):
     __tablename__ = "teaching_cards"
@@ -68,6 +76,23 @@ class TeachingCard(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     concept: Mapped[CurriculumConcept] = relationship(back_populates="teaching_cards")
+
+    @property
+    def content(self) -> str:
+        parts: list[str] = []
+        if self.prompt_zh:
+            parts.append(f"Prompt: {self.prompt_zh}")
+        if self.pinyin:
+            parts.append(f"Pinyin: {self.pinyin}")
+        if self.meaning_en:
+            parts.append(f"Meaning: {self.meaning_en}")
+        if self.explanation_en:
+            parts.append(f"Explanation: {self.explanation_en}")
+        if self.example_zh:
+            parts.append(
+                f"Example: {self.example_zh} ({self.example_pinyin or ''}) - {self.example_en or ''}"
+            )
+        return "\n".join(parts) if parts else (self.explanation_en or "")
 
 
 class ContentExercise(Base):

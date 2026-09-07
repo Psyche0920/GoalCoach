@@ -43,6 +43,24 @@ class ContentRepository:
         with self._session_factory() as session:
             return list(session.scalars(statement))
 
+    def get_concept(self, concept_id: str) -> CurriculumConcept | None:
+        clean_id = concept_id.strip()
+        statement = (
+            select(CurriculumConcept)
+            .where(
+                (CurriculumConcept.concept_id == clean_id)
+                | (CurriculumConcept.slug == clean_id)
+                | (CurriculumConcept.title_en.ilike(f"%{clean_id}%")),
+                CurriculumConcept.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        with self._session_factory() as session:
+            return session.scalars(statement).first()
+
+    def list_cards_for_concept(self, concept_id: str) -> list[TeachingCard]:
+        return self.get_teaching_cards(concept_id)
+
     def get_teaching_cards(self, concept_id: str) -> list[TeachingCard]:
         statement = (
             select(TeachingCard)
@@ -150,3 +168,6 @@ class SqlAlchemyLearnerRepository:
                 "Failed to save learner state", extra={"learner_id": str(state.learner_id)}
             )
             raise LearnerRepositoryError(f"Failed to save learner {state.learner_id}") from exc
+
+
+SqliteLearnerRepository = SqlAlchemyLearnerRepository
