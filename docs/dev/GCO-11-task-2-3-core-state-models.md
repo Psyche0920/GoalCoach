@@ -69,21 +69,23 @@ $$\text{Progress} = \frac{\sum_{i=1}^{N} \left( w_i \cdot M_i \cdot R_i(t) \righ
 ```python
 from enum import StrEnum
 
+
 class PlanItemKind(StrEnum):
     REVIEW = "review"
     REMEDIAL = "remedial"
     NEW = "new"
+
 
 class PlanStatus(StrEnum):
     ACTIVE = "active"
     EXHAUSTED = "exhausted"
     INVALID = "invalid"
 
+
 class RetrievalMode(StrEnum):
     EXACT = "exact"
     STRUCTURED = "structured"
     SEMANTIC = "semantic"
-
 ```
 
 ---
@@ -95,6 +97,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import math
 
+
 def calculate_retention(
     retention_at_review: float,
     last_reviewed_at: datetime,
@@ -104,7 +107,7 @@ def calculate_retention(
     """Computes decayed retention probability R = R_0 * exp(-lambda * delta_t)."""
     if decay_lambda <= 0:
         raise ValueError("decay_lambda must be strictly positive")
-    
+
     target_time = at or datetime.now(timezone.utc)
     if last_reviewed_at.tzinfo is None:
         last_reviewed_at = last_reviewed_at.replace(tzinfo=timezone.utc)
@@ -116,7 +119,6 @@ def calculate_retention(
 
     decayed = retention_at_review * math.exp(-decay_lambda * elapsed_days)
     return max(0.0, min(1.0, decayed))
-
 ```
 
 ---
@@ -141,11 +143,14 @@ from goalcoach.domain.retention import calculate_retention
 
 Score = Annotated[float, Field(ge=0.0, le=1.0)]
 
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
+
 class DomainBaseModel(BaseModel):
     """Base domain model enabling attribute binding and serialization defaults."""
+
     model_config = ConfigDict(
         from_attributes=True,
         populate_by_name=True,
@@ -153,7 +158,9 @@ class DomainBaseModel(BaseModel):
         ser_json_timedelta="float",
     )
 
+
 # --- 1. Target Goal & Milestones ---
+
 
 class LearningGoal(DomainBaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -164,7 +171,9 @@ class LearningGoal(DomainBaseModel):
     version: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=utc_now)
 
+
 # --- 2. Spaced Repetition & Error Tracking ---
+
 
 class ConceptMastery(DomainBaseModel):
     concept_id: str = Field(min_length=1, max_length=128)
@@ -191,6 +200,7 @@ class ConceptMastery(DomainBaseModel):
         current_time = at or utc_now()
         return self.next_review_at <= current_time
 
+
 class ErrorRecord(DomainBaseModel):
     code: str = Field(min_length=1, max_length=64)  # e.g., "ERR_LE_GUO_CONFUSION"
     concept_id: str = Field(min_length=1, max_length=128)
@@ -198,7 +208,9 @@ class ErrorRecord(DomainBaseModel):
     last_seen_at: datetime = Field(default_factory=utc_now)
     examples: list[str] = Field(default_factory=list)
 
+
 # --- 3. Planning ---
+
 
 class PlanItem(DomainBaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -207,6 +219,7 @@ class PlanItem(DomainBaseModel):
     objective: str = Field(min_length=1, max_length=500)
     estimated_minutes: int = Field(gt=0, le=120)
     completed: bool = False
+
 
 class DailyPlan(DomainBaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -217,7 +230,9 @@ class DailyPlan(DomainBaseModel):
     rationale: str = Field(min_length=1, max_length=1000)
     generated_at: datetime = Field(default_factory=utc_now)
 
+
 # --- 4. Interactive Tutoring & Structured Grading ---
+
 
 class Exercise(DomainBaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -228,16 +243,19 @@ class Exercise(DomainBaseModel):
     reference_answers: list[str] = Field(default_factory=list)
     metadata: dict[str, str] = Field(default_factory=dict)
 
+
 class AnswerSubmission(DomainBaseModel):
     learner_id: UUID
     exercise_id: UUID
     answer: str = Field(min_length=1)
     submitted_at: datetime = Field(default_factory=utc_now)
 
+
 class RubricScores(DomainBaseModel):
     grammatical_correctness: Score
     semantic_precision: Score
     pragmatic_appropriateness: Score
+
 
 class GradingResult(DomainBaseModel):
     exercise_id: UUID
@@ -249,7 +267,9 @@ class GradingResult(DomainBaseModel):
     evidence: str | None = None
     grader_version: str = Field(default="v1.0.0")
 
+
 # --- 5. Session & State Aggregate ---
+
 
 class SessionSummary(DomainBaseModel):
     session_id: UUID = Field(default_factory=uuid4)
@@ -257,6 +277,7 @@ class SessionSummary(DomainBaseModel):
     ended_at: datetime
     concepts_covered: list[str] = Field(default_factory=list)
     summary: str = Field(min_length=1)
+
 
 class LearnerState(DomainBaseModel):
     learner_id: UUID = Field(default_factory=uuid4)
@@ -283,7 +304,9 @@ class LearnerState(DomainBaseModel):
         )
         return float(weighted_sum / total_weight)
 
+
 # --- 6. Event Deltas & Retrieval Requests ---
+
 
 class ConceptDelta(DomainBaseModel):
     concept_id: str
@@ -293,6 +316,7 @@ class ConceptDelta(DomainBaseModel):
     new_retention: Score
     next_review_at: datetime
 
+
 class ProgressUpdate(DomainBaseModel):
     learner_id: UUID
     exercise_id: UUID
@@ -300,6 +324,7 @@ class ProgressUpdate(DomainBaseModel):
     error_codes_added: list[str] = Field(default_factory=list)
     plan_invalidated: bool = False
     updated_at: datetime = Field(default_factory=utc_now)
+
 
 class RetrievalRequest(DomainBaseModel):
     mode: RetrievalMode
@@ -318,7 +343,6 @@ class RetrievalRequest(DomainBaseModel):
         if self.mode == RetrievalMode.SEMANTIC and not self.semantic_need:
             raise ValueError("Semantic retrieval requires a non-empty semantic_need")
         return self
-
 ```
 
 ---
@@ -369,7 +393,6 @@ __all__ = [
     "SessionSummary",
     "calculate_retention",
 ]
-
 ```
 
 ---

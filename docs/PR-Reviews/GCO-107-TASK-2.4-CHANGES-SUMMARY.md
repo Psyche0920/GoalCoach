@@ -127,9 +127,7 @@ async def test_retrieval_agent_non_blocking_event_loop(retrieval_agent):
 
     heartbeat_task = asyncio.create_task(heartbeat())
     retrieval_task = asyncio.create_task(
-        retrieval_agent.retrieve(
-            RetrievalQuery(semantic_query="asking yes no question with ma")
-        )
+        retrieval_agent.retrieve(RetrievalQuery(semantic_query="asking yes no question with ma"))
     )
 
     results, _ = await asyncio.gather(retrieval_task, heartbeat_task)

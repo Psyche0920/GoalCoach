@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str = "sqlite:///./goalcoach.db"
     content_database_url: str = "sqlite:///./data/database1/goalcoach_hsk1_learning.db"
+    planning_item_minutes: int = Field(default=5, gt=0, le=120)
     content_database_path: str = "./data/database1/goalcoach_hsk1_learning.db"
     vector_store_path: str = "./data/database2/chroma_db"
     llm_base_url: str | None = None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def calculate_retention(
@@ -29,11 +29,11 @@ def calculate_retention(
     if decay_lambda <= 0:
         raise ValueError("decay_lambda must be strictly positive")
 
-    target_time = at or datetime.now(timezone.utc)
+    target_time = at or datetime.now(UTC)
     if last_reviewed_at.tzinfo is None:
-        last_reviewed_at = last_reviewed_at.replace(tzinfo=timezone.utc)
+        last_reviewed_at = last_reviewed_at.replace(tzinfo=UTC)
     if target_time.tzinfo is None:
-        target_time = target_time.replace(tzinfo=timezone.utc)
+        target_time = target_time.replace(tzinfo=UTC)
 
     elapsed_seconds = max(0.0, (target_time - last_reviewed_at).total_seconds())
     elapsed_days = elapsed_seconds / 86_400.0

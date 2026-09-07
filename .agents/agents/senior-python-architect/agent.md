@@ -100,7 +100,6 @@ class BaseService(ABC):
     @abstractmethod
     def shutdown(self) -> None:
         """Deterministically tear down resources."""
-
 ```
 
 ```

@@ -54,7 +54,6 @@ There are **4 critical areas** that need adjustments before we can safely merge 
   settings = Settings()
   sqlite_path = settings.content_database_path  # e.g., data/database1/goalcoach_hsk1_learning.db
   chroma_path = settings.chroma_persist_directory  # e.g., data/database2/chroma_db
-
 ```
 
 #### Issue C: Synchronous Blocking in Asynchronous Fast-Paths
@@ -71,9 +70,9 @@ Wrap all synchronous ChromaDB lookups and embedding calls in `anyio.to_thread.ru
 import anyio
 from goalcoach.domain.models import RetrievedCardPayload
 
+
 async def retrieve_cards_async(self, query: str, top_k: int = 3) -> list[RetrievedCardPayload]:
     return await anyio.to_thread.run_sync(self._sync_retrieve, query, top_k)
-
 ```
 
 
