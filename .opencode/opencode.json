@@ -4,6 +4,10 @@
     "notion": {
     "type": "remote",
     "url": "https://mcp.notion.com/mcp"
+    },
+    "atlassian": {
+      "type": "remote",
+      "url": "https://mcp.atlassian.com/v2/mcp"
     }
   }
 }
