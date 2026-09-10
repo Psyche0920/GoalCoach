@@ -35,7 +35,7 @@ A common misconception is that MCP replaces database tools like SQLAlchemy. They
 
 The diagram below illustrates how a learner query travels through the system without MCP ever touching the database directly, and without SQLAlchemy ever talking to the user:
 
-
+```
 [ 1. User ]
 │ (Natural language question via Streamlit UI)
 ▼
@@ -64,6 +64,7 @@ The diagram below illustrates how a learner query travels through the system wit
 │ (Reads facts; synthesizes pedagogical, natural language response)
 ▼
 [ 10. User reads the final explanation ]
+```
 
 ---
 

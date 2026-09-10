@@ -2,6 +2,18 @@
   "mcpServers": {
     "notion": {
       "serverUrl": "https://mcp.notion.com/mcp"
+    },
+    "atlassian": {
+      "serverUrl": "https://mcp.atlassian.com/v2/mcp?tools=all",
+      "headers": {
+        "Authorization": "Basic $(API_KEY_64)"
+      }
+    },
+    "composio": {
+      "serverUrl": "https://connect.composio.dev/mcp",
+      "headers": {
+        "x-consumer-api-key": "$(COMPOSIO_API_KEY)"
+      }
     }
   }
 }
