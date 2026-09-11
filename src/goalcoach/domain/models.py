@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from pydantic import (
@@ -12,6 +12,7 @@ from pydantic import (
     Field,
     model_validator,
 )
+from pydantic.alias_generators import to_camel
 
 from goalcoach.domain.enums import PlanItemKind, PlanStatus, RetrievalMode
 from goalcoach.domain.retention import calculate_retention
@@ -30,6 +31,7 @@ class DomainBaseModel(BaseModel):
     model_config = ConfigDict(
         from_attributes=True,
         populate_by_name=True,
+        alias_generator=to_camel,
         validate_assignment=True,
         ser_json_timedelta="float",
     )
@@ -98,14 +100,78 @@ class ErrorRecord(DomainBaseModel):
     examples: list[str] = Field(default_factory=list)
 
 
+class LearningEvidence(DomainBaseModel):
+    """Evidence components for the 40/40/20 first-learning rule."""
+
+    card_completion: float = 0.0
+    practice_completion: float = 0.0
+    output_completion: float = 0.0
+
+
+class ConceptProgress(DomainBaseModel):
+    """Honest concept progress tracking first-learning evidence and spaced retrievals."""
+
+    learner_id: str
+    concept_id: str
+    learned_percent: float = 0.0
+    learning_evidence: LearningEvidence = Field(default_factory=LearningEvidence)
+    learning_completion_version: int = 2
+    retention_model_version: int = 2
+    mastery_score: Score = 0.0
+    retention_at_review: Score = 1.0
+    decay_lambda: float = 0.05
+    successful_spaced_retrievals: int = 0
+    evidence_days: int = 0
+    average_quality: Score = 0.0
+    quality_evidence_count: int = 0
+    review_quality_count: int = 0
+    average_review_quality: Score = 0.0
+    is_mastered: bool = False
+    status: Literal["not_started", "learning", "almost_mastered", "mastered"] = "not_started"
+    last_reviewed_at: datetime | None = None
+    next_review_at: datetime | None = None
+
+
+class ProgressSummary(DomainBaseModel):
+    """Composite progress metrics across course coverage, learning, and mastery."""
+
+    state_version: int = 1
+    course_coverage: float = 0.0
+    learned_progress: float = 0.0
+    mastered_progress: float = 0.0
+    goal_completion: float = 0.0
+    goal_scope_learned_percent: float = 0.0
+    goal_scope_mastered_percent: float = 0.0
+    communication_outcome_percent: float = 0.0
+    daily_effective_minutes: float = 0.0
+
+
+class LearningEvent(DomainBaseModel):
+    """Idempotent audit event representing study activities and evaluations."""
+
+    id: str = Field(default_factory=lambda: f"event_{uuid4().hex[:8]}")
+    learner_id: str
+    plan_item_id: str
+    concept_ids: list[str] = Field(default_factory=list)
+    event_type: Literal["card", "audio", "attempt", "output", "review"]
+    started_at: datetime = Field(default_factory=utc_now)
+    last_active_at: datetime = Field(default_factory=utc_now)
+    active_seconds: int = 60
+    estimated_minutes: float = 1.0
+    engagement_score: float = 1.0
+    grading_result: dict | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 # --- 3. Planning ---
 
 
 class PlanItem(DomainBaseModel):
     """An individual actionable study item within a daily learning plan."""
 
-    id: UUID = Field(default_factory=uuid4)
+    id: UUID | str = Field(default_factory=uuid4)
     concept_id: str = Field(min_length=1, max_length=128)
+    concept_ids: list[str] = Field(default_factory=list)
     kind: PlanItemKind
     objective: str = Field(min_length=1, max_length=500)
     estimated_minutes: int = Field(gt=0, le=120)
@@ -115,8 +181,8 @@ class PlanItem(DomainBaseModel):
 class DailyPlan(DomainBaseModel):
     """A daily curriculum schedule generated for the learner with execution tracking."""
 
-    id: UUID = Field(default_factory=uuid4)
-    learner_id: UUID
+    id: UUID | str = Field(default_factory=uuid4)
+    learner_id: UUID | str
     date: datetime = Field(default_factory=utc_now)
     status: PlanStatus = PlanStatus.ACTIVE
     items: list[PlanItem] = Field(min_length=1)
@@ -130,7 +196,7 @@ class DailyPlan(DomainBaseModel):
 class Exercise(DomainBaseModel):
     """A practice exercise targeting a specific concept with instructional constraints."""
 
-    id: UUID = Field(default_factory=uuid4)
+    id: UUID | str = Field(default_factory=uuid4)
     concept_id: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1)
     target_instruction: str = Field(min_length=1)
@@ -142,8 +208,8 @@ class Exercise(DomainBaseModel):
 class AnswerSubmission(DomainBaseModel):
     """A learner's response submission to a specific practice exercise."""
 
-    learner_id: UUID
-    exercise_id: UUID
+    learner_id: UUID | str
+    exercise_id: UUID | str
     answer: str = Field(min_length=1)
     submitted_at: datetime = Field(default_factory=utc_now)
 
@@ -159,7 +225,7 @@ class RubricScores(DomainBaseModel):
 class GradingResult(DomainBaseModel):
     """Structured evaluation output produced by the grader agent for a learner submission."""
 
-    exercise_id: UUID
+    exercise_id: UUID | str
     scores: RubricScores
     passed_gates: bool
     confidence: Score
@@ -185,13 +251,22 @@ class SessionSummary(DomainBaseModel):
 class LearnerState(DomainBaseModel):
     """Top-level aggregate root capturing all learner goals, mastery, errors, and plans."""
 
-    learner_id: UUID = Field(default_factory=uuid4)
+    learner_id: UUID | str = Field(default_factory=uuid4)
+    display_name: str | None = None
     goal: LearningGoal | None = None
     goal_changed: bool = False
     mastery: dict[str, ConceptMastery] = Field(default_factory=dict)
+    concept_progress: dict[str, ConceptProgress] = Field(default_factory=dict)
     error_profile: list[ErrorRecord] = Field(default_factory=list)
     active_plan: DailyPlan | None = None
     sessions: list[SessionSummary] = Field(default_factory=list)
+    passed_blueprint_ids: list[str] = Field(default_factory=list)
+    state_version: int = 1
+    today_checked_in: bool = False
+    last_check_in_date: str | None = None
+    estimated_days_remaining: int | None = None
+    today_mistake_exercise_ids: list[str] = Field(default_factory=list)
+    today_studied_concept_ids: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=utc_now)
 
     def review_due(self, at: datetime | None = None) -> bool:
@@ -229,8 +304,8 @@ class ConceptDelta(DomainBaseModel):
 class ProgressUpdate(DomainBaseModel):
     """State transition event recording evidence updates and plan invalidations."""
 
-    learner_id: UUID
-    exercise_id: UUID
+    learner_id: UUID | str
+    exercise_id: UUID | str
     concept_delta: ConceptDelta
     error_codes_added: list[str] = Field(default_factory=list)
     plan_invalidated: bool = False
@@ -241,7 +316,7 @@ class RetrievalRequest(DomainBaseModel):
     """Structured query for retrieving concepts, cards, and exercises from content storage."""
 
     mode: RetrievalMode
-    learner_id: UUID
+    learner_id: UUID | str
     concept_id: str | None = None
     hsk_level: int | None = Field(default=None, ge=1, le=6)
     content_type: str | None = None

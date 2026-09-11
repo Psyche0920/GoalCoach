@@ -21,7 +21,7 @@ class PlanningOrchestrator:
         self._planner = planner
         self._repository = repository
 
-    async def generate_daily_plan(self, learner_id: UUID) -> DailyPlan:
+    async def generate_daily_plan(self, learner_id: UUID | str) -> DailyPlan:
         """Generate and atomically persist a plan without mutating loaded state."""
         state = await self._repository.get(learner_id)
         if state is None:
