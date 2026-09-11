@@ -12,3 +12,9 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+
+# Frontend artifacts
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
+*.tsbuildinfo
