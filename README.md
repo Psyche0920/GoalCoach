@@ -149,11 +149,19 @@ pytest
 uvicorn apps.api.main:app --reload
 ```
 
-In another terminal, the placeholder client can be started with:
+In another terminal, start the Streamlit web app:
 
 ```bash
 streamlit run apps/web/app.py
 ```
+
+The app talks to the FastAPI REST API (default `http://localhost:8000`; override with
+`GOALCOACH_API_URL`). Pages:
+
+- **Today** — honest, time-decayed progress; today's plan preview; review queue; recurring errors
+- **Daily plan** — generate and inspect the day's adaptive study plan
+- **Progress** — mastery vs. retention chart, review schedule, error profile
+- **Tutor** — chat with the tutoring agent (the first message creates the learner profile)
 
 Database #1 structured content is available through the SQLAlchemy `ContentRepository`, with
 typed mappings for concepts, teaching cards, exercises, prerequisites, and JSON fields. The API

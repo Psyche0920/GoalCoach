@@ -1,109 +1,75 @@
-"""Streamlit chat box to test the configured LLMs (.env) directly."""
+"""GoalCoach — Streamlit learning-coach app.
 
-import json
+Run with:
+    uv run streamlit run apps/web/app.py
 
-import httpx
+Multi-page app backed by the FastAPI REST API (default http://localhost:8000,
+override with the GOALCOACH_API_URL environment variable).
+"""
+
+from __future__ import annotations
+
 import streamlit as st
 
-from goalcoach.infrastructure.config import Settings
-
-st.set_page_config(page_title="GoalCoach Chat Test", page_icon="🎯")
-st.title("GoalCoach Chat Test")
-st.caption("Streaming chat against a selected provider")
-
-settings = Settings()
+from goalcoach_api import backend_ok, new_learner_id
 
 
-def candidates() -> list[tuple[str, str, str | None, str]]:
-    endpoints = []
-    if settings.llm_base_url and settings.llm_model:
-        endpoints.append(
-            (settings.llm_base_url, settings.llm_model, settings.llm_api_key, "OpenRouter")
-        )
-    if settings.fallback_llm_base_url and settings.fallback_llm_model:
-        endpoints.append(
-            (
-                settings.fallback_llm_base_url,
-                settings.fallback_llm_model,
-                None,
-                "Ollama",
-            )
-        )
-    return endpoints
+def _apply_learner_id() -> None:
+    st.session_state.learner_id = st.session_state.learner_id_input
 
 
-all_candidates = candidates()
-options = []
-for base_url, model, _, name in all_candidates:
-    options.append(f"{name} — {model}")
-options.insert(0, "Auto (first reachable)")
+st.set_page_config(
+    page_title="GoalCoach",
+    page_icon="🐼",
+    layout="wide",
+)
 
-selection = st.sidebar.radio("LLM provider", options, key="llm_choice")
-if selection == options[0]:
-    targets = all_candidates
-else:
-    index = options.index(selection) - 1
-    targets = [all_candidates[index]]
-st.sidebar.metric("Selected", selection.split(" — ")[0])
-st.sidebar.metric("Endpoint", targets[0][0] if targets else "none")
+if "learner_id" not in st.session_state:
+    st.session_state.learner_id = new_learner_id()
 
-if not targets:
-    st.error("No LLM configured. Set GOALCOACH_LLM_* and GOALCOACH_FALLBACK_LLM_* in .env.")
-    st.stop()
+pages = st.navigation(
+    [
+        st.Page("app_pages/home.py", title="Today", icon=":material/today:", default=True),
+        st.Page("app_pages/plan.py", title="Daily plan", icon=":material/event_available:"),
+        st.Page("app_pages/progress.py", title="Progress", icon=":material/query_stats:"),
+        st.Page("app_pages/tutor.py", title="Tutor", icon=":material/forum:"),
+    ],
+    position="top",
+)
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+with st.sidebar:
+    st.markdown("## :material/pets: GoalCoach")
+    st.caption("Your HSK learning coach")
+    st.divider()
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    st.markdown("### Learner")
+    st.badge(
+        "Backend online" if backend_ok() else "Backend offline",
+        icon=":material/cloud_done:" if backend_ok() else ":material/cloud_off:",
+        color="green" if backend_ok() else "red",
+    )
 
+    st.text_input(
+        "Learner ID",
+        value=st.session_state.learner_id,
+        key="learner_id_input",
+        on_change=_apply_learner_id,
+        help="Every page speaks to the backend as this learner.",
+    )
+    if st.button(
+        "New learner",
+        key="new_learner_button",
+        help="Generate a fresh learner ID and start a brand-new profile.",
+        icon=":material/add_box:",
+        width="stretch",
+        type="primary",
+    ):
+        st.session_state.learner_id = new_learner_id()
+        st.session_state.learner_id_input = st.session_state.learner_id
+        st.toast("New learner ID generated", icon=":material/check:")
+        st.rerun()
+    st.caption("Resets your progress — use with care.")
 
-def stream_reply(messages: list[dict]) -> str:
-    failures: list[str] = []
-    for base_url, model, api_key, name in targets:
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        try:
-            with httpx.stream(
-                "POST",
-                base_url.rstrip("/") + "/chat/completions",
-                headers=headers,
-                json={"model": model, "messages": messages, "stream": True},
-                timeout=120,
-            ) as response:
-                response.raise_for_status()
-                with st.chat_message("assistant"):
-                    placeholder = st.empty()
-                    text = ""
-                    for line in response.iter_lines():
-                        if not line:
-                            continue
-                        line = line.removeprefix("data: ")
-                        if line == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        delta = chunk["choices"][0].get("delta", {})
-                        added = delta.get("content") or delta.get("reasoning") or ""
-                        if added:
-                            text += added
-                            placeholder.markdown(text)
-                    st.session_state.messages.append({"role": "assistant", "content": text})
-                    return text
-        except httpx.HTTPError as exc:
-            failures.append(f"{name} ({base_url} / {model}): {exc}")
-    raise RuntimeError("All selected LLM endpoints failed: " + " | ".join(failures))
+st.title(f"{pages.icon} {pages.title}")
 
-
-if prompt := st.chat_input("Chat with the model…"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    try:
-        stream_reply(st.session_state.messages)
-    except RuntimeError as exc:
-        st.error(str(exc))
+pages.run()

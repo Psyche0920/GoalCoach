@@ -212,7 +212,30 @@ class LearnerState(DomainBaseModel):
         return float(weighted_sum / total_weight)
 
 
-# --- 6. Event Deltas & Retrieval Requests ---
+# --- 6. Chat ---
+
+
+class ChatReply(DomainBaseModel):
+    reply: str
+    grammar_points: list[str] = Field(default_factory=list)
+    suggested_practice: str | None = None
+
+
+class ChatRequest(DomainBaseModel):
+    """Incoming tutoring chat message from the web frontend."""
+
+    learner_id: str
+    message: str
+
+
+class ChatResponse(DomainBaseModel):
+    """Structured tutoring reply returned to the web frontend."""
+
+    response: ChatReply
+    provider: str
+
+
+# --- 7. Event Deltas & Retrieval Requests ---
 
 
 class ConceptDelta(DomainBaseModel):
