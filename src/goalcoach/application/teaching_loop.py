@@ -58,6 +58,8 @@ async def run_teaching_session(
                 "TeachingAction requiring a response must contain an Exercise."
             )
 
+        print(action.exercise.prompt)
+
         learner_response = input("\nYou: ")
 
         submission = AnswerSubmission(
