@@ -342,7 +342,7 @@ TeachingActionType = Literal[
 
 TeachingSessionStatus = Literal[
     "active",
-    "complete",
+    "completed",
     "attempt_limit_reached",
 ]
 
