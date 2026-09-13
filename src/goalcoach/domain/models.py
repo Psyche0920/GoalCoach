@@ -332,3 +332,44 @@ class RetrievalRequest(DomainBaseModel):
         if self.mode == RetrievalMode.SEMANTIC and not self.semantic_need:
             raise ValueError("Semantic retrieval requires a non-empty semantic_need")
         return self
+
+TeachingActionType = Literal[
+    "explain",
+    "ask",
+    "hint",
+    "remediate",
+    "complete",
+]
+
+TeachingSessionStatus = Literal[
+    "active",
+    "complete",
+    "attempt_limit_reached",
+]
+
+class TeachingAction(BaseModel):
+    """One pedagogical action selected by the Teaching Agent."""
+
+    action_type: TeachingActionType
+    concept_id: str
+    content: str
+    objective: str
+    expected_response: bool = False
+
+    exercise: Exercise | None = None
+
+
+class TeachingTurn(BaseModel):
+    """One completed teaching interaction."""
+
+    action: TeachingAction
+    learner_response: str | None = None
+    grading_result: GradingResult | None = None
+
+
+class TeachingSession(BaseModel):
+    """Short-term interaction history for the current teaching session."""
+
+    concept_id: str
+    turns: list[TeachingTurn] = Field(default_factory=list)
+    status: TeachingSessionStatus = "active"
