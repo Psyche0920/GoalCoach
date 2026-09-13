@@ -338,7 +338,6 @@ TeachingActionType = Literal[
     "ask",
     "hint",
     "remediate",
-    "complete",
 ]
 
 TeachingSessionStatus = Literal[
