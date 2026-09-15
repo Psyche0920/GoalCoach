@@ -109,8 +109,20 @@ class GraderComponent:
 
             # Deterministic gating guardrails:
             # If critical errors are detected, passed_gates must be False
-            critical_errors = {"ERR_QUESTION_MA", "ERR_WORD_ORDER", "ERR_MODAL_HUI", "ERR_SEMANTIC", "ERR_VOCABULARY"}
-            if any(err in critical_errors for err in llm_result.detected_errors):
+            critical_prefixes = (
+                "ERR_QUESTION_MA",
+                "ERR_WORD_ORDER",
+                "ERR_MODAL_HUI",
+                "ERR_SEMANTIC",
+                "ERR_VOCABULARY",
+                "ERR_PRAGMATIC",
+                "ERR_GRAMMAR",
+            )
+            has_critical_error = any(
+                any(crit in err.upper() for crit in critical_prefixes)
+                for err in llm_result.detected_errors
+            )
+            if has_critical_error:
                 llm_result.passed_gates = False
             elif (
                 llm_result.scores.grammatical_correctness < 0.70
