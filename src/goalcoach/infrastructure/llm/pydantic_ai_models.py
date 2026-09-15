@@ -11,7 +11,10 @@ from typing import Any
 import httpx
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.models.openai import OpenAIModel
+try:
+    from pydantic_ai.models.openai import OpenAIChatModel as OpenAIModel
+except ImportError:
+    from pydantic_ai.models.openai import OpenAIModel  # type: ignore[assignment]
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from goalcoach.infrastructure.config import Settings
