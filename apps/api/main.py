@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.routes.learning import router as learning_router
-from apps.api.routes.tutoring import router as tutoring_router
+from apps.api.routes.teaching import router as teaching_router
 from goalcoach.agents.goal_planning import DeterministicGoalPlanner
 from goalcoach.agents.interfaces import GoalPlanner, LearnerRepository
 from goalcoach.infrastructure.config import Settings
@@ -18,6 +18,7 @@ from goalcoach.infrastructure.persistence.database import (
 from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqlAlchemyLearnerRepository,
+    SqlAlchemyTeachingSessionRepository,
 )
 
 
@@ -48,6 +49,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from goalcoach.infrastructure.retrieval.chroma_service import ChromaService
 
             application.state.chroma_service = ChromaService(settings=resolved_settings)
+            application.state.teaching_session_repository = (
+                SqlAlchemyTeachingSessionRepository(session_factory)
+            )
             prerequisites = content_repo.get_prerequisites()
             application.state.goal_planner = create_goal_planner(
                 resolved_settings,
@@ -71,7 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Routers
     application.include_router(learning_router)
-    application.include_router(tutoring_router, prefix="/api/v1")
+    application.include_router(teaching_router)
 
     # Health check
     @application.get("/health")

@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
+from goalcoach.agents.interfaces import GradingOutcome
 from goalcoach.domain.models import AnswerSubmission, Exercise, GradingResult, RubricScores
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_openrouter_model,
     run_with_fallback,
 )
 
-grader_agent = Agent(
+_grading_evaluator = Agent(
     model=get_openrouter_model(),
     output_type=GradingResult,
     system_prompt=(
@@ -27,14 +28,22 @@ grader_agent = Agent(
 )
 
 
-async def grade_submission(
-    exercise: Exercise, submission: AnswerSubmission
-) -> tuple[GradingResult, str]:
-    """Evaluates a learner's submission against exercise rubrics with fast-path short-circuiting."""
-    # Fast path: deterministic match on reference answers
-    if submission.answer.strip() in [ans.strip() for ans in exercise.reference_answers]:
-        return (
-            GradingResult(
+class PydanticAIGrader:
+    """Passive structured grader with deterministic and LLM-backed paths."""
+
+    async def grade(
+        self,
+        exercise: Exercise,
+        submission: AnswerSubmission,
+    ) -> GradingOutcome:
+        """Evaluate one answer without choosing the next teaching action."""
+        normalized_answer = submission.answer.strip()
+        normalized_references = {
+            reference.strip() for reference in exercise.reference_answers
+        }
+
+        if normalized_answer in normalized_references:
+            result = GradingResult(
                 exercise_id=exercise.id,
                 scores=RubricScores(
                     grammatical_correctness=1.0,
@@ -45,17 +54,34 @@ async def grade_submission(
                 confidence=1.0,
                 feedback="Perfect! Your answer matches the accepted standard response.",
                 grader_version="deterministic-fast-path",
-            ),
-            "deterministic:rule_match",
-        )
+            )
+            return GradingOutcome(
+                result=result,
+                provider="deterministic:rule_match",
+            )
 
-    # LLM grading path
-    prompt = (
-        f"Exercise Prompt: {exercise.prompt}\n"
-        f"Target Concept: {exercise.concept_id}\n"
-        f"Target Instruction: {exercise.target_instruction}\n"
-        f"Student Answer: {submission.answer}\n"
-        f"Reference Answers: {', '.join(exercise.reference_answers)}"
-    )
-    result, provider = await run_with_fallback(grader_agent, prompt, deps=None)
-    return result.output, provider
+        prompt = (
+            f"Exercise Prompt: {exercise.prompt}\n"
+            f"Target Concept: {exercise.concept_id}\n"
+            f"Target Instruction: {exercise.target_instruction}\n"
+            f"Student Answer: {submission.answer}\n"
+            f"Reference Answers: {', '.join(exercise.reference_answers)}"
+        )
+        run_result, provider = await run_with_fallback(
+            _grading_evaluator,
+            prompt,
+            deps=None,
+        )
+        return GradingOutcome(result=run_result.output, provider=provider)
+
+
+_default_grader = PydanticAIGrader()
+
+
+async def grade_submission(
+    exercise: Exercise,
+    submission: AnswerSubmission,
+) -> tuple[GradingResult, str]:
+    """Compatibility facade retained for API and integration callers."""
+    outcome = await _default_grader.grade(exercise, submission)
+    return outcome.result, outcome.provider

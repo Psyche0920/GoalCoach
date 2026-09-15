@@ -82,7 +82,7 @@ async def run_with_fallback(agent: Any, prompt: str, deps: Any = None) -> tuple[
     try:
         result = await agent.run(prompt, deps=deps, model=primary_model)
         return result, f"openrouter:{primary_model.model_name}"
-    except (httpx.HTTPError, httpx.TimeoutException, Exception) as err:
+    except httpx.HTTPError as err:
         logger.warning("Primary model failed (%s). Falling back to local Ollama Gemma 4.", err)
         result = await agent.run(prompt, deps=deps, model=fallback_model)
         return result, f"ollama:{fallback_model.model_name}"

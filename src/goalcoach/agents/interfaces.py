@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -18,8 +19,22 @@ class GoalPlanner(Protocol):
     async def create_plan(self, state: LearnerState) -> DailyPlan: ...
 
 
+@dataclass(frozen=True, slots=True)
+class GradingOutcome:
+    """Result and provider metadata returned by a grading service."""
+
+    result: GradingResult
+    provider: str
+
+
 class Grader(Protocol):
-    async def grade(self, exercise: Exercise, submission: AnswerSubmission) -> GradingResult: ...
+    """Passive evaluation boundary used by teaching orchestrators."""
+
+    async def grade(
+        self,
+        exercise: Exercise,
+        submission: AnswerSubmission,
+    ) -> GradingOutcome: ...
 
 
 class Teacher(Protocol):

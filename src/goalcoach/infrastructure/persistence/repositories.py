@@ -9,10 +9,11 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from goalcoach.domain.models import LearnerState, LearningEvent
+from goalcoach.domain.models import LearnerState, LearningEvent, TeachingSession
 from goalcoach.infrastructure.persistence.learner_models import (
     LearnerStateORM,
     LearningEventORM,
+    TeachingSessionORM,
 )
 from goalcoach.infrastructure.persistence.models import (
     ConceptPrerequisite,
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 class LearnerRepositoryError(RuntimeError):
     """Raised when a learner aggregate cannot be loaded or persisted."""
+
+
+class TeachingSessionRepositoryError(RuntimeError):
+    """Raised when a teaching session cannot be loaded or persisted."""
 
 
 class ContentRepository:
@@ -248,3 +253,145 @@ class SqlAlchemyLearnerRepository:
 
 
 SqliteLearnerRepository = SqlAlchemyLearnerRepository
+
+
+class SqlAlchemyTeachingSessionRepository:
+    """Persist complete teaching sessions as validated JSON snapshots."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    async def get(self, session_id: UUID | str) -> TeachingSession | None:
+        return await asyncio.to_thread(self._get_sync, session_id)
+
+    async def save(self, teaching_session: TeachingSession) -> None:
+        snapshot = teaching_session.model_dump(mode="json")
+        await asyncio.to_thread(self._save_sync, teaching_session, snapshot)
+
+    async def save_transition(
+        self,
+        learner: LearnerState,
+        event: LearningEvent,
+        teaching_session: TeachingSession,
+    ) -> None:
+        """Atomically persist learner, audit event, and teaching session."""
+        await asyncio.to_thread(
+            self._save_transition_sync,
+            learner,
+            event,
+            teaching_session,
+        )
+
+    def _get_sync(self, session_id: UUID | str) -> TeachingSession | None:
+        try:
+            with self._session_factory() as database_session:
+                record = database_session.get(TeachingSessionORM, str(session_id))
+                if record is None:
+                    return None
+                return TeachingSession.model_validate(record.session_json)
+        except (SQLAlchemyError, ValidationError) as exc:
+            logger.exception(
+                "Failed to load teaching session",
+                extra={"session_id": str(session_id)},
+            )
+            raise TeachingSessionRepositoryError(
+                f"Failed to load teaching session {session_id}"
+            ) from exc
+
+    def _save_sync(
+        self,
+        teaching_session: TeachingSession,
+        snapshot: dict[str, object],
+    ) -> None:
+        try:
+            with self._session_factory.begin() as database_session:
+                record = database_session.get(
+                    TeachingSessionORM,
+                    str(teaching_session.id),
+                )
+                if record is None:
+                    database_session.add(
+                        TeachingSessionORM(
+                            session_id=str(teaching_session.id),
+                            learner_id=str(teaching_session.learner_id),
+                            session_json=snapshot,
+                            updated_at=teaching_session.updated_at,
+                        )
+                    )
+                else:
+                    record.session_json = snapshot
+                    record.updated_at = teaching_session.updated_at
+        except SQLAlchemyError as exc:
+            logger.exception(
+                "Failed to save teaching session",
+                extra={"session_id": str(teaching_session.id)},
+            )
+            raise TeachingSessionRepositoryError(
+                f"Failed to save teaching session {teaching_session.id}"
+            ) from exc
+
+    def _save_transition_sync(
+        self,
+        learner: LearnerState,
+        event: LearningEvent,
+        teaching_session: TeachingSession,
+    ) -> None:
+        try:
+            with self._session_factory.begin() as database_session:
+                learner_record = database_session.get(
+                    LearnerStateORM,
+                    str(learner.learner_id),
+                )
+                learner_snapshot = learner.model_dump(mode="json")
+                if learner_record is None:
+                    database_session.add(
+                        LearnerStateORM(
+                            learner_id=str(learner.learner_id),
+                            state_json=learner_snapshot,
+                            updated_at=learner.updated_at,
+                        )
+                    )
+                else:
+                    learner_record.state_json = learner_snapshot
+                    learner_record.updated_at = learner.updated_at
+
+                database_session.add(
+                    LearningEventORM(
+                        id=event.id,
+                        learner_id=str(event.learner_id),
+                        plan_item_id=str(event.plan_item_id),
+                        concept_ids=list(event.concept_ids),
+                        event_type=event.event_type,
+                        started_at=event.started_at,
+                        active_seconds=event.active_seconds,
+                        engagement_score=event.engagement_score,
+                        grading_result=event.grading_result,
+                        created_at=event.created_at,
+                    )
+                )
+
+                session_record = database_session.get(
+                    TeachingSessionORM,
+                    str(teaching_session.id),
+                )
+                session_snapshot = teaching_session.model_dump(mode="json")
+                if session_record is None:
+                    database_session.add(
+                        TeachingSessionORM(
+                            session_id=str(teaching_session.id),
+                            learner_id=str(teaching_session.learner_id),
+                            session_json=session_snapshot,
+                            updated_at=teaching_session.updated_at,
+                        )
+                    )
+                else:
+                    session_record.session_json = session_snapshot
+                    session_record.updated_at = teaching_session.updated_at
+        except SQLAlchemyError as exc:
+            logger.exception(
+                "Failed to save teaching transition",
+                extra={"session_id": str(teaching_session.id), "event_id": event.id},
+            )
+            raise TeachingSessionRepositoryError(
+                f"Failed to save transition for session {teaching_session.id}"
+            ) from exc

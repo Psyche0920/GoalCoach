@@ -42,6 +42,9 @@ teaching_agent = Agent(
         # ---------------------------------------------------------
         "Choose exactly one action_type: explain, ask, hint, or remediate. "
 
+        "Always provide a concise non-empty objective describing the pedagogical goal "
+        "of the action. Never omit the objective field. "
+
         "Use 'explain' when the learner needs a concise explanation of the "
         "current concept. "
         "Use 'ask' when the learner is ready to practice or be checked. "
@@ -171,6 +174,7 @@ async def next_teaching_action(
 ) -> tuple[TeachingAction, str]:
 
     recent_turns = session.turns[-3:]
+    concept_progress = deps.learner_state.concept_progress.get(session.concept_id)
 
     history = "\n".join(
         (
@@ -188,6 +192,9 @@ Current concept:
 
 Recent teaching history:
 {history or "No previous teaching turns."}
+
+Current concept progress:
+{concept_progress or "No recorded progress yet."}
 
 Select the single best NEXT teaching action.
 Stay focused on concept {session.concept_id}.

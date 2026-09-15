@@ -47,6 +47,7 @@ async def main() -> None:
     )
 
     session = TeachingSession(
+        learner_id=learner_state.learner_id,
         concept_id=concept_id,
     )
 

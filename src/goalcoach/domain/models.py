@@ -352,7 +352,7 @@ class TeachingAction(BaseModel):
     action_type: TeachingActionType
     concept_id: str
     content: str
-    objective: str
+    objective: str = "Practice and reinforce the current concept."
     expected_response: bool = False
 
     exercise: Exercise | None = None
@@ -369,6 +369,11 @@ class TeachingTurn(BaseModel):
 class TeachingSession(BaseModel):
     """Short-term interaction history for the current teaching session."""
 
+    id: UUID = Field(default_factory=uuid4)
+    learner_id: UUID | str
     concept_id: str
     turns: list[TeachingTurn] = Field(default_factory=list)
+    pending_action: TeachingAction | None = None # ???
     status: TeachingSessionStatus = "active"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)

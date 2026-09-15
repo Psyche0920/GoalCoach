@@ -41,5 +41,16 @@ class LearningEventORM(LearnerBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class TeachingSessionORM(LearnerBase):
+    """Stores complete adaptive teaching session snapshots."""
+
+    __tablename__ = "teaching_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    learner_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    session_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # Backwards compatibility alias
 LearnerStateRecord = LearnerStateORM

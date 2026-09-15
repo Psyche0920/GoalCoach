@@ -22,7 +22,27 @@ import { audioFeedback } from '../utils/audioFeedback.ts';
 interface ModernChatDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  context?: any;
+  context?: {
+    learnerId?: string;
+    conceptId?: string;
+    currentGoal?: string;
+    activePlanItems?: string[];
+    errorCount?: number;
+  };
+}
+
+interface TeachingAction {
+  actionType?: 'explain' | 'ask' | 'hint' | 'remediate';
+  action_type?: 'explain' | 'ask' | 'hint' | 'remediate';
+  content: string;
+  expectedResponse?: boolean;
+  expected_response?: boolean;
+  exercise?: { prompt: string } | null;
+}
+
+interface TeachingStepResponse {
+  session: { id: string; status: string };
+  action?: TeachingAction | null;
 }
 
 interface Message {
@@ -31,7 +51,7 @@ interface Message {
   correctionNote?: string;
 }
 
-const STORAGE_KEY = 'goalcoach_chat_history_v2';
+const STORAGE_KEY = 'goalcoach_teaching_history_v1';
 
 export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
   isOpen,
@@ -60,6 +80,9 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [awaitingAnswer, setAwaitingAnswer] = useState(false);
+  const [canAdvance, setCanAdvance] = useState(false);
   
   // Voice / Audio Mode
   const [interactionMode, setInteractionMode] = useState<'text' | 'voice'>('text');
@@ -78,6 +101,59 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
       // Ignore
     }
   }, [messages]);
+
+  const applyTeachingStep = (step: TeachingStepResponse) => {
+    setSessionId(step.session.id);
+    const action = step.action;
+    if (!action) {
+      setAwaitingAnswer(false);
+      setCanAdvance(false);
+      setMessages((current) => [
+        ...current,
+        { role: 'assistant', content: `Session ended: ${step.session.status}` },
+      ]);
+      return;
+    }
+    const actionType = action.actionType ?? action.action_type;
+    const expectedResponse = action.expectedResponse ?? action.expected_response ?? false;
+    if (!actionType) {
+      throw new Error('Teaching API returned an action without action_type.');
+    }
+    const prompt = action.exercise?.prompt ? `\n\n${action.exercise.prompt}` : '';
+    const content = `[${actionType.toUpperCase()}]\n${action.content}${prompt}`;
+    setMessages((current) => [...current, { role: 'assistant', content }]);
+    setAwaitingAnswer(expectedResponse);
+    setCanAdvance(!expectedResponse && step.session.status === 'active');
+    if (interactionMode === 'voice') speakText(content);
+  };
+
+  useEffect(() => {
+    if (!isOpen || sessionId || isLoading) return;
+    const startSession = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch('/api/v1/teaching/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            learnerId: context?.learnerId ?? 'learner_001',
+            conceptId: context?.conceptId ?? 'hsk1_c20',
+          }),
+        });
+        if (!response.ok) throw new Error(`Failed to start session (${response.status})`);
+        applyTeachingStep(await response.json());
+      } catch (error) {
+        console.error('Unable to start teaching session:', error);
+        setMessages((current) => [
+          ...current,
+          { role: 'assistant', content: 'Unable to start the teaching session. Please try again.' },
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    void startSession();
+  }, [isOpen, sessionId, context?.learnerId, context?.conceptId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -178,6 +254,9 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
       },
     ];
     setMessages(initial);
+    setSessionId(null);
+    setAwaitingAnswer(false);
+    setCanAdvance(false);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
     } catch (e) {}
@@ -185,7 +264,7 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
 
   const handleSend = async (userText?: string) => {
     const textToSend = userText || input;
-    if (!textToSend.trim() || isLoading) return;
+    if (!textToSend.trim() || isLoading || !sessionId || !awaitingAnswer) return;
 
     const newMessages: Message[] = [...messages, { role: 'user', content: textToSend }];
     setMessages(newMessages);
@@ -193,50 +272,45 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/v1/tutoring/chat', {
+      const res = await fetch(`/api/v1/teaching/sessions/${sessionId}/answers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: textToSend,
-          learner_id: 'learner_001',
+          answer: textToSend,
         }),
       });
 
       if (res.ok) {
-        const data = await res.json();
-        const reply = data.reply || data.response?.reply || 'Great question! Let’s keep practicing.';
-        setMessages([...newMessages, { role: 'assistant', content: reply }]);
-
-        // If in voice mode or speaking active, automatically speak reply
-        if (interactionMode === 'voice') {
-          speakText(reply);
-        }
+        applyTeachingStep(await res.json());
       } else {
         throw new Error('Server returned non-200');
       }
     } catch (err) {
-      console.warn('Chat request failed, using intelligent fallback:', err);
-      // Deterministic pedagogical response with error correction & link to concepts
-      let reply = `Great effort! In Chinese, word order and particles are essential.`;
-      if (textToSend.includes('茶想') || textToSend.includes('喝想')) {
-        reply = `💡 Coach Tip: Instead of "${textToSend}", the standard word order is "我想喝茶" (Wǒ xiǎng hē chá - I want to drink tea).\n\nRule: Place modal verb "想 (xiǎng)" before the main action verb "喝 (hē)".`;
-      } else {
-        reply = `Nǐ hǎo! You're making steady progress. Try building simple sentences like "你想喝咖啡吗？" (Do you want to drink coffee?)`;
-      }
-      setMessages([...newMessages, { role: 'assistant', content: reply }]);
+      console.error('Answer submission failed:', err);
+      setMessages([...newMessages, { role: 'assistant', content: 'Answer submission failed. Please retry.' }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAdvance = async () => {
+    if (!sessionId || !canAdvance || isLoading) return;
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/v1/teaching/sessions/${sessionId}/next`, {
+        method: 'POST',
+      });
+      if (!response.ok) throw new Error(`Failed to advance session (${response.status})`);
+      applyTeachingStep(await response.json());
+    } catch (error) {
+      console.error('Unable to advance teaching session:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
   // Beginner Quick Practice Prompts
-  const quickPrompts = [
-    'Order tea: 我想喝茶 🍵',
-    'How do I master the 4 tones? 🔊',
-    'Difference between z/c/s & zh/ch/sh?',
-    'When to use 很 vs 是 with adjectives?',
-    'How do question particles 吗 and 呢 work?',
-  ];
+  const quickPrompts = ['她会说汉语。', '我能说一点儿汉语。'];
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-zinc-950/40 backdrop-blur-xs select-none animate-in fade-in duration-200">
@@ -368,8 +442,8 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Quick Prompts Bar */}
-        <div className="px-5 py-2 border-t border-zinc-100 bg-zinc-50 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        {/* Suggested answers */}
+        {awaitingAnswer && <div className="px-5 py-2 border-t border-zinc-100 bg-zinc-50 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           <span className="text-[10px] font-black text-zinc-400 shrink-0">Try:</span>
           {quickPrompts.map((p, i) => (
             <button
@@ -380,7 +454,20 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
               {p}
             </button>
           ))}
-        </div>
+        </div>}
+
+        {canAdvance && (
+          <div className="px-5 py-3 border-t border-zinc-100 bg-zinc-50">
+            <button
+              type="button"
+              onClick={handleAdvance}
+              disabled={isLoading}
+              className="w-full px-4 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl border-2 border-zinc-950 text-xs font-black disabled:opacity-50"
+            >
+              Continue
+            </button>
+          </div>
+        )}
 
         {/* Input Bar */}
         <div className="p-4 border-t-2 border-zinc-200 bg-white">
@@ -407,7 +494,12 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
 
             <input
               type="text"
-              placeholder={isRecording ? 'Listening in Chinese...' : 'Ask Coach Bǎobao or chat in Chinese...'}
+              disabled={!awaitingAnswer}
+              placeholder={
+                awaitingAnswer
+                  ? isRecording ? 'Listening in Chinese...' : 'Type your answer...'
+                  : 'Continue to the next teaching action'
+              }
               value={input}
               onChange={(e) => setInput(e.target.value)}
               className="flex-1 px-4 py-3 bg-zinc-50 border-2 border-zinc-200 focus:border-emerald-600 rounded-2xl text-xs font-bold focus:outline-none transition-all"
@@ -415,7 +507,7 @@ export const ModernChatDrawer: React.FC<ModernChatDrawerProps> = ({
 
             <button
               type="submit"
-              disabled={!input.trim() || isLoading}
+              disabled={!input.trim() || isLoading || !awaitingAnswer}
               className="p-3 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 rounded-2xl border-2 border-zinc-950 font-black shadow-[0_2px_0_#15803d] active:translate-y-0.5 active:shadow-none transition-all shrink-0 cursor-pointer"
             >
               <Send className="w-4 h-4" />

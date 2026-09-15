@@ -128,11 +128,18 @@ export function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        acceptLearnerState(data.state);
-        setOverallProgress(data.overallProgress);
-        setLearnedProgress(data.progressSummary?.learnedProgress ?? 0);
-        setMasteredProgress(data.progressSummary?.masteredProgress ?? 0);
-        setNextAction(data.nextAction);
+        // The grading endpoint may return only gradingResult/provider when the
+        // update runs asynchronously. Do not overwrite the current UI state
+        // with undefined values.
+        if (data.state) acceptLearnerState(data.state);
+        if (typeof data.overallProgress === 'number') {
+          setOverallProgress(data.overallProgress);
+        }
+        if (data.progressSummary) {
+          setLearnedProgress(data.progressSummary.learnedProgress ?? 0);
+          setMasteredProgress(data.progressSummary.masteredProgress ?? 0);
+        }
+        if (data.nextAction) setNextAction(data.nextAction);
         return data.gradingResult;
       }
     } catch (err) {
@@ -315,6 +322,11 @@ export function App() {
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
         context={{
+          learnerId,
+          conceptId:
+            learnerState?.activePlan?.items?.[0]?.conceptIds?.[0] ??
+            learnerState?.activePlan?.items?.[0]?.conceptId ??
+            'hsk1_c20',
           currentGoal: learnerState?.goal?.title,
           activePlanItems: learnerState?.activePlan?.items?.map((i) => i.objective),
           errorCount: learnerState?.errorProfile?.length,
