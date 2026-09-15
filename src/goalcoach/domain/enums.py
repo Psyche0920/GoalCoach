@@ -1,6 +1,27 @@
-"""Domain enumerations for learning plan items, plan execution statuses, and content retrieval modes."""
+"""Domain enumerations for learning plan items, plan execution statuses, events, and pedagogical actions."""
 
 from enum import StrEnum
+
+
+class EventType(StrEnum):
+    """Classification of inbound learner events processed by the deterministic orchestrator."""
+
+    GOAL_CREATED = "GOAL_CREATED"
+    SESSION_STARTED = "SESSION_STARTED"
+    HELP_REQUESTED = "HELP_REQUESTED"
+    ANSWER_SUBMITTED = "ANSWER_SUBMITTED"
+
+
+class TeachingActionKind(StrEnum):
+    """Pedagogical modalities and interaction types emitted by the Teaching Agent."""
+
+    EXPLANATION = "EXPLANATION"
+    RETRY = "RETRY"
+    HINT = "HINT"
+    CONTRAST_EXAMPLE = "CONTRAST_EXAMPLE"
+    EXERCISE = "EXERCISE"
+    DIALOGUE = "DIALOGUE"
+    FREEFORM = "FREEFORM"
 
 
 class PlanItemKind(StrEnum):
@@ -25,3 +46,12 @@ class RetrievalMode(StrEnum):
     EXACT = "exact"
     STRUCTURED = "structured"
     SEMANTIC = "semantic"
+
+
+__all__ = [
+    "EventType",
+    "TeachingActionKind",
+    "PlanItemKind",
+    "PlanStatus",
+    "RetrievalMode",
+]

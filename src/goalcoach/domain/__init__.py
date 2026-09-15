@@ -1,6 +1,19 @@
 """GoalCoach domain package exposing core domain models, enums, and retention mathematics."""
 
-from goalcoach.domain.enums import PlanItemKind, PlanStatus, RetrievalMode
+from goalcoach.domain.enums import (
+    EventType,
+    PlanItemKind,
+    PlanStatus,
+    RetrievalMode,
+    TeachingActionKind,
+)
+from goalcoach.domain.events import (
+    AnswerSubmittedPayload,
+    GoalCreatedPayload,
+    HelpRequestedPayload,
+    InboundEvent,
+    SessionStartedPayload,
+)
 from goalcoach.domain.models import (
     AnswerSubmission,
     ConceptDelta,
@@ -13,36 +26,48 @@ from goalcoach.domain.models import (
     LearnerState,
     LearningGoal,
     PlanItem,
+    PlanUpdate,
     ProgressUpdate,
     RetrievalRequest,
     RubricScores,
     Score,
     SessionSummary,
+    TeachingAction,
     utc_now,
 )
 from goalcoach.domain.retention import calculate_retention, decayed_retention
 
 __all__ = [
     "AnswerSubmission",
+    "AnswerSubmittedPayload",
     "ConceptDelta",
     "ConceptMastery",
     "DailyPlan",
     "DomainBaseModel",
     "ErrorRecord",
+    "EventType",
     "Exercise",
+    "GoalCreatedPayload",
     "GradingResult",
+    "HelpRequestedPayload",
+    "InboundEvent",
     "LearnerState",
     "LearningGoal",
     "PlanItem",
     "PlanItemKind",
     "PlanStatus",
+    "PlanUpdate",
     "ProgressUpdate",
     "RetrievalMode",
     "RetrievalRequest",
     "RubricScores",
     "Score",
+    "SessionStartedPayload",
     "SessionSummary",
+    "TeachingAction",
+    "TeachingActionKind",
     "calculate_retention",
     "decayed_retention",
     "utc_now",
 ]
+
