@@ -33,7 +33,7 @@ class RetrievalQuery(BaseModel):
     top_k: int = Field(default=2, description="Maximum number of candidate cards to return.")
 
 
-class RemedialMaterial(BaseModel):
+class RetrievedMaterial(BaseModel):
     """Output contract passed downstream to TeachingAgent."""
 
     source: str = Field(description="'sqlite_exact' or 'chromadb_semantic'")
@@ -63,7 +63,7 @@ class RetrievalAgent:
 
         self.chroma_service = chroma_service or ChromaService(settings=self.settings)
 
-    def _fetch_from_sqlite(self, concept_id: str) -> list[RemedialMaterial]:
+    def _fetch_from_sqlite(self, concept_id: str) -> list[RetrievedMaterial]:
         """Performs fast, exact SQL lookup when the concept_id is known."""
         if not self.sqlite_path.exists():
             logger.warning("SQLite curriculum database not found at %s", self.sqlite_path)
@@ -92,7 +92,7 @@ class RetrievalAgent:
                 )
 
                 return [
-                    RemedialMaterial(
+                    RetrievedMaterial(
                         source="sqlite_exact",
                         concept_id=str(cid),
                         card_id=int(card_id) if card_id is not None else None,
@@ -106,7 +106,7 @@ class RetrievalAgent:
             logger.exception("SQLite exact retrieval failed for concept %s", concept_id)
             return []
 
-    def retrieve_sync(self, request: RetrievalQuery | RetrievalRequest) -> list[RemedialMaterial]:
+    def retrieve_sync(self, request: RetrievalQuery | RetrievalRequest) -> list[RetrievedMaterial]:
         """Synchronous implementation routing the retrieval request based on available deterministic signals."""
         concept_id = request.concept_id if request.concept_id else None
         semantic_query = getattr(request, "semantic_query", None) or getattr(
@@ -130,7 +130,7 @@ class RetrievalAgent:
                 return []
 
             chroma_matches: list[RetrievedCardPayload] = (
-                self.chroma_service.retrieve_remedial_material(
+                self.chroma_service.retrieve_material(
                     semantic_query=semantic_query,
                     hsk_level=hsk_level,
                     top_k=top_k,
@@ -138,7 +138,7 @@ class RetrievalAgent:
             )
 
             return [
-                RemedialMaterial(
+                RetrievedMaterial(
                     source="chromadb_semantic",
                     concept_id=match.concept_id,
                     card_id=match.card_id,
@@ -150,7 +150,7 @@ class RetrievalAgent:
 
         return []
 
-    async def retrieve(self, request: RetrievalQuery | RetrievalRequest) -> list[RemedialMaterial]:
+    async def retrieve(self, request: RetrievalQuery | RetrievalRequest) -> list[RetrievedMaterial]:
         """Asynchronous, non-blocking retrieval routing satisfying the Retriever protocol."""
         import anyio
 

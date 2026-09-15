@@ -373,7 +373,7 @@ class TeachingSession(BaseModel):
     learner_id: UUID | str
     concept_id: str
     turns: list[TeachingTurn] = Field(default_factory=list)
-    pending_action: TeachingAction | None = None # ???
+    pending_action: TeachingAction | None = None
     status: TeachingSessionStatus = "active"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

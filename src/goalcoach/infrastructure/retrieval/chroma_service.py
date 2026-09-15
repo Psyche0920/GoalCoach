@@ -104,7 +104,7 @@ class ChromaService:
         """Non-blocking asynchronous query wrapping ChromaDB execution in a thread pool."""
         return await anyio.to_thread.run_sync(self._sync_query, query_text, top_k, level)
 
-    def retrieve_remedial_material(
+    def retrieve_material(
         self,
         semantic_query: str,
         hsk_level: int = 1,
@@ -145,7 +145,7 @@ class ChromaService:
             logger.exception("ChromaService query execution failure for query '%s'", semantic_query)
             return []
 
-    async def retrieve_remedial_material_async(
+    async def retrieve_material_async(
         self,
         semantic_query: str,
         hsk_level: int = 1,
@@ -153,7 +153,7 @@ class ChromaService:
     ) -> list[RetrievedCardPayload]:
         """Non-blocking asynchronous wrapper offloading CPU-bound Chroma query to a worker thread."""
         return await anyio.to_thread.run_sync(
-            self.retrieve_remedial_material,
+            self.retrieve_material,
             semantic_query,
             hsk_level,
             top_k,
@@ -164,7 +164,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     service = ChromaService()
     logger.info("ChromaService active. Total entries: %d", service.total_documents)
-    test_results = service.retrieve_remedial_material("student uses 不有 instead of 没有")
+    test_results = service.retrieve_material("student uses 不有 instead of 没有")
     for item in test_results:
         logger.info(
             "Concept: %s | Distance: %f | Confidence: %f",
