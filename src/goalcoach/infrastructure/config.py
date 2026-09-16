@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     llm_max_cost_usd_per_week: float = Field(default=50, gt=0)
     fallback_llm_base_url: str = "http://localhost:11434/v1"
     fallback_llm_model: str | None = None
+    enable_ollama_fallback: bool = False
     enable_background_updates: bool = True
     enable_vector_retrieval: bool = False
     enable_langgraph: bool = False

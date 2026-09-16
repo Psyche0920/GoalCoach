@@ -16,6 +16,7 @@ from goalcoach.domain.enums import PlanItemKind
 from goalcoach.domain.models import LearnerState, PlanItem, PlanUpdate
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_openrouter_model,
+    get_output_retries,
     run_with_fallback,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
@@ -53,6 +54,7 @@ planning_agent = Agent(
     model=get_openrouter_model(),
     deps_type=PlanningDeps,
     output_type=PlanUpdate,
+    output_retries=get_output_retries(),
     system_prompt=PLANNING_SYSTEM_PROMPT,
 )
 

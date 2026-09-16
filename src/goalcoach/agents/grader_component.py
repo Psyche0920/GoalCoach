@@ -23,6 +23,7 @@ from goalcoach.domain.models import (
 )
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_openrouter_model,
+    get_output_retries,
     run_with_fallback,
 )
 
@@ -55,6 +56,7 @@ Provide encouraging, targeted, and factual feedback addressing the learner's mis
 grader_agent = Agent(
     model=get_openrouter_model(),
     output_type=GradingResult,
+    output_retries=get_output_retries(),
     system_prompt=GRADER_SYSTEM_PROMPT,
 )
 

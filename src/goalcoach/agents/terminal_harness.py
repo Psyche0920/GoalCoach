@@ -143,6 +143,9 @@ async def main() -> None:
 
         teaching_action = turn_response.teaching_action
         concept_id = teaching_action.concept_id
+        exercise_payload = teaching_action.exercise_payload
+        if not exercise_payload or not exercise_payload.get("exercise_id"):
+            raise RuntimeError(f"Teaching action for {concept_id} has no curriculum exercise")
 
         console.print(Panel(
             f"[bold yellow]Modality:[/bold yellow] {teaching_action.action_kind.value}\n\n"
@@ -150,6 +153,13 @@ async def main() -> None:
             f"[dim]Pinyin: {teaching_action.pinyin or 'N/A'}[/dim]",
             title=f"[bold cyan]Coach Baobao (Focus: {concept_id})[/bold cyan]",
             border_style="yellow",
+        ))
+
+        console.print(Panel(
+            f"[bold]{exercise_payload.get('instruction', '')}[/bold]\n\n"
+            f"{exercise_payload.get('prompt', '')}",
+            title="[bold green]Practice[/bold green]",
+            border_style="green",
         ))
 
         console.print("[dim]Commands: Type your Chinese answer, or 'help' for guidance, or 'exit' to quit.[/dim]")
@@ -167,6 +177,8 @@ async def main() -> None:
                     payload={"concept_id": concept_id, "learner_query": "I am confused, please give me a hint."},
                 )
             help_action = help_response.teaching_action
+            if help_action.exercise_payload:
+                exercise_payload = help_action.exercise_payload
             console.print(Panel(
                 f"[bold yellow]Adapted Modality:[/bold yellow] {help_action.action_kind.value}\n\n"
                 f"{help_action.content}",
@@ -183,7 +195,7 @@ async def main() -> None:
                 event_type=EventType.ANSWER_SUBMITTED,
                 learner_id=learner_id,
                 payload={
-                    "exercise_id": f"{concept_id}_practice",
+                    "exercise_id": str(exercise_payload["exercise_id"]),
                     "concept_id": concept_id,
                     "answer": user_input,
                 },

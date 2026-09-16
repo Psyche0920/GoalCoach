@@ -277,13 +277,9 @@ class DeterministicOrchestrator:
                 hsk_level=1,
             )
         else:
-            exercise = Exercise(
-                id=exercise_id,
-                concept_id=concept_id,
-                prompt="Practice sentence",
-                target_instruction="Translate or construct",
-                reference_answers=[answer],
-                hsk_level=1,
+            raise ValueError(
+                f"Unknown exercise_id {exercise_id!r}; answers can only be graded "
+                "against canonical curriculum exercises"
             )
 
         # 2. Grade answer via Grader Component

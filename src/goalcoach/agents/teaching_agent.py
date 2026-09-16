@@ -18,6 +18,7 @@ from goalcoach.domain.enums import TeachingActionKind
 from goalcoach.domain.models import LearnerState, TeachingAction
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_openrouter_model,
+    get_output_retries,
     run_with_fallback,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
@@ -68,6 +69,7 @@ teaching_agent = Agent(
     model=get_openrouter_model(),
     deps_type=TeachingDeps,
     output_type=TeachingAction,
+    output_retries=get_output_retries(),
     system_prompt=TEACHING_SYSTEM_PROMPT,
 )
 
@@ -149,11 +151,45 @@ class TeachingWorker:
             result, _ = await run_with_fallback(self.agent, prompt, deps=deps)
             action: TeachingAction = result.output
             if action.concept_id == concept_id and action.content:
-                return action
+                return self._attach_curriculum_exercise(action, content_service)
         except Exception as exc:
             logger.warning("TeachingAgent LLM execution failed (%s); using heuristic fallback.", exc)
 
-        return self._heuristic_fallback(concept_id, state, content_service, failed_attempts, learner_query)
+        fallback = self._heuristic_fallback(
+            concept_id,
+            state,
+            content_service,
+            failed_attempts,
+            learner_query,
+        )
+        return self._attach_curriculum_exercise(fallback, content_service)
+
+    @staticmethod
+    def _attach_curriculum_exercise(
+        action: TeachingAction,
+        content_service: ContentService,
+    ) -> TeachingAction:
+        """Attach a canonical exercise without exposing its accepted answers."""
+        exercises = content_service.get_exercises_for_concept(
+            action.concept_id,
+            limit=1,
+            randomize=False,
+        )
+        if not exercises:
+            raise LookupError(f"No curriculum exercise found for concept {action.concept_id}")
+
+        exercise = exercises[0]
+        payload = dict(action.exercise_payload or {})
+        payload.update(
+            {
+                "exercise_id": exercise.exercise_id,
+                "concept_id": exercise.concept_id,
+                "prompt": exercise.prompt,
+                "instruction": exercise.instruction or "",
+            }
+        )
+        action.exercise_payload = payload
+        return action
 
     def _heuristic_fallback(
         self,
@@ -241,6 +277,7 @@ class TutorResponse(BaseModel):
 tutor_agent = Agent(
     model=get_openrouter_model(),
     output_type=TutorResponse,
+    output_retries=get_output_retries(),
     system_prompt="You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor.",
 )
 

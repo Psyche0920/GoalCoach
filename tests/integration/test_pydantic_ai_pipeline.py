@@ -121,9 +121,10 @@ async def test_search_hsk_curriculum_semantic_fallback(
 
 @pytest.mark.asyncio
 async def test_openrouter_failover_to_ollama(
-    mock_content_repo, mock_chroma_service, sample_learner_state
+    mock_content_repo, mock_chroma_service, sample_learner_state, monkeypatch
 ):
     """Assert automatic failover to local Ollama Gemma 4 when OpenRouter raises connection errors."""
+    monkeypatch.setenv("GOALCOACH_ENABLE_OLLAMA_FALLBACK", "true")
     deps = AgentDeps(
         learner_state=sample_learner_state,
         content_repo=mock_content_repo,

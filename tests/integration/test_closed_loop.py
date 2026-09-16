@@ -217,6 +217,8 @@ async def test_ac4_ac11_core_teaching_proof_adaptive_strategy_switching(
     )
     assert action_1.action_kind in (TeachingActionKind.EXPLANATION, TeachingActionKind.DIALOGUE)
     assert action_1.content != ""
+    assert action_1.exercise_payload is not None
+    assert action_1.exercise_payload["exercise_id"] == "hsk1_c04_e01"
 
     # Turn 2: Same concept after a failure / confusion
     action_2 = await teacher.teach_concept(
@@ -227,6 +229,25 @@ async def test_ac4_ac11_core_teaching_proof_adaptive_strategy_switching(
     )
     assert action_2.action_kind in (TeachingActionKind.CONTRAST_EXAMPLE, TeachingActionKind.HINT)
     assert action_2.action_kind != action_1.action_kind
+    assert action_2.exercise_payload is not None
+    assert action_2.exercise_payload["exercise_id"] == "hsk1_c04_e01"
+
+
+@pytest.mark.asyncio
+async def test_unknown_exercise_is_rejected_instead_of_treating_answer_as_reference(
+    orchestrator: DeterministicOrchestrator,
+) -> None:
+    """A fabricated terminal exercise ID must never make an arbitrary answer correct."""
+    with pytest.raises(ValueError, match="Unknown exercise_id"):
+        await orchestrator.handle_event(
+            event_type=EventType.ANSWER_SUBMITTED,
+            learner_id=f"unknown_exercise_{uuid4().hex[:8]}",
+            payload={
+                "exercise_id": "hsk1_c01_practice",
+                "concept_id": "hsk1_c01",
+                "answer": "xyz",
+            },
+        )
 
 
 # --- AC5 & AC6: Grader Component Rubric & Progress Service Math ---
