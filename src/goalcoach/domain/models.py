@@ -99,7 +99,7 @@ class ConceptMastery(DomainBaseModel):
 class ErrorRecord(DomainBaseModel):
     """Cataloged recurring grammatical or lexical error with diagnostic examples."""
 
-    code: str = Field(min_length=1, max_length=64)  # e.g., "ERR_LE_GUO_CONFUSION"
+    code: str = Field(min_length=1, max_length=255)  # e.g., "ERR_LE_GUO_CONFUSION"
     concept_id: str = Field(min_length=1, max_length=128)
     occurrences: int = Field(default=1, ge=1)
     last_seen_at: datetime = Field(default_factory=utc_now)
