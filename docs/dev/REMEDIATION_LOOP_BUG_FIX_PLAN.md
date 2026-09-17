@@ -1,51 +1,56 @@
-# Implementation Plan: Eliminating the Remediation Loop Bug & Exercise Stagnation
+# Architecture Implementation Plan: Eliminating the Remediation Loop Bug & Hardening the Remediation Engine
 
 **Target Location:** `docs/dev/REMEDIATION_LOOP_BUG_FIX_PLAN.md`  
 **Author:** Principal Senior Software Engineer (Systems & AI Architecture)  
-**Date:** September 16, 2026  
-**Status:** Pending Review / Plan Mode  
+**Date:** September 17, 2026  
+**Status:** Plan Approved for Documentation / Implementation Pending User Approval  
 
 ---
 
 ## 1. Goal Description
 
-During closed-loop testing of the agentic tutoring system, when a learner submits 3 incorrect answers for a concept (e.g. `hsk1_c01`), they enter remediation. Under the current implementation, the system exhibits four compounding defects:
-1. **Exercise Stagnation:** It presents the exact same simple question (`hsk1_c01_e01`) 3 times in a row because exercise fetching hardcodes `limit=1, randomize=False` without tracking completed items.
-2. **The Stepping Gap Trap:** It demands 3 consecutive successful turns to escape the `< 0.60` heuristic threshold because mastery only increments by `+0.25` per pass ($0.0 \to 0.25 \to 0.50 \to 0.75$).
-3. **Ghost Error Profile:** It never decrements or clears `state.error_profile`, causing both the LLM and heuristic planners to treat the concept as permanently defective.
-4. **Blind Ingress Modality:** It hardcodes `failed_attempts=0` at `SESSION_STARTED`, preventing the Teaching Worker from adapting away from basic `EXPLANATION`.
+During closed-loop learning sessions in GoalCoach, when a learner submits 2–3 incorrect answers for an HSK1 concept (e.g., `hsk1_c01`), they enter remediation. Under the current implementation, four compounding defects trigger a catastrophic loop:
 
-This change accomplishes a complete, structural fix:
-- **Dynamic exercise rotation** with attempt history memory.
-- **Error profile lifecycle management** (error decrement and resolution upon passing rubrics).
-- **Failure history propagation** during session ingress so the Teaching Agent adapts modality.
-- **Planner progression guards** decoupling remedial re-scheduling from raw mastery score once today's remediation has succeeded.
+1. **Exercise Stagnation:** Exercise attachment in `TeachingWorker._attach_curriculum_exercise` hardcodes `limit=1, randomize=False` without tracking completed or failed exercises. The learner is repeatedly served `hsk1_c01_e01` across every turn.
+2. **The Stepping Gap Trap:** Mastery increments by only `+0.25` per pass ($0.0 \to 0.25 \to 0.50 \to 0.75$). Both the heuristic and LLM planners require $\ge 0.60$ (or $\ge 0.50$ for prerequisites) to consider a concept learned or to unlock downstream concepts. Because the learner's score is only $0.25$ after passing remediation, the planner immediately re-schedules `hsk1_c01` for remediation.
+3. **Ghost Error Profile & Turn-Level Replanning Trap:** `ProgressService.apply_grading_result` never decrements or clears `state.error_profile` on pass. Furthermore, the check `for err in state.error_profile: if err.occurrences >= 2: state.needs_replanning = True` runs unconditionally (even on pass). As a result, immediately after passing a remedial exercise, `needs_replanning` is set back to `True`, triggering an instant re-planning cascade on the exact same turn.
+4. **Blind Ingress Modality:** `DeterministicOrchestrator._handle_session_started` hardcodes `failed_attempts=0`, preventing the Teaching Worker from adapting away from basic `EXPLANATION` into `CONTRAST_EXAMPLE` or `HINT`.
+
+This implementation plan delivers an enterprise-grade, deterministic resolution:
+- **Dynamic exercise rotation** with attempt and completion history memory.
+- **Error profile lifecycle management** (clean decrement and resolution upon passing rubrics, decoupling replanning triggers from successful turns).
+- **Failure history propagation** during session ingress so teaching modalities adapt dynamically.
+- **Prerequisite DAG progression guards** that recognize concepts remediated today to unlock downstream curriculum items without infinite loops.
+- **Canonical SQLite Database #1 initialization** from SQL sources.
+- **Comprehensive edge-case stress test suite** verifying multi-error resolution, exercise exhaustion, DAG cascades, and state persistence.
 
 ---
 
-## 2. Architecture Comparison: Broken vs. Fixed
+## 2. Architecture Comparison: Broken vs. Hardened Remediation Engine
 
 ```mermaid
 flowchart TD
-    subgraph CurrentBehavior ["Current Broken Loop"]
-        A1["Wrong Answer x3"] --> B1["error_profile occurrences = 3<br/>needs_replanning = True"]
-        B1 --> C1["Planner adds REMEDIAL item<br/>hsk1_c01"]
+    subgraph CurrentBrokenLoop ["Current Defective Loop"]
+        A1["Fail Answer x2 or x3"] --> B1["error_profile occurrences = 2+<br/>needs_replanning = True"]
+        B1 --> C1["Planner slots REMEDIAL item<br/>hsk1_c01"]
         C1 --> D1["SESSION_STARTED passes failed_attempts=0"]
-        D1 --> E1["Teacher always picks hsk1_c01_e01<br/>(limit=1, randomize=False)"]
-        E1 --> F1["User passes: mastery += 0.25 (0.0 -> 0.25)"]
-        F1 --> G1["mastery 0.25 is < 0.60<br/>error_profile still has occurrences=3!"]
-        G1 --> C1
+        D1 --> E1["Teacher serves hsk1_c01_e01<br/>(limit=1, randomize=False)"]
+        E1 --> F1["Learner passes: mastery 0.0 -> 0.25"]
+        F1 --> G1["Ghost Error: occurrences still 2+!<br/>apply_grading_result sets needs_replanning = True on PASS!"]
+        G1 --> H1["0.25 < 0.60 threshold trap: planner re-slots hsk1_c01"]
+        H1 --> C1
     end
 
-    subgraph ProposedBehavior ["Proposed Hardened Architecture"]
-        A2["Wrong Answer x3"] --> B2["error_profile occurrences = 3<br/>needs_replanning = True"]
+    subgraph HardenedEngine ["Hardened Enterprise Engine"]
+        A2["Fail Answer x2 or x3"] --> B2["error_profile occurrences = 2+<br/>needs_replanning = True"]
         B2 --> C2["Planner slots REMEDIAL item<br/>hsk1_c01"]
-        C2 --> D2["SESSION_STARTED detects REMEDIAL kind<br/>Passes real failed_attempts & error tag"]
-        D2 --> E2["Teaching Worker adapts modality<br/>(CONTRAST_EXAMPLE / HINT)"]
-        E2 --> F2["Exercise Selection rotates to uncompleted items:<br/>hsk1_c01_e02 or targeted remedial exercise"]
-        F2 --> G2["User passes gating rubric"]
-        G2 --> H2["ProgressService decrements error_profile<br/>today_completed_exercise_ids.append(ex_id)"]
-        H2 --> I2["Concept marked remediated for today<br/>Planner advances to next curriculum concept"]
+        C2 --> D2["SESSION_STARTED inspects error_profile<br/>Passes real failed_attempts & error context"]
+        D2 --> E2["Teaching Worker adapts modality<br/>(CONTRAST_EXAMPLE / HINT / RETRY)"]
+        E2 --> F2["Exercise Selection rotates:<br/>Picks unattempted item (e02) or uncompleted"]
+        F2 --> G2["Learner passes gating rubric"]
+        G2 --> H2["ProgressService resolves errors for concept<br/>today_completed_exercise_ids.append(ex_id)<br/>today_remediated_concept_ids.append(concept_id)<br/>needs_replanning = False"]
+        H2 --> I2["DAG Planner validates hsk1_c01 remediated today<br/>Unlocks hsk1_c02 without stepping gap trap!"]
+        I2 --> J2["Session 2 advances to hsk1_c02"]
     end
 ```
 
@@ -54,50 +59,106 @@ flowchart TD
 ## 3. User Review Required
 
 > [!IMPORTANT]
-> **Error Profile Decay Semantics:** When a learner passes a gating assessment during remediation, we will decrement the error `occurrences` by 1. If `occurrences` reaches 0 (or $\le 1$ when gating passed), the error is purged from `state.error_profile`. This cleanly terminates the repeated-error replanning trigger without losing diagnostic history in the immutable learning event audit log.
+> **Database Initialization Requirement:** `data/database1/goalcoach_hsk1_learning.db` is currently an empty 0-byte file in this working tree. As specified in Section 3 of `REMEDIATION_LOOP_BUG_FIX_PLAN.md`, we will populate it using:
+> ```bash
+> sqlite3 data/database1/goalcoach_hsk1_learning.db < data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
+> ```
+> This creates the 20 curriculum concepts, 80+ teaching cards, 80+ exercises, and prerequisite dependency graph required by live tests and runtime.
 
 > [!IMPORTANT]
-> **Database Initialization Requirement:** `data/database1/goalcoach_hsk1_learning.db` is currently an empty 0-byte file in this working copy. The canonical SQLite tables and 80+ HSK1 exercises are stored in `data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql` and the zipped package. We will initialize this database file as part of the verification process so real exercise rotation (`e01` $\to$ `e02` $\to$ `e03`) executes against live data.
+> **Error Profile Decay & Resolution Semantics:**
+> - When `result.passed_gates` is True for a `REMEDIAL` plan item, all errors for `concept_id` in `state.error_profile` are cleanly resolved (`occurrences = 0`) and purged, and `concept_id` is appended to `state.today_remediated_concept_ids`.
+> - For non-remedial passes, errors for `concept_id` decrement by 1 (`err.occurrences -= 1`), purging any where `occurrences <= 0`.
+> - The `needs_replanning = True` threshold check is strictly moved inside the failure branch (`if not result.passed_gates:`), eliminating the bug where passing an answer set `needs_replanning = True`.
 
 > [!NOTE]
-> **Remedial Exercise Progression:** When in remediation, the system will prioritize exercises that haven't been completed today (`state.today_completed_exercise_ids`), and if available, exercises tagged with the detected error taxonomy (e.g., `vocab_recall`, `dialogue`).
+> **DAG Prerequisite Progression Policy:**
+> When evaluating whether concept $B$ (e.g. `hsk1_c02`) can be planned, each prerequisite $A$ (e.g. `hsk1_c01`) is considered met if:
+> `(A in state.mastery and state.mastery[A].mastery_score >= 0.50) or (A in state.today_remediated_concept_ids)`
+> This breaks the "Stepping Gap Trap" where a remediated concept with mastery $0.25$ would otherwise block curriculum progression and force infinite loops.
 
 ---
 
-## 4. Proposed Code Changes
+## 4. Proposed Code Changes Grouped by Component
 
-### Component 1: Domain Layer
+---
+
+### Component 1: Domain Models Layer
+
 #### [MODIFY] [`src/goalcoach/domain/models.py`](file:///Users/MusabKaya/Documents/GoalCoach/src/goalcoach/domain/models.py)
 - In `LearnerState`:
-  ```python
-  today_completed_exercise_ids: list[str] = Field(default_factory=list)
-  today_remediated_concept_ids: list[str] = Field(default_factory=list)
-  ```
-- Add helper method `all_attempted_exercise_ids(self) -> set[str]` returning the union of completed and mistake exercise IDs for today.
+  - Add `today_completed_exercise_ids: list[str] = Field(default_factory=list)`
+  - Add `today_remediated_concept_ids: list[str] = Field(default_factory=list)`
+  - Add helper method:
+    ```python
+    def all_attempted_exercise_ids(self) -> set[str]:
+        """Returns union of completed and mistake exercise IDs attempted today."""
+        return set(self.today_completed_exercise_ids) | set(self.today_mistake_exercise_ids)
+    ```
 
 ---
 
-### Component 2: Application Layer
+### Component 2: Application Layer (State Mutations & Orchestration)
+
 #### [MODIFY] [`src/goalcoach/application/progress_service.py`](file:///Users/MusabKaya/Documents/GoalCoach/src/goalcoach/application/progress_service.py)
-- In `apply_grading_result`:
-  - When `result.passed_gates` is True:
-    - Add `result.exercise_id` to `state.today_completed_exercise_ids`.
-    - **Resolve / Decay Errors:** For all records in `state.error_profile` matching `concept_id`:
+- Refactor `apply_grading_result`:
+  - In `if result.passed_gates:`:
+    - Record exercise completion:
       ```python
-      err.occurrences -= 1
+      ex_id = str(result.exercise_id)
+      if ex_id not in state.today_completed_exercise_ids:
+          state.today_completed_exercise_ids.append(ex_id)
       ```
-    - Purge resolved records:
+    - Check if active item was remedial:
       ```python
+      is_remedial_item = False
+      if state.active_plan:
+          for item in state.active_plan.items:
+              if item.concept_id == concept_id and not item.completed:
+                  if item.kind == PlanItemKind.REMEDIAL:
+                      is_remedial_item = True
+                  break
+
+      if is_remedial_item and concept_id not in state.today_remediated_concept_ids:
+          state.today_remediated_concept_ids.append(concept_id)
+      ```
+    - Error profile resolution/decay:
+      ```python
+      for err in state.error_profile:
+          if err.concept_id == concept_id:
+              if is_remedial_item:
+                  err.occurrences = 0
+              else:
+                  err.occurrences -= 1
+
       state.error_profile = [e for e in state.error_profile if e.occurrences > 0]
+      has_recurring = any(e.occurrences >= 2 for e in state.error_profile)
+      if not has_recurring:
+          state.needs_replanning = False
       ```
-    - If `state.active_plan`: if the completed item was `PlanItemKind.REMEDIAL`, add `concept_id` to `state.today_remediated_concept_ids`.
-    - If no recurring errors remain (`occurrences >= 2`), ensure `state.needs_replanning = False`.
+  - In `else:` (failure branch):
+    - Keep mastery decrement, mistake exercise tracking, error recording.
+    - Move `state.needs_replanning = True` check **inside** this failure branch exclusively:
+      ```python
+      for err in state.error_profile:
+          if err.concept_id == concept_id and err.occurrences >= 2:
+              state.needs_replanning = True
+              logger.info(
+                  "Threshold reached for error %s on concept %s (occurrences: %d); set needs_replanning=True",
+                  err.code,
+                  concept_id,
+                  err.occurrences,
+              )
+              break
+      ```
 
 #### [MODIFY] [`src/goalcoach/application/orchestrator.py`](file:///Users/MusabKaya/Documents/GoalCoach/src/goalcoach/application/orchestrator.py)
 - In `_handle_session_started`:
-  - Check if `active_item.kind == PlanItemKind.REMEDIAL`.
-  - Calculate real failure count from `state.error_profile`:
+  - Detect remedial item and derive real `failed_attempts`:
     ```python
+    active_item = next((item for item in plan.items if not item.completed), plan.items[0])
+    concept_id = active_item.concept_id
+
     failed_attempts = sum(
         err.occurrences for err in state.error_profile if err.concept_id == concept_id
     )
@@ -105,14 +166,17 @@ flowchart TD
         failed_attempts = 1
     ```
   - Forward `failed_attempts` into `teaching_worker.teach_concept`.
-- In `_handle_answer_submitted`:
-  - When a remedial item passes, verify `state.needs_replanning` is reset to False so the learner is not trapped in immediate re-planning.
+- In `_deterministic_fallback_plan`:
+  - Mirror the hardened candidate filtering:
+    - Only add remedial candidates if `cid not in state.today_remediated_concept_ids`.
+    - Check prerequisite satisfaction before adding new concepts.
 
 ---
 
-### Component 3: Agent Layer
+### Component 3: Agent Layer (Teaching Rotation & Planning DAG)
+
 #### [MODIFY] [`src/goalcoach/agents/teaching_agent.py`](file:///Users/MusabKaya/Documents/GoalCoach/src/goalcoach/agents/teaching_agent.py)
-- Refactor `_attach_curriculum_exercise`:
+- In `_attach_curriculum_exercise`:
   ```python
   @staticmethod
   def _attach_curriculum_exercise(
@@ -129,54 +193,120 @@ flowchart TD
       if not all_exercises:
           raise LookupError(f"No curriculum exercise found for concept {action.concept_id}")
 
-      # Exclude completed exercises
       completed = set(state.today_completed_exercise_ids) if state else set()
-      uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
-      
-      # Select exercise
-      selected = uncompleted[0] if uncompleted else all_exercises[0]
-      ...
+      mistakes = set(state.today_mistake_exercise_ids) if state else set()
+
+      if is_remedial:
+          # In remediation: prioritize exercises never attempted today (neither completed nor failed)
+          candidates = [e for e in all_exercises if e.exercise_id not in completed and e.exercise_id not in mistakes]
+          if not candidates:
+              # If all exercises have been attempted, pick one not yet completed
+              candidates = [e for e in all_exercises if e.exercise_id not in completed]
+          selected = candidates[0] if candidates else all_exercises[0]
+      else:
+          uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
+          selected = uncompleted[0] if uncompleted else all_exercises[0]
+
+      payload = dict(action.exercise_payload or {})
+      payload.update(
+          {
+              "exercise_id": selected.exercise_id,
+              "concept_id": selected.concept_id,
+              "prompt": selected.prompt,
+              "instruction": selected.instruction or "",
+          }
+      )
+      action.exercise_payload = payload
+      return action
   ```
 - In `TeachingWorker.teach_concept`:
-  - Pass `state` and `is_remedial=(failed_attempts > 0)` to `_attach_curriculum_exercise`.
-  - Update `TEACHING_SYSTEM_PROMPT` to enforce `CONTRAST_EXAMPLE` or `HINT` when in remediation.
+  - Pass `state=state, is_remedial=(failed_attempts > 0)` to both LLM and fallback branches calling `_attach_curriculum_exercise`.
 
 #### [MODIFY] [`src/goalcoach/agents/planning_agent.py`](file:///Users/MusabKaya/Documents/GoalCoach/src/goalcoach/agents/planning_agent.py)
 - In `_heuristic_fallback`:
-  - Only add `cid` to `remedial_candidates` if:
-    1. `cid not in state.today_remediated_concept_ids`; AND
-    2. It has active recurring errors (`occurrences >= 2`) OR (`mastery_score < 0.60` AND `cid not in state.today_studied_concept_ids`).
-  - Move to next prerequisite-valid concept when remedial concept is completed.
+  - Update `remedial_candidates` logic:
+    ```python
+    remedial_candidates: list[str] = []
+    if state.needs_replanning and state.error_profile:
+        sorted_errors = sorted(state.error_profile, key=lambda e: e.occurrences, reverse=True)
+        for e in sorted_errors:
+            if e.concept_id not in state.today_remediated_concept_ids and e.concept_id not in remedial_candidates:
+                remedial_candidates.append(e.concept_id)
+
+    for cid, m in state.mastery.items():
+        if (
+            m.mastery_score < 0.60
+            and cid not in state.today_remediated_concept_ids
+            and cid not in state.today_studied_concept_ids
+            and cid not in remedial_candidates
+        ):
+            remedial_candidates.append(cid)
+    ```
+  - Update prerequisite satisfaction in New Concepts:
+    ```python
+    prereqs = prereq_graph.get(cid, frozenset())
+    prereqs_met = all(
+        (
+            p in state.mastery
+            and (
+                state.mastery[p].mastery_score >= 0.50
+                or p in state.today_remediated_concept_ids
+            )
+        )
+        for p in prereqs
+    )
+    ```
 - In `PlanningWorker.create_plan`:
-  - Add deterministic DAG prerequisite validation to prevent scheduling concepts whose prerequisites in `state.mastery` are $< 0.50$.
+  - Add deterministic DAG prerequisite verification for items output by LLM:
+    ```python
+    # Guardrail: Validate prerequisites for scheduled NEW concepts
+    prereq_graph = content_service.get_all_prerequisites()
+    validated_items = []
+    for item in budgeted_items:
+        if item.kind == PlanItemKind.NEW:
+            prereqs = prereq_graph.get(item.concept_id, frozenset())
+            prereqs_met = all(
+                (p in state.mastery and (state.mastery[p].mastery_score >= 0.50 or p in state.today_remediated_concept_ids))
+                for p in prereqs
+            )
+            if not prereqs_met:
+                continue
+        validated_items.append(item)
+    ```
 
 ---
 
-## 5. Verification Plan
+## 5. Verification Plan & Edge-Case Stress Testing
 
-### Automated Testing
-1. **Populate Database #1 from canonical SQL:**
-   ```bash
-   sqlite3 data/database1/goalcoach_hsk1_learning.db < data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
-   ```
-2. **New Dedicated Integration Test File:** `tests/integration/test_remediation_loop.py`
-   - `test_remediation_triggers_after_repeated_errors`: Validates `needs_replanning` and remedial item slotting.
-   - `test_remediation_exercise_rotates_and_does_not_repeat_e01`: Validates that turn 2 or remedial turn serves `e02` or `e03`.
-   - `test_remediation_success_clears_error_profile`: Validates error decrement and removal on pass.
-   - `test_curriculum_advances_after_remediation_without_infinite_loop`: Validates progression to `hsk1_c02` rather than re-scheduling `hsk1_c01`.
-3. **Regression Suite:**
-   ```bash
-   pytest tests/integration/test_closed_loop.py tests/unit -q
-   ```
+### 1. Database Initialization
+Execute:
+```bash
+sqlite3 data/database1/goalcoach_hsk1_learning.db < data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
+```
+Verify table row counts:
+- `curriculum_concepts`: 20 rows
+- `teaching_cards`: 80+ rows
+- `exercises`: 80+ rows
+- `concept_prerequisites`: 18 rows
 
-### Manual CLI Walkthrough
-1. Launch `python -m goalcoach.agents.terminal_harness`.
-2. Fail 2–3 times deliberately.
-3. Verify:
-   - Yellow alert box appears: *"ALERT: Repeated error threshold reached!"*
-   - Teaching modality switches to `CONTRAST_EXAMPLE` or `HINT`.
-   - Practice box shows prompt #2 (e.g. `Goodbye`) instead of repeating prompt #1 (`你好`).
-4. Submit correct answer:
-   - Receives green PASS.
-   - State table shows error decremented.
-   - Next plan item moves forward in curriculum rather than restarting the remedial loop.
+### 2. New Dedicated Integration Suite: `tests/integration/test_remediation_loop.py`
+
+| Test Case | Scenario / Invariant Verified |
+| :--- | :--- |
+| `test_remediation_triggers_after_repeated_errors` | Fail twice on `hsk1_c01` $\to$ `state.needs_replanning` becomes `True` $\to$ Orchestrator adapts plan to slot `REMEDIAL` for `hsk1_c01`. |
+| `test_remediation_exercise_rotates_and_does_not_repeat_e01` | Learner failed `hsk1_c01_e01` $\to$ Remedial session serves `hsk1_c01_e02` (Goodbye) instead of repeating `e01`. |
+| `test_remediation_success_clears_error_profile_and_resets_replanning` | Learner passes remedial exercise `hsk1_c01_e02` $\to$ `error_profile` is purged $\to$ `today_remediated_concept_ids` contains `hsk1_c01` $\to$ `needs_replanning` is `False`. |
+| `test_curriculum_advances_after_remediation_without_infinite_loop` | Next `SESSION_STARTED` after remedial pass generates plan advancing to `hsk1_c02` (Self-intro) rather than trapping on `hsk1_c01`. |
+| `test_edge_case_multiple_distinct_errors_for_same_concept` | **Stress Test:** Learner accumulates multiple different error codes (`ERR_VOCAB_MEANING` + `ERR_QUESTION_MA`). Remediation pass resolves all errors for that concept cleanly. |
+| `test_edge_case_exercise_exhaustion_graceful_fallback` | **Stress Test:** All 4 exercises for a concept are in mistake/completed history. System wraps around safely to `all_exercises[0]` without `IndexError`. |
+| `test_edge_case_zero_error_profile_remedial_ingress` | **Stress Test:** Plan item is marked `REMEDIAL`, but `state.error_profile` is empty. Orchestrator defaults `failed_attempts=1`, triggering `CONTRAST_EXAMPLE` or `HINT` instead of `EXPLANATION`. |
+| `test_edge_case_prerequisite_dag_blocks_unready_and_unlocks_remediated` | **Stress Test:** `hsk1_c03` requires `hsk1_c02`. Verifies `hsk1_c03` cannot be scheduled while `hsk1_c02` has 0.0 mastery, but is unlocked once `hsk1_c02` is remediated or mastered. |
+| `test_edge_case_state_persistence_and_reload_with_new_fields` | **Stress Test:** Serializes `LearnerState` with `today_completed_exercise_ids` and `today_remediated_concept_ids` into SQLite WAL and reloads, asserting lossless restoration. |
+
+### 3. Full Regression Verification Commands
+```bash
+./.venv/bin/pytest tests/integration/test_remediation_loop.py -v
+./.venv/bin/pytest tests/integration/test_closed_loop.py -v
+./.venv/bin/pytest tests/unit -q
+```
+Ensure 100% test pass rate across the entire repository.
