@@ -5,6 +5,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite*
 .chromadb/
 data/database2/chroma_db/*/
