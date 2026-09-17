@@ -213,7 +213,9 @@ class TeachingAction(DomainBaseModel):
 
     action_kind: TeachingActionKind
     concept_id: str = Field(min_length=1, max_length=128)
-    content: str = Field(description="Instructional explanation written in English with Chinese examples and Pinyin")
+    content: str = Field(
+        description="Instructional explanation written in English with Chinese examples and Pinyin"
+    )
     pinyin: str | None = Field(default=None, description="Disambiguated tone readings for Hanzi")
     exercise_payload: dict[str, Any] | None = Field(
         default=None, description="Structured payload if presenting an assessable practice exercise"
