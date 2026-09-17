@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import Field
 
+from goalcoach.application.progress_service import ProgressService
 from goalcoach.domain.enums import EventType, PlanItemKind, PlanStatus
 from goalcoach.domain.events import InboundEvent
 from goalcoach.domain.models import (
@@ -22,7 +23,6 @@ from goalcoach.domain.models import (
     TeachingAction,
     utc_now,
 )
-from goalcoach.application.progress_service import ProgressService
 from goalcoach.infrastructure.persistence.content_service import ContentService
 from goalcoach.infrastructure.persistence.learner_repository import SqliteLearnerRepository
 
@@ -89,7 +89,9 @@ class DeterministicOrchestrator:
             state = LearnerState(
                 learner_id=learner_id,
                 display_name=f"Learner {learner_id}",
-                goal=LearningGoal(title="HSK 1 Complete Goal", target_hsk_level=1, daily_available_minutes=20),
+                goal=LearningGoal(
+                    title="HSK 1 Complete Goal", target_hsk_level=1, daily_available_minutes=20
+                ),
             )
             await self.learner_repo.save(state)
 
@@ -271,7 +273,11 @@ class DeterministicOrchestrator:
         content_ex = self.content_service.get_exercise(exercise_id)
         if content_ex:
             ref_answers = list(content_ex.accepted_answers) if content_ex.accepted_answers else []
-            ans_val = content_ex.answer.get("value") if isinstance(content_ex.answer, dict) else str(content_ex.answer or "")
+            ans_val = (
+                content_ex.answer.get("value")
+                if isinstance(content_ex.answer, dict)
+                else str(content_ex.answer or "")
+            )
             if ans_val and ans_val not in ref_answers:
                 ref_answers.append(ans_val)
 
@@ -314,7 +320,9 @@ class DeterministicOrchestrator:
         replanned = False
         plan_update: PlanUpdate | None = None
         if state.needs_replanning:
-            logger.info("needs_replanning is True for learner %s; invoking Planning Agent", state.learner_id)
+            logger.info(
+                "needs_replanning is True for learner %s; invoking Planning Agent", state.learner_id
+            )
             if self.planning_worker:
                 plan_update = await self.planning_worker.create_plan(
                     state=state,
@@ -352,6 +360,8 @@ class DeterministicOrchestrator:
         """Deterministic plan generation if LLM planning worker is not injected."""
         all_concepts = self.content_service.list_all_concepts()
         concept_ids = [c.concept_id for c in all_concepts] or ["hsk1_c01", "hsk1_c02"]
+        items: list[PlanItem] = []
+
         # Remedial candidates: exclude already remediated concepts today
         remedial_candidates: list[str] = []
         if state.error_profile:
@@ -465,6 +475,7 @@ class DeterministicOrchestrator:
 
     def _deterministic_fallback_grade(self, exercise: Exercise, answer: str) -> GradingResult:
         from uuid import uuid4
+
         from goalcoach.domain.models import RubricScores
 
         clean_answer = answer.strip()

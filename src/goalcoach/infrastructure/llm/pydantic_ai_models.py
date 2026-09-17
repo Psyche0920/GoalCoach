@@ -12,6 +12,7 @@ import httpx
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
+
 try:
     from pydantic_ai.models.openai import OpenAIChatModel as OpenAIModel
 except ImportError:

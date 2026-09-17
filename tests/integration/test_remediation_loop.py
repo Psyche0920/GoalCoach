@@ -151,7 +151,11 @@ async def test_remediation_exercise_rotates_and_does_not_repeat_e01(
         await orchestrator.handle_event(
             event_type=EventType.ANSWER_SUBMITTED,
             learner_id=learner_id,
-            payload={"exercise_id": "hsk1_c01_e01", "concept_id": "hsk1_c01", "answer": f"Mistake_{i}"},
+            payload={
+                "exercise_id": "hsk1_c01_e01",
+                "concept_id": "hsk1_c01",
+                "answer": f"Mistake_{i}",
+            },
         )
 
     # Start remedial session
@@ -304,6 +308,7 @@ async def test_edge_case_multiple_distinct_errors_for_same_concept(
     )
     # Give active plan with remedial item
     from goalcoach.domain.models import DailyPlan, PlanItem
+
     state.active_plan = DailyPlan(
         learner_id=state.learner_id,
         items=[
@@ -319,7 +324,9 @@ async def test_edge_case_multiple_distinct_errors_for_same_concept(
 
     pass_result = GradingResult(
         exercise_id="hsk1_c01_e02",
-        scores=RubricScores(grammatical_correctness=1.0, semantic_precision=1.0, pragmatic_appropriateness=1.0),
+        scores=RubricScores(
+            grammatical_correctness=1.0, semantic_precision=1.0, pragmatic_appropriateness=1.0
+        ),
         passed_gates=True,
         confidence=1.0,
         feedback="Perfect!",
@@ -346,7 +353,12 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
     state = LearnerState(
         goal=LearningGoal(title="HSK1"),
         # Simulate all 4 exercises for hsk1_c01 completed
-        today_completed_exercise_ids=["hsk1_c01_e01", "hsk1_c01_e02", "hsk1_c01_e03", "hsk1_c01_e04"],
+        today_completed_exercise_ids=[
+            "hsk1_c01_e01",
+            "hsk1_c01_e02",
+            "hsk1_c01_e03",
+            "hsk1_c01_e04",
+        ],
     )
 
     # Should not raise IndexError
@@ -377,6 +389,7 @@ async def test_edge_case_zero_error_profile_remedial_ingress(
 
     # Manually configure state with REMEDIAL item but empty error_profile
     from goalcoach.domain.models import DailyPlan, PlanItem
+
     state = LearnerState(
         learner_id=learner_id,
         goal=LearningGoal(title="HSK 1"),
@@ -429,7 +442,9 @@ async def test_edge_case_prerequisite_dag_blocks_unready_and_unlocks_remediated(
     # Case B: hsk1_c01 was remediated today with mastery 0.25 -> hsk1_c02 is UNLOCKED
     state_b = LearnerState(
         goal=LearningGoal(title="HSK1", daily_available_minutes=20),
-        mastery={"hsk1_c01": ConceptMastery(concept_id="hsk1_c01", mastery_score=0.25, evidence_count=1)},
+        mastery={
+            "hsk1_c01": ConceptMastery(concept_id="hsk1_c01", mastery_score=0.25, evidence_count=1)
+        },
         today_remediated_concept_ids=["hsk1_c01"],
         today_studied_concept_ids=["hsk1_c01"],
     )

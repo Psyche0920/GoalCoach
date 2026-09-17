@@ -32,8 +32,8 @@ def mock_content_repo():
     card = MagicMock()
     card.content = "Prompt: 你好\nPinyin: nǐ hǎo\nMeaning: Hello"
 
-    repo.get_concept.side_effect = (
-        lambda q: concept if "hsk1_c01" in q or "hello" in q.lower() else None
+    repo.get_concept.side_effect = lambda q: (
+        concept if "hsk1_c01" in q or "hello" in q.lower() else None
     )
     repo.list_cards_for_concept.return_value = [card]
     return repo

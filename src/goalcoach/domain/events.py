@@ -57,9 +57,9 @@ class InboundEvent(DomainBaseModel):
 
 
 __all__ = [
-    "GoalCreatedPayload",
-    "SessionStartedPayload",
-    "HelpRequestedPayload",
     "AnswerSubmittedPayload",
+    "GoalCreatedPayload",
+    "HelpRequestedPayload",
     "InboundEvent",
+    "SessionStartedPayload",
 ]

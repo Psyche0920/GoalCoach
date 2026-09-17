@@ -167,11 +167,15 @@ class PlanningWorker:
 
                     if validated_budgeted:
                         plan_update.ordered_items = validated_budgeted
-                        plan_update.daily_allocation_minutes = sum(it.estimated_minutes for it in validated_budgeted)
+                        plan_update.daily_allocation_minutes = sum(
+                            it.estimated_minutes for it in validated_budgeted
+                        )
                         return plan_update
 
         except Exception as exc:
-            logger.warning("PlanningAgent LLM execution failed (%s); using deterministic heuristic.", exc)
+            logger.warning(
+                "PlanningAgent LLM execution failed (%s); using deterministic heuristic.", exc
+            )
 
         # Deterministic Heuristic Fallback
         return self._heuristic_fallback(state, content_service, available_minutes)
@@ -227,17 +231,20 @@ class PlanningWorker:
 
         # 2. Spaced Review
         for cid, m in state.mastery.items():
-            if m.is_review_due() and cid not in [it.concept_id for it in items]:
-                if allocated_minutes + 5 <= available_minutes:
-                    items.append(
-                        PlanItem(
-                            concept_id=cid,
-                            kind=PlanItemKind.REVIEW,
-                            objective=f"Review spaced repetition concept {cid}",
-                            estimated_minutes=5,
-                        )
+            if (
+                m.is_review_due()
+                and cid not in [it.concept_id for it in items]
+                and allocated_minutes + 5 <= available_minutes
+            ):
+                items.append(
+                    PlanItem(
+                        concept_id=cid,
+                        kind=PlanItemKind.REVIEW,
+                        objective=f"Review spaced repetition concept {cid}",
+                        estimated_minutes=5,
                     )
-                    allocated_minutes += 5
+                )
+                allocated_minutes += 5
             if allocated_minutes >= available_minutes:
                 break
 
@@ -257,17 +264,16 @@ class PlanningWorker:
                         )
                         for p in prereqs
                     )
-                    if prereqs_met:
-                        if allocated_minutes + 5 <= available_minutes:
-                            items.append(
-                                PlanItem(
-                                    concept_id=cid,
-                                    kind=PlanItemKind.NEW,
-                                    objective=f"Master new concept {cid}",
-                                    estimated_minutes=5,
-                                )
+                    if prereqs_met and allocated_minutes + 5 <= available_minutes:
+                        items.append(
+                            PlanItem(
+                                concept_id=cid,
+                                kind=PlanItemKind.NEW,
+                                objective=f"Master new concept {cid}",
+                                estimated_minutes=5,
                             )
-                            allocated_minutes += 5
+                        )
+                        allocated_minutes += 5
                 if allocated_minutes >= available_minutes or len(items) >= 4:
                     break
 
@@ -297,7 +303,9 @@ class PlanningWorker:
             daily_allocation_minutes=allocated_minutes,
             ordered_items=items,
             adaptation_rationale=rationale,
-            roadmap_adjustments=["Remediate error concepts first"] if state.needs_replanning else [],
+            roadmap_adjustments=["Remediate error concepts first"]
+            if state.needs_replanning
+            else [],
         )
 
 

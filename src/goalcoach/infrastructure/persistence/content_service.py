@@ -43,13 +43,15 @@ class ContentService:
         """Fetch cards that contain bilingual examples for a concept."""
         cards = self._repo.get_teaching_cards(concept_id)
         # Filter for cards that include concrete examples
-        example_cards = [c for c in cards if c.example_zh or c.card_type in ("example", "mini_dialogue")]
+        example_cards = [
+            c for c in cards if c.example_zh or c.card_type in ("example", "mini_dialogue")
+        ]
         return example_cards if example_cards else cards
 
     def get_prerequisites(self, concept_id: str) -> list[str]:
         """Fetch all direct prerequisite concept IDs for a target concept."""
         all_prereqs = self._repo.get_prerequisites()
-        return sorted(list(all_prereqs.get(concept_id, frozenset())))
+        return sorted(all_prereqs.get(concept_id, frozenset()))
 
     def get_all_prerequisites(self) -> Mapping[str, frozenset[str]]:
         """Return the complete prerequisite dependency graph."""

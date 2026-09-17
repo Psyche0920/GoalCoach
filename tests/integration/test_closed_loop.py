@@ -183,11 +183,15 @@ async def test_ac2_ac10_core_planning_proof_same_goal_different_state(
     # Assert plan B prioritizes REMEDIAL on the weak concept
     kinds_b = [item.kind for item in plan_b.ordered_items]
     assert PlanItemKind.REMEDIAL in kinds_b
-    remedial_concepts = [item.concept_id for item in plan_b.ordered_items if item.kind == PlanItemKind.REMEDIAL]
+    remedial_concepts = [
+        item.concept_id for item in plan_b.ordered_items if item.kind == PlanItemKind.REMEDIAL
+    ]
     assert "hsk1_c04" in remedial_concepts
 
     # Plan items are demonstrably different
-    assert [i.concept_id for i in plan_a.ordered_items] != [i.concept_id for i in plan_b.ordered_items]
+    assert [i.concept_id for i in plan_a.ordered_items] != [
+        i.concept_id for i in plan_b.ordered_items
+    ]
 
 
 # --- AC4 & AC11: The Core Teaching Proof ---
@@ -289,7 +293,9 @@ def test_ac6_progress_service_mathematical_invariants() -> None:
     # 1. Successful attempt: mastery +0.25, interval * 1.8, retention = 1.0
     pass_result = GradingResult(
         exercise_id=uuid4(),
-        scores=RubricScores(grammatical_correctness=1.0, semantic_precision=1.0, pragmatic_appropriateness=1.0),
+        scores=RubricScores(
+            grammatical_correctness=1.0, semantic_precision=1.0, pragmatic_appropriateness=1.0
+        ),
         passed_gates=True,
         confidence=1.0,
         feedback="Great job!",
@@ -304,7 +310,9 @@ def test_ac6_progress_service_mathematical_invariants() -> None:
     # 2. First failure: mastery -0.10, interval reset to 1.0, error logged
     fail_result = GradingResult(
         exercise_id=uuid4(),
-        scores=RubricScores(grammatical_correctness=0.3, semantic_precision=0.4, pragmatic_appropriateness=0.5),
+        scores=RubricScores(
+            grammatical_correctness=0.3, semantic_precision=0.4, pragmatic_appropriateness=0.5
+        ),
         passed_gates=False,
         confidence=0.9,
         feedback="Missing 吗 particle",

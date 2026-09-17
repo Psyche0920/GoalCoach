@@ -128,7 +128,11 @@ class ProgressService:
                 state.today_mistake_exercise_ids.append(ex_id)
 
             # Log detected error codes
-            error_codes = result.detected_errors if result.detected_errors else [f"ERR_UNSPECIFIED_{concept_id}"]
+            error_codes = (
+                result.detected_errors
+                if result.detected_errors
+                else [f"ERR_UNSPECIFIED_{concept_id}"]
+            )
             for code in error_codes:
                 self._record_error(state, code=code, concept_id=concept_id, at=now)
 

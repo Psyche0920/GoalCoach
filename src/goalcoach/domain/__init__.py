@@ -70,4 +70,3 @@ __all__ = [
     "decayed_retention",
     "utc_now",
 ]
-

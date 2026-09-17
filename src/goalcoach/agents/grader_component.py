@@ -124,9 +124,7 @@ class GraderComponent:
                 any(crit in err.upper() for crit in critical_prefixes)
                 for err in llm_result.detected_errors
             )
-            if has_critical_error:
-                llm_result.passed_gates = False
-            elif (
+            if has_critical_error or (
                 llm_result.scores.grammatical_correctness < 0.70
                 or llm_result.scores.semantic_precision < 0.70
             ):
@@ -134,7 +132,9 @@ class GraderComponent:
 
             return llm_result
         except Exception as exc:
-            logger.warning("GraderComponent LLM execution failed (%s); running heuristic evaluation.", exc)
+            logger.warning(
+                "GraderComponent LLM execution failed (%s); running heuristic evaluation.", exc
+            )
 
         return self._heuristic_fallback(exercise, clean_student_ans, exercise_id)
 
@@ -154,7 +154,9 @@ class GraderComponent:
         if "question_ma" in exercise.concept_id or "ma" in exercise.concept_id:
             if "吗" not in answer and "ma" not in answer.lower():
                 detected_errors.append("ERR_QUESTION_MA")
-                feedback = "Remember to add the question particle 吗 at the end of a yes/no question!"
+                feedback = (
+                    "Remember to add the question particle 吗 at the end of a yes/no question!"
+                )
             else:
                 passed = True
                 feedback = "Good job using the question particle 吗!"

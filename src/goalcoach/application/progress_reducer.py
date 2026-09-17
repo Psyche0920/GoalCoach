@@ -70,11 +70,14 @@ def reduce_concept_progress(
     if event.grading_result:
         scores = event.grading_result.get("scores")
         if isinstance(scores, dict) and scores:
-            quality = float(
-                scores.get("grammatical_correctness", 1.0)
-                + scores.get("semantic_precision", 1.0)
-                + scores.get("pragmatic_appropriateness", 1.0)
-            ) / 3.0
+            quality = (
+                float(
+                    scores.get("grammatical_correctness", 1.0)
+                    + scores.get("semantic_precision", 1.0)
+                    + scores.get("pragmatic_appropriateness", 1.0)
+                )
+                / 3.0
+            )
 
     successful_retrievals = current.successful_spaced_retrievals
     avg_review_quality = current.average_review_quality
@@ -82,7 +85,7 @@ def reduce_concept_progress(
 
     is_review_event = is_spaced_review or event.event_type == "review"
     if is_review_event:
-        is_due = (current.next_review_at is not None and current.next_review_at <= evidence_at)
+        is_due = current.next_review_at is not None and current.next_review_at <= evidence_at
         # Count retrieval only if on a distinct calendar day or after due date
         if (is_distinct_day or is_due) and quality >= 0.75:
             successful_retrievals += 1
@@ -92,9 +95,7 @@ def reduce_concept_progress(
 
     # 3. Mastery Qualification Rule: >=4 retrievals, >=3 distinct days, avg quality >= 0.80
     qualifies_mastery = (
-        successful_retrievals >= 4
-        and evidence_days >= 3
-        and avg_review_quality >= 0.80
+        successful_retrievals >= 4 and evidence_days >= 3 and avg_review_quality >= 0.80
     )
     is_mastered = current.is_mastered or qualifies_mastery
 
@@ -168,7 +169,9 @@ def compute_progress_summary(
     # 2. Goal Scope Progress
     goal_scope_learned_percent = learned_progress
     total_mastery = sum(p.mastery_score for p in tracked.values())
-    goal_scope_mastered_percent = min(100.0, round(100.0 * (total_mastery / max(len(tracked), 1)), 1))
+    goal_scope_mastered_percent = min(
+        100.0, round(100.0 * (total_mastery / max(len(tracked), 1)), 1)
+    )
 
     # 3. Communication Outcome
     passed_blueprints = len(state.passed_blueprint_ids)

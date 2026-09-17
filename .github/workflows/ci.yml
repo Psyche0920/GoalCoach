@@ -40,6 +40,11 @@ jobs:
       - name: Code Formatting Check (Ruff)
         run: uv run ruff format --check src/ apps/ tests/
 
+      - name: Initialize Curriculum SQLite Database
+        run: |
+          mkdir -p data/database1
+          sqlite3 data/database1/goalcoach_hsk1_learning.db < data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
+
       - name: Run Unit Tests
         run: uv run pytest tests/unit/ -v
 

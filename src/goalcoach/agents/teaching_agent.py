@@ -133,9 +133,7 @@ class TeachingWorker:
             learner_query=learner_query,
         )
 
-        relevant_errors = [
-            err.code for err in state.error_profile if err.concept_id == concept_id
-        ]
+        relevant_errors = [err.code for err in state.error_profile if err.concept_id == concept_id]
         interests_str = ", ".join(state.context_interests) if state.context_interests else "general"
 
         prompt = (
@@ -155,7 +153,9 @@ class TeachingWorker:
                     action, content_service, state=state, is_remedial=(failed_attempts > 0)
                 )
         except Exception as exc:
-            logger.warning("TeachingAgent LLM execution failed (%s); using heuristic fallback.", exc)
+            logger.warning(
+                "TeachingAgent LLM execution failed (%s); using heuristic fallback.", exc
+            )
 
         fallback = self._heuristic_fallback(
             concept_id,
@@ -190,7 +190,8 @@ class TeachingWorker:
         if is_remedial:
             # In remediation: prioritize unattempted exercises (neither completed nor failed today)
             candidates = [
-                e for e in all_exercises
+                e
+                for e in all_exercises
                 if e.exercise_id not in completed and e.exercise_id not in mistakes
             ]
             if not candidates:
@@ -235,7 +236,9 @@ class TeachingWorker:
 
         if failed_attempts == 0:
             # Standard Explanation
-            interests = f" (Focus: {', '.join(state.context_interests)})" if state.context_interests else ""
+            interests = (
+                f" (Focus: {', '.join(state.context_interests)})" if state.context_interests else ""
+            )
             content = (
                 f"Let's learn **{title_zh}** ({title_en}){interests}!\n\n"
                 f"**Pattern / Example:** {example_zh}\n"

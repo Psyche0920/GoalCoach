@@ -50,8 +50,8 @@ class RetrievalMode(StrEnum):
 
 __all__ = [
     "EventType",
-    "TeachingActionKind",
     "PlanItemKind",
     "PlanStatus",
     "RetrievalMode",
+    "TeachingActionKind",
 ]
