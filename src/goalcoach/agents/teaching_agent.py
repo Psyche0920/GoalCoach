@@ -46,7 +46,10 @@ Same concept + different error history -> different instructional action.
 Modality Selection Rules:
 1. Fresh Encounter (failed_attempts == 0):
    - Choose `EXPLANATION` or `DIALOGUE`.
-   - Provide a clear, bite-sized explanation. Always include Chinese characters (Hanzi), accurate tone-marked Pinyin, and English meaning.
+   - Provide a clear, bite-sized explanation. You MUST present the target vocabulary or sentence structure using a Markdown table with the exact columns:
+     | Character | Pinyin | Meaning |
+     | :--- | :--- | :--- |
+     | <Hanzi> | <tone-marked pinyin> | <English meaning> |
    - If the learner has context interests (e.g., travel, food, business), weave them into the example sentences!
 2. First Confusion / Help Requested (failed_attempts == 1 or learner asking for help):
    - Switch strategy! Do NOT simply repeat the same explanation.
@@ -60,9 +63,14 @@ Output Format:
 Emit a structured `TeachingAction` containing:
 - `action_kind`: The chosen modality tag.
 - `concept_id`: The canonical concept tag being taught.
-- `content`: The bilingual text shown to the student.
+- `content`: The teaching text shown to the student. For explanations, it MUST include the Markdown table (`| Character | Pinyin | Meaning |`).
 - `pinyin`: Tone-marked Pinyin for any Chinese characters.
-- `exercise_payload`: Optional dictionary with exercise details if presenting a question.
+
+Language Requirements (STRICT):
+- Instructional Medium: English ONLY. All grammar explanations, instructions, guidelines, hints, structural breakdowns, and feedback MUST be written in English.
+- Target Language: Mandarin Chinese. Chinese characters (Hanzi) and Pinyin are ONLY permitted as specific vocabulary examples, patterns, or target exercise items—NEVER as the explanatory language.
+
+Explanation and exercises should be strongly relevant.
 """
 
 teaching_agent = Agent(
@@ -241,9 +249,9 @@ class TeachingWorker:
             )
             content = (
                 f"Let's learn **{title_zh}** ({title_en}){interests}!\n\n"
-                f"**Pattern / Example:** {example_zh}\n"
-                f"*Pinyin:* {example_pinyin}\n"
-                f"*Meaning:* {example_en}\n\n"
+                f"| Character | Pinyin | Meaning |\n"
+                f"| :--- | :--- | :--- |\n"
+                f"| {example_zh} | {example_pinyin} | {example_en} |\n\n"
                 "Try forming a sentence using this pattern!"
             )
             return TeachingAction(
