@@ -67,9 +67,9 @@ The checked-in database currently contains:
 | `teaching_cards` | 21 | Small instructional units |
 | `exercises` | 80 | Structured practice and assessment items |
 
-The 20 concepts form a GoalCoach-authored MVP sequence. They must not be described as an official
-HSK-prescribed 20-lesson curriculum. The learning content is original GoalCoach material and should
-not be represented as copied from a commercial learning product.
+The 20 concepts form an adapted GoalCoach MVP sequence based on open-source HSK learning
+materials from wuxialearn (2024), structured and formatted for the GoalCoach agentic learning loop.
+They must not be described as an official HSK-prescribed 20-lesson curriculum.
 
 ## Schema
 
@@ -324,3 +324,12 @@ For database changes, validation should cover:
 Any schema change must be reviewed together with the SQLAlchemy persistence models and repository
 queries. A binary `.db` update without a matching SQL source and integration-test evidence is not a
 complete database change.
+
+## Licensing & Attribution
+
+The underlying HSK curriculum vocabulary, examples, and exercise materials are adapted from [wuxialearn](https://github.com/wuxialearn) under the **MIT License**.
+
+- **Copyright**: (c) 2024 wuxialearn
+- **License**: MIT License (full text available at [`docs/LICENSE`](../LICENSE))
+- **Adaptation & Modeling**: Normalized into relational SQLite tables (`curriculum_concepts`, `teaching_cards`, `exercises`, `concept_prerequisites`) and enhanced with prerequisite dependencies, structured JSON attributes, and taxonomy error tags for GoalCoach adaptive closed-loop learning.
+
