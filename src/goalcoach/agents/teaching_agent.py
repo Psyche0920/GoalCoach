@@ -151,7 +151,9 @@ class TeachingWorker:
             result, _ = await run_with_fallback(self.agent, prompt, deps=deps)
             action: TeachingAction = result.output
             if action.concept_id == concept_id and action.content:
-                return self._attach_curriculum_exercise(action, content_service)
+                return self._attach_curriculum_exercise(
+                    action, content_service, state=state, is_remedial=(failed_attempts > 0)
+                )
         except Exception as exc:
             logger.warning("TeachingAgent LLM execution failed (%s); using heuristic fallback.", exc)
 
@@ -162,30 +164,50 @@ class TeachingWorker:
             failed_attempts,
             learner_query,
         )
-        return self._attach_curriculum_exercise(fallback, content_service)
+        return self._attach_curriculum_exercise(
+            fallback, content_service, state=state, is_remedial=(failed_attempts > 0)
+        )
 
     @staticmethod
     def _attach_curriculum_exercise(
         action: TeachingAction,
         content_service: ContentService,
+        state: LearnerState | None = None,
+        is_remedial: bool = False,
     ) -> TeachingAction:
-        """Attach a canonical exercise without exposing its accepted answers."""
-        exercises = content_service.get_exercises_for_concept(
+        """Attach a canonical exercise without exposing its accepted answers, rotating on completion or failure."""
+        all_exercises = content_service.get_exercises_for_concept(
             action.concept_id,
-            limit=1,
+            limit=10,
             randomize=False,
         )
-        if not exercises:
+        if not all_exercises:
             raise LookupError(f"No curriculum exercise found for concept {action.concept_id}")
 
-        exercise = exercises[0]
+        completed = set(state.today_completed_exercise_ids) if state else set()
+        mistakes = set(state.today_mistake_exercise_ids) if state else set()
+
+        if is_remedial:
+            # In remediation: prioritize unattempted exercises (neither completed nor failed today)
+            candidates = [
+                e for e in all_exercises
+                if e.exercise_id not in completed and e.exercise_id not in mistakes
+            ]
+            if not candidates:
+                # If all exercises have been attempted, pick one not yet completed
+                candidates = [e for e in all_exercises if e.exercise_id not in completed]
+            selected = candidates[0] if candidates else all_exercises[0]
+        else:
+            uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
+            selected = uncompleted[0] if uncompleted else all_exercises[0]
+
         payload = dict(action.exercise_payload or {})
         payload.update(
             {
-                "exercise_id": exercise.exercise_id,
-                "concept_id": exercise.concept_id,
-                "prompt": exercise.prompt,
-                "instruction": exercise.instruction or "",
+                "exercise_id": selected.exercise_id,
+                "concept_id": selected.concept_id,
+                "prompt": selected.prompt,
+                "instruction": selected.instruction or "",
             }
         )
         action.exercise_payload = payload

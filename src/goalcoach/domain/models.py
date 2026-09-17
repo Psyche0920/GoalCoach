@@ -307,8 +307,14 @@ class LearnerState(DomainBaseModel):
     last_check_in_date: str | None = None
     estimated_days_remaining: int | None = None
     today_mistake_exercise_ids: list[str] = Field(default_factory=list)
+    today_completed_exercise_ids: list[str] = Field(default_factory=list)
     today_studied_concept_ids: list[str] = Field(default_factory=list)
+    today_remediated_concept_ids: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    def all_attempted_exercise_ids(self) -> set[str]:
+        """Returns union of completed and mistake exercise IDs attempted today."""
+        return set(self.today_completed_exercise_ids) | set(self.today_mistake_exercise_ids)
 
     def review_due(self, at: datetime | None = None) -> bool:
         """Checks if any concept in the learner's mastery profile is due for review."""

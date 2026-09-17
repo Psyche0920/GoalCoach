@@ -198,6 +198,13 @@ class DeterministicOrchestrator:
         active_item = next((item for item in plan.items if not item.completed), plan.items[0])
         concept_id = active_item.concept_id
 
+        # Derive failure history for active item
+        failed_attempts = sum(
+            err.occurrences for err in state.error_profile if err.concept_id == concept_id
+        )
+        if active_item.kind == PlanItemKind.REMEDIAL and failed_attempts == 0:
+            failed_attempts = 1
+
         # Invoke Teaching Agent
         teaching_action: TeachingAction
         if self.teaching_worker:
@@ -205,7 +212,7 @@ class DeterministicOrchestrator:
                 concept_id=concept_id,
                 state=state,
                 content_service=self.content_service,
-                failed_attempts=0,
+                failed_attempts=failed_attempts,
             )
         else:
             teaching_action = self._deterministic_fallback_teaching_action(concept_id)
@@ -345,11 +352,26 @@ class DeterministicOrchestrator:
         """Deterministic plan generation if LLM planning worker is not injected."""
         all_concepts = self.content_service.list_all_concepts()
         concept_ids = [c.concept_id for c in all_concepts] or ["hsk1_c01", "hsk1_c02"]
-        items: list[PlanItem] = []
-
-        # If recurring error, insert remedial item first
+        # Remedial candidates: exclude already remediated concepts today
+        remedial_candidates: list[str] = []
         if state.error_profile:
-            remedial_concept = state.error_profile[0].concept_id
+            for err in state.error_profile:
+                if (
+                    err.concept_id not in state.today_remediated_concept_ids
+                    and err.concept_id not in remedial_candidates
+                ):
+                    remedial_candidates.append(err.concept_id)
+
+        for cid, m in state.mastery.items():
+            if (
+                m.mastery_score < 0.60
+                and cid not in state.today_remediated_concept_ids
+                and cid not in state.today_studied_concept_ids
+                and cid not in remedial_candidates
+            ):
+                remedial_candidates.append(cid)
+
+        for remedial_concept in remedial_candidates:
             items.append(
                 PlanItem(
                     concept_id=remedial_concept,
@@ -358,6 +380,8 @@ class DeterministicOrchestrator:
                     estimated_minutes=10,
                 )
             )
+            if len(items) >= 2:
+                break
 
         # Due reviews
         for cid, mastery in state.mastery.items():
@@ -371,17 +395,30 @@ class DeterministicOrchestrator:
                     )
                 )
 
-        # New concepts
+        # New concepts (respecting prerequisites and DAG dependencies)
+        prereq_graph = self.content_service.get_all_prerequisites()
         for cid in concept_ids:
             if cid not in state.mastery and cid not in [it.concept_id for it in items]:
-                items.append(
-                    PlanItem(
-                        concept_id=cid,
-                        kind=PlanItemKind.NEW,
-                        objective=f"Learn new HSK1 concept {cid}",
-                        estimated_minutes=5,
+                prereqs = prereq_graph.get(cid, frozenset())
+                prereqs_met = all(
+                    (
+                        p in state.mastery
+                        and (
+                            state.mastery[p].mastery_score >= 0.50
+                            or p in state.today_remediated_concept_ids
+                        )
                     )
+                    for p in prereqs
                 )
+                if prereqs_met:
+                    items.append(
+                        PlanItem(
+                            concept_id=cid,
+                            kind=PlanItemKind.NEW,
+                            objective=f"Learn new HSK1 concept {cid}",
+                            estimated_minutes=5,
+                        )
+                    )
             if len(items) >= 3:
                 break
 

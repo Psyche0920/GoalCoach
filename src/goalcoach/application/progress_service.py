@@ -6,6 +6,7 @@ import logging
 import math
 from datetime import datetime, timedelta
 
+from goalcoach.domain.enums import PlanItemKind
 from goalcoach.domain.models import (
     ConceptMastery,
     ErrorRecord,
@@ -78,6 +79,44 @@ class ProgressService:
             mastery.retention_score = 1.0
             mastery.evidence_count += 1
             mastery.next_review_at = now + timedelta(days=mastery.interval_days)
+
+            # Record completed exercise ID
+            ex_id = str(result.exercise_id)
+            if ex_id not in state.today_completed_exercise_ids:
+                state.today_completed_exercise_ids.append(ex_id)
+
+            # Check if this concept was actively in remediation
+            is_remedial_item = False
+            if state.active_plan:
+                for item in state.active_plan.items:
+                    if item.concept_id == concept_id and not item.completed:
+                        if item.kind == PlanItemKind.REMEDIAL:
+                            is_remedial_item = True
+                        break
+
+            if is_remedial_item and concept_id not in state.today_remediated_concept_ids:
+                state.today_remediated_concept_ids.append(concept_id)
+
+            # Resolve / decay errors for concept_id without violating ge=1 validation invariant
+            if is_remedial_item:
+                # In remediation: all errors for this concept are cleanly resolved and purged
+                state.error_profile = [e for e in state.error_profile if e.concept_id != concept_id]
+            else:
+                # Standard pass: decrement occurrences by 1, purging if down to 0
+                remaining_errors: list[ErrorRecord] = []
+                for err in state.error_profile:
+                    if err.concept_id == concept_id:
+                        if err.occurrences > 1:
+                            err.occurrences -= 1
+                            remaining_errors.append(err)
+                        # If occurrences == 1, omitted to purge cleanly
+                    else:
+                        remaining_errors.append(err)
+                state.error_profile = remaining_errors
+
+            has_recurring = any(e.occurrences >= 2 for e in state.error_profile)
+            if not has_recurring:
+                state.needs_replanning = False
         else:
             mastery.mastery_score = max(0.0, min(1.0, round(mastery.mastery_score - 0.10, 4)))
             mastery.interval_days = 1.0
@@ -93,23 +132,23 @@ class ProgressService:
             for code in error_codes:
                 self._record_error(state, code=code, concept_id=concept_id, at=now)
 
+            # Check repeated error threshold (occurrences >= 2 for the concept) exclusively on failure
+            for err in state.error_profile:
+                if err.concept_id == concept_id and err.occurrences >= 2:
+                    state.needs_replanning = True
+                    logger.info(
+                        "Threshold reached for error %s on concept %s (occurrences: %d); set needs_replanning=True",
+                        err.code,
+                        concept_id,
+                        err.occurrences,
+                    )
+                    break
+
         mastery.last_reviewed_at = now
         state.mastery[concept_id] = mastery
 
         if concept_id not in state.today_studied_concept_ids:
             state.today_studied_concept_ids.append(concept_id)
-
-        # 4. Check repeated error threshold (occurrences >= 2 for the concept)
-        for err in state.error_profile:
-            if err.concept_id == concept_id and err.occurrences >= 2:
-                state.needs_replanning = True
-                logger.info(
-                    "Threshold reached for error %s on concept %s (occurrences: %d); set needs_replanning=True",
-                    err.code,
-                    concept_id,
-                    err.occurrences,
-                )
-                break
 
         state.updated_at = now
         return state

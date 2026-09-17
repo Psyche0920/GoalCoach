@@ -145,9 +145,30 @@ class PlanningWorker:
                         break
 
                 if budgeted_items:
-                    plan_update.ordered_items = budgeted_items
-                    plan_update.daily_allocation_minutes = sum(it.estimated_minutes for it in budgeted_items)
-                    return plan_update
+                    # Guardrail: Validate DAG prerequisites for scheduled NEW concepts
+                    prereq_graph = content_service.get_all_prerequisites()
+                    validated_budgeted: list[PlanItem] = []
+                    for item in budgeted_items:
+                        if item.kind == PlanItemKind.NEW:
+                            prereqs = prereq_graph.get(item.concept_id, frozenset())
+                            prereqs_met = all(
+                                (
+                                    p in state.mastery
+                                    and (
+                                        state.mastery[p].mastery_score >= 0.50
+                                        or p in state.today_remediated_concept_ids
+                                    )
+                                )
+                                for p in prereqs
+                            )
+                            if not prereqs_met:
+                                continue
+                        validated_budgeted.append(item)
+
+                    if validated_budgeted:
+                        plan_update.ordered_items = validated_budgeted
+                        plan_update.daily_allocation_minutes = sum(it.estimated_minutes for it in validated_budgeted)
+                        return plan_update
 
         except Exception as exc:
             logger.warning("PlanningAgent LLM execution failed (%s); using deterministic heuristic.", exc)
@@ -174,10 +195,20 @@ class PlanningWorker:
         if state.needs_replanning and state.error_profile:
             # Prioritize concept with most frequent error
             sorted_errors = sorted(state.error_profile, key=lambda e: e.occurrences, reverse=True)
-            remedial_candidates.extend(e.concept_id for e in sorted_errors)
+            for e in sorted_errors:
+                if (
+                    e.concept_id not in state.today_remediated_concept_ids
+                    and e.concept_id not in remedial_candidates
+                ):
+                    remedial_candidates.append(e.concept_id)
 
         for cid, m in state.mastery.items():
-            if m.mastery_score < 0.60 and cid not in remedial_candidates:
+            if (
+                m.mastery_score < 0.60
+                and cid not in state.today_remediated_concept_ids
+                and cid not in state.today_studied_concept_ids
+                and cid not in remedial_candidates
+            ):
                 remedial_candidates.append(cid)
 
         for cid in remedial_candidates:
@@ -214,10 +245,16 @@ class PlanningWorker:
         if not state.needs_replanning or not items:
             for cid in all_ids:
                 if cid not in state.mastery and cid not in [it.concept_id for it in items]:
-                    # Check prerequisites
+                    # Check prerequisites (accept mastery >= 0.50 or remediated today)
                     prereqs = prereq_graph.get(cid, frozenset())
                     prereqs_met = all(
-                        (p in state.mastery and state.mastery[p].mastery_score >= 0.50)
+                        (
+                            p in state.mastery
+                            and (
+                                state.mastery[p].mastery_score >= 0.50
+                                or p in state.today_remediated_concept_ids
+                            )
+                        )
                         for p in prereqs
                     )
                     if prereqs_met:
