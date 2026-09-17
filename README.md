@@ -1,213 +1,314 @@
 # GoalCoach
 
-GoalCoach is an adaptive AI learning coach for Chinese-as-a-second-language learners. The MVP focuses on HSK1 and proves one complete learning loop:
+<div align="center">
+
+[![CI](https://github.com/Psyche0920/GoalCoach/actions/workflows/ci.yml/badge.svg)](https://github.com/Psyche0920/GoalCoach/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+![Tests](https://img.shields.io/badge/Tests-100%20passed-success)
+![Architecture](https://img.shields.io/badge/Architecture-State--Driven%20Closed%20Loop-teal)
+
+**An adaptive, closed state-driven agentic learning coach for Chinese as a second language.**
+
+[Key Features](#key-features) • [Architecture](#architecture) • [Dual Model Gateway](#dual-model-gateway) • [Quickstart](#quickstart) • [Verification Suite](#verification-suite) • [Contributing](CONTRIBUTING.md)
+
+</div>
+
+---
+
+## Executive Overview
+
+### The Problem with Conversational AI in Language Learning
+
+Most AI language tutors operate as **stateless chatbots** or prompt-engineered conversational wrappers. While engaging, they fail as educational software:
+- **Amnesia & Hallucination:** Conversational memory drifts across turns; the model cannot reliably track what has been mastered, what is decaying, or which errors are recurring.
+- **Unbounded Context Bloat:** Stuffing dialogue transcripts into prompts burns tokens and introduces contradictory instructions without building an objective student model.
+- **Absence of Pacing:** Chatbots cannot enforce curriculum progression or respect prerequisite dependency graphs (e.g., teaching complex question particles before basic pronouns).
+- **No Scientific Spaced Repetition:** Retention decay, spaced review intervals, and remedial interventions require deterministic mathematical guarantees, not probabilistic LLM guesswork.
+
+### The GoalCoach Paradigm: The Closed State-Driven Loop
+
+GoalCoach replaces open-ended chatting with a **closed, state-driven agentic learning loop**:
 
 ```text
-Goal -> Plan -> Teach -> Grade -> Update learner state -> Adapt -> Re-plan
+Goal -> Plan -> Teach -> Grade -> Update State -> Adapt -> Re-plan
 ```
 
-Unlike a fixed course or a stateless chatbot, GoalCoach persists concept-level mastery, estimated retention, recurring errors, review dates, and session history. It uses that state to decide what a learner should study next and computes progress from both mastery and retention.
+1. **State as the Single Source of Truth:** Every learner interaction mutates a persistent relational state record in SQLite (mastery levels, retention curves, error taxonomies, spaced intervals).
+2. **Deterministic Governance:** Routing events, updating mastery scores (40/40/20 reducer), calculating exponential retention decay, and checking prerequisite Directed Acyclic Graphs (DAG) are executed in pure, deterministic Python.
+3. **Bounded Agent Autonomy:** [PydanticAI](https://github.com/pydantic/pydantic-ai) agents are utilized exclusively where open-ended pedagogical reasoning is required: deciding **how** to teach or **what** to sequence based on strictly typed schemas.
+4. **Anti-Chain Architecture:** Sequential multi-agent chains (e.g., *Planner -> Retrieval -> Tutor -> Grader -> Progress*) on a single interaction turn are strictly prohibited to preserve sub-second responsiveness.
 
-> Status: early project scaffold derived from the documents in [`Proposal/`](Proposal/). The 30-year Senior AI Engineering Review is the primary engineering blueprint; the supplementary document clarifies its ambiguous points. Interfaces are defined first, and unconfirmed decisions are marked `TODO(decision)`.
+---
 
-## MVP scope
+## Core Architectural Axioms
 
-- One learning target: HSK1 (the architecture remains level-agnostic).
-- Open-ended Chinese exercises with rubric-based structured grading.
-- Deterministic workflow routing and state updates where rules are sufficient.
-- LLM use only for language-heavy work: grading, feedback, explanations, and optionally complex planning.
-- Persistent learner state in SQLite.
-- FastAPI backend and a minimal Streamlit client.
-- Human-labelled grader benchmark before introducing a second judge model.
-- Structured content lookup first; vector retrieval only after its value is measured.
+| Axiom | Engineering Invariant |
+| :--- | :--- |
+| **Axiom 1: Core Planning Proof** | **Same Goal + Different Learner State $\rightarrow$ Different Plan.** A student struggling with modal verbs receives remediation, while a student with high retention advances to new vocabulary. |
+| **Axiom 2: Core Teaching Proof** | **Same Concept + Different Error History $\rightarrow$ Different Instructional Action.** A student confusing *le* (了) and *guo* (过) receives targeted contrast examples, not a repeated generic definition. |
+| **Axiom 3: No Unbounded Memory** | Conversational chat logs do not represent mastery. Only verified database mutations drive progression. |
+| **Axiom 4: Zero Sequential Chaining** | A single learner action invokes at most one reasoning agent or evaluator. State updates and non-urgent replanning occur out-of-band. |
+| **Axiom 5: Grounded Curriculum** | All concept IDs, examples, and prerequisites are validated against the canonical HSK 1 relational database (Database #1) before persistence. |
 
-Not in the initial MVP: broad HSK1–6 content coverage, production authentication, social/gamification features, or mandatory LangGraph/ChromaDB infrastructure.
+---
 
 ## Architecture
 
-```text
-Streamlit / future web client
-            |
-         FastAPI
-            |
-    Application services
-            |
-  Deterministic orchestrator
-    |       |       |       |
- planner  teacher  grader  progress
-    |       |       |       |
-    +-------+-------+-------+
-            |
-     Repository interfaces
-       |             |
-     SQLite       content lookup
-                       |
-              optional vector search
+GoalCoach cleanly decouples deterministic business rules and persistence from probabilistic AI reasoning workers:
 
-Hosted LLM or local Ollama is accessed through one provider-neutral interface.
+```mermaid
+flowchart TD
+    subgraph Clients ["Client Interfaces"]
+        Web["React 18 / Vite Web App"]
+        CLI["Interactive Terminal Harness"]
+        Streamlit["Streamlit Prototype"]
+    end
+
+    subgraph Gateway ["FastAPI Application Gateway (apps/api)"]
+        Routes["Event Dispatcher POST /api/v1/events"]
+    end
+
+    subgraph Orchestration ["Deterministic Orchestrator (src/goalcoach/application)"]
+        Orch{"Event Router"}
+    end
+
+    subgraph Agents ["PydanticAI Reasoning Layer (src/goalcoach/agents)"]
+        PA["Planning Agent\n(Allocates Daily Budget)"]
+        TA["Teaching Agent\n(Selects Pedagogical Strategy)"]
+        GC["Grader Component\n(Fast-path + Rubric Evaluator)"]
+    end
+
+    subgraph ProgressEngine ["Deterministic Progress Service"]
+        PS["40/40/20 Mastery Reducer\nExponential Retention Decay\nSpaced Interval Multiplier"]
+    end
+
+    subgraph Persistence ["Dual-Layer SQLite Persistence"]
+        DB1[("Database #1: Static HSK 1 Curriculum\n(Concepts, Cards, Prerequisite DAG)")]
+        DB2[("Database #2: Dynamic Learner State\n(Mastery, Error Profile, Plans - WAL Mode)")]
+        CS["Content Service (<1ms SQL queries)"]
+    end
+
+    Clients --> Routes --> Orch
+
+    Orch -- "GOAL_CREATED / needs_replanning" --> PA
+    Orch -- "SESSION_STARTED / HELP_REQUESTED" --> TA
+    Orch -- "ANSWER_SUBMITTED" --> GC
+
+    PA -.->|Query Prerequisites| CS
+    TA -.->|Fetch Grounded Examples| CS
+    CS --> DB1
+
+    GC -->|GradingResult| PS
+    PS -->|Mutate State & Clear Errors| DB2
+    PA -->|PlanUpdate| DB2
+
+    DB2 -. "needs_replanning=True" .-> Orch
 ```
 
-The learner-facing answer path should remain short: `answer -> grader -> immediate teaching feedback`. Deterministic progress persistence and non-urgent re-planning can happen outside that critical response path.
+### Event Routing & Execution Pipeline
 
-### Senior-review constraints
+- **`GOAL_CREATED`:** Triggers the **Planning Agent** to construct an initial curriculum roadmap and daily time-budgeted plan.
+- **`SESSION_STARTED`:** Evaluates the active daily plan and invokes the **Teaching Agent** to deliver the immediate pedagogical action.
+- **`ANSWER_SUBMITTED`:** Dispatches to the **Grader Component**, which runs an exact-match fast-path against curated answers before optionally calling the LLM rubric evaluator. The resulting `GradingResult` feeds into the **Progress Service**, which updates mastery, decays retention, logs or purges errors, and toggles `needs_replanning` if repeated errors occur.
+- **`HELP_REQUESTED`:** Invokes the **Teaching Agent** to switch pedagogical modalities (from `EXPLANATION` to `HINT`, `CONTRAST_EXAMPLE`, or `RETRY`).
 
-The implementation must preserve these constraints from the architecture verdict:
+---
 
-- Never execute Planner, Progress, Retrieval, Grader, and Teacher as a sequential LLM chain for one answer.
-- Keep one synchronous interaction loop; move deterministic state recalculation and non-urgent planning to background work.
-- Validate every model response with Pydantic v2 schemas.
-- Persist learner truth in SQLite; run ChromaDB embedded only if semantic retrieval proves useful.
-- Access hosted and local models through the same OpenAI-compatible interface, switching by configuration.
-- Prefer Chinese-capable, cost-efficient models and record token, cost, latency, model, and prompt version.
-- Maintain a fully local Ollama fallback for the final demonstration.
-- Treat grading reliability as a deliverable, using human-labelled answers and rubric-level agreement metrics.
+## Dual Model Gateway
 
-See the [proposal traceability matrix](docs/architecture/proposal-traceability.md) for how each verdict maps to the repository.
-
-### Routing priority
-
-1. Goal created or changed: create/rebuild the roadmap.
-2. Review due: incorporate review work into the active plan.
-3. Plan missing, invalid, or exhausted: regenerate the daily plan.
-4. Otherwise: continue today's teaching plan.
-
-Progress and planning are separate concerns: progress describes the learner's current state; planning consumes that state and selects what happens next.
-
-## Repository layout
+GoalCoach is model-agnostic and interfaces with hosted or local models via an OpenAI-compatible adapter:
 
 ```text
-apps/
-  api/                 FastAPI composition root and HTTP routes
-  web/                 Streamlit MVP client
-src/goalcoach/
-  domain/              Stable Pydantic models and enums
-  ui/                  Workflow orchestration and application interfaces
-  agents/
-    goal_planning.py   Goal Planning Agent
-    progress_mastery.py Progress & Mastery Agent
-    retrieval.py       Retrieval Agent
-    teaching.py        Teaching Agent
-    grading.py         Chinese Grader component
-    interfaces.py      Shared Agent contracts
-  infrastructure/      SQLite, LLM, and retrieval adapters
-tests/
-  unit/                Domain and deterministic algorithm tests
-  integration/         Persistence/API learning-loop tests
-data/
-  curriculum/          Licensed, curated HSK content
-  evaluation/          Human-labelled grading benchmark
-docs/
-  architecture/        Design and interface documentation
-  decisions/           Architecture decision records (ADRs)
-  product/             MVP scope and user journey
-  project-management/  Roadmap, backlog, risks, ownership, and demo readiness
-scripts/               Data ingestion and evaluation utilities
-Proposal/              Source proposal and review documents
+┌─────────────────────────────────────────────────────────────┐
+│                 PydanticAI Model Gateway                    │
+├──────────────────────────────┬──────────────────────────────┤
+│  Primary Hosted Model        │  Local Fallback (Ollama)    │
+│  inclusionai/ling-3.0-flash-fin  hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M │
+│  (via OpenRouter / OpenAI)   │  or gemma-4-E2B-it-GGUF:Q4_K_M │
+└──────────────────────────────┴──────────────────────────────┘
 ```
 
-## Core state and interfaces
+- **Primary Hosted Engine:** `inclusionai/ling-3.0-flash-fin` (via OpenRouter or direct API), selected for superior Chinese grammar instruction, pinyin accuracy, and low latency.
+- **Resilient Local Fallback:** When remote connectivity fails or API rate limits are encountered, the system transparently fails over to a local Ollama instance running quantized GGUF weights (`hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M` or `gemma-4-E2B-it-GGUF:Q4_K_M`).
+- *Note:* The testing and benchmark harness is designed to evaluate additional models in subsequent phases.
 
-The initial contracts live in [`src/goalcoach/domain/models.py`](src/goalcoach/domain/models.py):
+---
 
-- `LearnerState`: goal, plan, per-concept state, errors, and session history.
-- `ConceptMastery`: mastery, retention, evidence count, and next review date.
-- `DailyPlan`: ordered review/remedial/new-learning items.
-- `Exercise` and `AnswerSubmission`: teaching interaction.
-- `GradingResult`: explicit rubric dimensions and gating result.
-- `ProgressUpdate`: deterministic state changes after grading.
-- `RetrievalRequest`: exact/structured/semantic content request.
+## Key Features
 
-Protocols in [`src/goalcoach/agents/interfaces.py`](src/goalcoach/agents/interfaces.py) allow each team member to build an adapter without coupling the core to a particular model, database, or framework.
+- **HSK 1 Curriculum Grounding:** Curated relational database with 20 core grammatical concepts, 21 teaching cards, and 18 prerequisite relationships.
+- **Anti-Stagnation Remediation Engine:** Hardened against infinite loops. Failed exercises dynamically rotate to alternative exercise IDs; remediating blocking prerequisites immediately unlocks downstream curriculum nodes.
+- **Deterministic 40/40/20 Progress Reducer:** Computes overall mastery mathematically from concept coverage, exercise accuracy, and time-decayed retention.
+- **Interactive CLI Terminal Harness:** A complete terminal interface (`terminal_harness.py`) providing instant, end-to-end interactive study sessions in the command line.
+- **Unified REST API:** FastAPI application providing `/api/v1/events` for the event-driven closed loop, `/api/v1/tutoring/chat` for conversational sessions, and `/health` monitoring.
+- **Modern Web Application:** Standalone React 18 + Vite SPA with interactive Pinyin charts, visual progress roadmaps, and adaptive exercise modals.
 
-The Workflow Orchestrator is located in [`src/goalcoach/ui/orchestrator.py`](src/goalcoach/ui/orchestrator.py), not under `agents/`, because the proposal explicitly defines it as a deterministic controller rather than an LLM reasoning agent.
+---
 
-## Progress and grading
+## Quickstart
 
-Headline progress is concept-weighted:
+### Prerequisites
+- **Python:** `3.12+` (or `>= 3.11`)
+- **Package Manager:** [Astral `uv`](https://docs.astral.sh/uv/)
+- **SQLite 3:** (Included with Python)
+- **Node.js 18+:** (Optional, for web frontend)
 
-```text
-progress = sum(concept_weight * mastery * current_retention)
-           / sum(concept_weight)
-```
-
-Retention decays with elapsed time and is strengthened or reset after review. Exact decay parameters are intentionally configurable and need empirical validation.
-
-Grading records semantic/task achievement, grammatical correctness, target-concept mastery, word order, completeness, and vocabulary appropriateness. Target-concept mastery and task achievement are gates; dimensions must not be blindly averaged. Mastery requires evidence across multiple exercises.
-
-## Getting started
-
-Prerequisites: Python 3.11+.
+### 1. Installation
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+# Clone the repository
+git clone https://github.com/Psyche0920/GoalCoach.git
+cd GoalCoach
+
+# Synchronize dependencies with uv (creates virtual environment automatically)
+uv sync --all-extras
+```
+
+### 2. Database Bootstrapping
+
+GoalCoach relies on Database #1 for static curriculum content. Initialize it with SQLite:
+
+```bash
+mkdir -p data/database1
+sqlite3 data/database1/goalcoach_hsk1_learning.db < GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
+```
+
+*(Note: Pytest tests will automatically bootstrap this database via an autouse fixture if not present).*
+
+### 3. Environment Configuration
+
+Copy the sample environment file:
+
+```bash
 cp .env.example .env
-sqlite3 data/database1/goalcoach_hsk1_learning.db \
-  < data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql
-pytest
-uvicorn apps.api.main:app --reload
 ```
 
-In another terminal, the placeholder client can be started with:
+Configure your LLM credentials in `.env`:
+
+```ini
+GOALCOACH_ENVIRONMENT=development
+GOALCOACH_DATABASE_URL=sqlite:///./goalcoach.db
+GOALCOACH_CONTENT_DATABASE_URL=sqlite:///./data/database1/goalcoach_hsk1_learning.db
+
+# Hosted Model (Primary)
+GOALCOACH_LLM_BASE_URL=https://openrouter.ai/api/v1
+GOALCOACH_LLM_API_KEY=your-api-key-here
+GOALCOACH_LLM_MODEL="inclusionai/ling-3.0-flash-fin"
+
+# Local Fallback (Ollama)
+GOALCOACH_ENABLE_OLLAMA_FALLBACK=false
+GOALCOACH_FALLBACK_LLM_BASE_URL=http://localhost:11434/v1
+GOALCOACH_FALLBACK_LLM_MODEL=hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M
+```
+
+---
+
+## Running the Application
+
+### Option A: Interactive CLI Terminal Harness
+
+The fastest way to test the full teaching and grading loop without spinning up a browser:
 
 ```bash
-streamlit run apps/web/app.py
+uv run python -m src.goalcoach.agents.terminal_harness
 ```
 
-Database #1 structured content is available through the SQLAlchemy `ContentRepository`, with
-typed mappings for concepts, teaching cards, exercises, prerequisites, and JSON fields. The API
-still exposes health and interface-level placeholder endpoints: learner-state persistence and the
-complete learning loop are not wired yet, so those endpoints intentionally return `501`.
-Background-work interfaces are separated from the synchronous answer path so integration cannot
-accidentally create the latency-heavy sequential agent chain warned about in the review.
+### Option B: FastAPI Backend Server
 
-## Configuration
+Launch the backend REST API:
 
-See [`.env.example`](.env.example). `GOALCOACH_CONTENT_DATABASE_URL` configures Database #1;
-its default is `sqlite:///./data/database1/goalcoach_hsk1_learning.db`. The separate
-`GOALCOACH_DATABASE_URL` is reserved for learner-state persistence. The LLM interface is
-OpenAI-compatible so a hosted gateway and local Ollama can share the same adapter.
+```bash
+uv run uvicorn apps.api.main:app --reload --port 8000
+```
+- Interactive Swagger documentation: `http://localhost:8000/docs`
+- Health check: `http://localhost:8000/health`
 
-The senior verdict recommends OpenRouter for hosted model experimentation and Ollama with Gemma/Qwen as the local fallback. The supplementary review asks the team to confirm OpenRouter versus Bedrock with the mentor, so this remains `TODO(decision)` rather than being silently fixed. Regardless of provider, adapters must remain OpenAI-compatible and configuration-driven.
+### Option C: Modern Web Application (React + Vite)
 
-## Four-week delivery plan
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+Open `http://localhost:5173` to interact with the responsive visual learning dashboard.
 
-1. **It runs:** complete one primitive HSK1 vertical slice and persist learner state.
-2. **It adapts:** validated grading updates mastery/errors and produces different plans for different learner states.
-3. **It works as an app:** connect core, SQLite, API, and UI; verify state across sessions.
-4. **We can prove it:** benchmark against human labels, tune thresholds, harden fallbacks, and prepare the demo.
+---
 
-The strongest demo is behavioral: two learners with the same HSK1 goal but different errors/retention receive different plans; a remembered error changes remediation, and retention decay later schedules review.
+## Verification Suite
 
-## Open decisions and required inputs
+The repository includes a comprehensive verification suite spanning fast unit tests, full closed-loop proofs, and strict code style checks.
 
-These are tracked in [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md). The most important inputs from the team are:
+```bash
+# 1. Dependency lock verification
+uv lock --check
 
-- hosted LLM/provider and local fallback;
-- final planning frequency;
-- validated rubric gates, mastery thresholds, and retention parameters;
-- authoritative HSK version and content sources with redistribution rights;
-- frontend choice after the Streamlit prototype;
-- whether LangGraph and ChromaDB add measurable value.
+# 2. Ruff code formatting check (0 diffs)
+uv run ruff format --check src/ apps/ tests/
 
-Delivery planning is maintained in [`docs/project-management/`](docs/project-management/README.md). Original PDFs in `Proposal/` are treated as read-only source material; evolving decisions belong in docs or ADRs.
+# 3. Ruff linter check (0 errors)
+uv run ruff check src/ apps/ tests/
 
-## Development principles
+# 4. Fast Unit Tests (67 tests: domain models, math reducers, API routes)
+uv run pytest tests/unit/ -v
 
-- Keep domain logic independent of FastAPI, Streamlit, model SDKs, and databases.
-- Prefer deterministic code for routing, retention, aggregation, and exact lookup.
-- Validate every LLM output against a strict schema.
-- Never place secrets, learner data, or unlicensed source content in Git.
-- Add a regression case whenever a grader prompt, rubric, or model changes.
+# 5. End-to-End Closed Loop Integration Tests (33 tests: AC1-AC11, remediation, vector RAG)
+GOALCOACH_ENVIRONMENT="testing" \
+GOALCOACH_LLM_API_KEY="ci-mock-token" \
+GOALCOACH_ENABLE_VECTOR_RETRIEVAL="true" \
+uv run pytest tests/integration/ -v
+```
 
-## Team
+All 100 tests pass out-of-the-box in offline and CI environments.
 
-- Weijia Han — AI / Agent Engineer, team lead
-- Jiyan Wang — Backend Engineer
-- Weng Man Cheung — AI / Data Engineer
-- Musab — AI Engineer / Core Systems Architect
+---
+
+## Repository Layout
+
+```text
+.
+├── .github/workflows/ci.yml       # GitHub Actions CI pipeline (lint, format, test, DB bootstrap)
+├── apps/
+│   ├── api/                       # FastAPI backend (routes, dependencies, event gateway)
+│   └── web/                       # React 18 + Vite SPA and Streamlit prototype
+├── data/
+│   └── database1/                 # Grounded HSK 1 curriculum SQLite database
+├── docs/
+│   ├── GOALCOACH_MVP_PRD.md       # Core MVP Product Requirements Document
+│   └── dev/                       # Technical designs, remediation plans, and architecture audits
+├── src/goalcoach/
+│   ├── agents/                    # PydanticAI workers (Planning, Teaching, Grader, Terminal CLI)
+│   ├── application/               # Deterministic Orchestrator & Progress Service (40/40/20 Reducer)
+│   ├── domain/                    # Typed Pydantic models, schemas, and domain events
+│   └── infrastructure/            # Dual-layer SQLite persistence, LLM gateway, and retrieval
+├── tests/
+│   ├── conftest.py                # Automated SQLite DB bootstrapping & test fixtures
+│   ├── unit/                      # Fast unit tests for math, logic, and reducers
+│   └── integration/               # End-to-end closed loop tests (AC1-AC11, remediation stress tests)
+├── pyproject.toml                 # Project metadata, dependencies, and Ruff configuration
+├── CHANGELOG.md                   # Chronological release and milestone history
+├── CONTRIBUTING.md                # Developer setup, style guide, and PR guidelines
+└── LICENSE                        # MIT License
+```
+
+---
+
+## Documentation & References
+
+- [Product Requirements Document (PRD)](docs/GOALCOACH_MVP_PRD.md)
+- [Remediation Loop Bug Fix & Hardening Plan](docs/dev/REMEDIATION_LOOP_BUG_FIX_PLAN.md)
+- [Closed Loop Audit & Comparison Report](docs/dev/CLOSED_LOOP_AUDIT_BEFORE_AFTER_COMPARISON.md)
+- [Full-Stack Integration Walkthrough](docs/dev/FULL_STACK_INTEGRATION_PLAN_AND_WALKTHROUGH.md)
+
+---
+
+## Contributing
+
+We welcome contributions! Please consult [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, coding guidelines, and pull request workflows.
+
+---
 
 ## License
 
-`TODO(decision)`: choose a code license and document content/data licensing separately.
+This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details.
