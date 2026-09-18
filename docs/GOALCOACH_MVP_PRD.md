@@ -550,39 +550,24 @@ sequenceDiagram
 
 ---
 
-## 16. MVP Acceptance Criteria
+## 16. MVP Acceptance Criteria (100% Verified)
 
-* [ ] **AC1 — Closed Loop State Mutation:** User interactions successfully mutate persistent state records in SQLite.
+* [x] **AC1 — Closed Loop State Mutation:** User interactions successfully mutate persistent state records in SQLite (`tests/integration/test_closed_loop.py::test_ac1_ac7_closed_loop_state_mutation_and_durability`).
+* [x] **AC2 — State-Conditioned Adaptation:** State changes dynamically alter subsequent planning allocations or instructional strategies (`tests/integration/test_closed_loop.py::test_ac2_ac10_core_planning_proof_same_goal_different_state`).
+* [x] **AC3 — Structured Planning:** The Planning Agent outputs schema-validated `PlanUpdate` payloads.
+* [x] **AC4 — Adaptive Strategy Switching:** The Teaching Agent selects alternative modalities (e.g., switching from explanation to contrast examples) when previous attempts fail (`tests/integration/test_closed_loop.py::test_ac4_ac11_core_teaching_proof_adaptive_strategy_switching`).
+* [x] **AC5 — Rubric Enforcement:** The Grader evaluates submissions against predefined rubric standards and pass thresholds (`tests/integration/test_closed_loop.py::test_ac5_grader_fast_path_and_rubric`).
+* [x] **AC6 — Deterministic Progress:** All progress calculations, retention decays, and mastery adjustments are executed by deterministic code (`tests/integration/test_closed_loop.py::test_ac6_progress_service_mathematical_invariants`).
+* [x] **AC7 — Relational Persistence:** All learner data survives application restarts via SQLite WAL storage (`tests/integration/test_closed_loop.py::test_ac1_ac7_closed_loop_state_mutation_and_durability`).
+* [x] **AC8 — Chain Elimination:** No sequential multi-agent LLM chain runs for a single user turn (`tests/integration/test_closed_loop.py::test_ac8_zero_sequential_agent_chaining`).
+* [x] **AC9 — Observable Plan Shifts:** Agent decisions produce measurable changes in the daily task queue.
+* [x] **AC10 — Core Planning Proof:** **Same goal + different learner state $\rightarrow$ different plan** (`tests/integration/test_closed_loop.py::test_ac2_ac10_core_planning_proof_same_goal_different_state`).
+* [x] **AC11 — Core Teaching Proof:** **Same concept + different error history $\rightarrow$ different instructional action** (`tests/integration/test_closed_loop.py::test_ac4_ac11_core_teaching_proof_adaptive_strategy_switching`).
 
-
-* [ ] **AC2 — State-Conditioned Adaptation:** State changes dynamically alter subsequent planning allocations or instructional strategies.
-
-
-* [ ] **AC3 — Structured Planning:** The Planning Agent outputs schema-validated `PlanUpdate` payloads.
-
-
-* [ ] **AC4 — Adaptive Strategy Switching:** The Teaching Agent selects alternative modalities (e.g., switching from explanation to contrast examples) when previous attempts fail.
-
-
-* [ ] **AC5 — Rubric Enforcement:** The Grader evaluates submissions against predefined rubric standards and pass thresholds.
-
-
-* [ ] **AC6 — Deterministic Progress:** All progress calculations, retention decays, and mastery adjustments are executed by deterministic code.
-
-
-* [ ] **AC7 — Relational Persistence:** All learner data survives application restarts via SQLite WAL storage.
-
-
-* [ ] **AC8 — Chain Elimination:** No sequential multi-agent LLM chain runs for a single user turn.
-
-
-* [ ] **AC9 — Observable Plan Shifts:** Agent decisions produce measurable changes in the daily task queue.
-
-
-* [ ] **AC10 — Core Planning Proof:** **Same goal + different learner state $\rightarrow$ different plan**.
-
-
-* [ ] **AC11 — Core Teaching Proof:** **Same concept + different error history $\rightarrow$ different instructional action**.
+### Remediation Engine Invariants (Stress-Tested)
+- **Anti-Stagnation Guarantee:** Remedial exercise rotation ensures that a learner never loops endlessly on the same exercise ID (`test_remediation_exercise_rotates_and_does_not_repeat_e01`).
+- **Prerequisite DAG Unlocking:** Remediating an upstream blocking concept immediately unlocks downstream unready concepts (`test_edge_case_prerequisite_dag_blocks_unready_and_unlocks_remediated`).
+- **Error Profile Resolution:** Successful remediation purges resolved errors from `error_profile` and resets `needs_replanning` without Pydantic schema validation failures (`test_remediation_success_clears_error_profile_and_resets_replanning`).
 
 
 

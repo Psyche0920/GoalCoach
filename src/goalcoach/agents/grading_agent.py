@@ -23,6 +23,7 @@ grader_agent = Agent(
         "Each score must be between 0.0 and 1.0. "
         "Gate rule: passed_gates is true only if grammatical_correctness >= 0.70 "
         "and semantic_precision >= 0.70."
+        "Accept answers in pinyin with or without tone marks, or in chinese characters."
     ),
 )
 

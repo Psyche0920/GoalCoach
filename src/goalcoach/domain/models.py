@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
 
-from goalcoach.domain.enums import PlanItemKind, PlanStatus, RetrievalMode
+from goalcoach.domain.enums import (
+    PlanItemKind,
+    PlanStatus,
+    RetrievalMode,
+    TeachingActionKind,
+)
 from goalcoach.domain.retention import calculate_retention
 
 Score = Annotated[float, Field(ge=0.0, le=1.0)]
@@ -93,7 +99,7 @@ class ConceptMastery(DomainBaseModel):
 class ErrorRecord(DomainBaseModel):
     """Cataloged recurring grammatical or lexical error with diagnostic examples."""
 
-    code: str = Field(min_length=1, max_length=64)  # e.g., "ERR_LE_GUO_CONFUSION"
+    code: str = Field(min_length=1, max_length=255)  # e.g., "ERR_LE_GUO_CONFUSION"
     concept_id: str = Field(min_length=1, max_length=128)
     occurrences: int = Field(default=1, ge=1)
     last_seen_at: datetime = Field(default_factory=utc_now)
@@ -190,7 +196,31 @@ class DailyPlan(DomainBaseModel):
     generated_at: datetime = Field(default_factory=utc_now)
 
 
+class PlanUpdate(DomainBaseModel):
+    """Structured output emitted by the Planning Agent to adapt the learner's schedule."""
+
+    daily_allocation_minutes: int = Field(gt=0, le=240)
+    ordered_items: list[PlanItem] = Field(min_length=1)
+    adaptation_rationale: str = Field(min_length=1)
+    roadmap_adjustments: list[str] = Field(default_factory=list)
+
+
 # --- 4. Interactive Tutoring & Structured Grading ---
+
+
+class TeachingAction(DomainBaseModel):
+    """Structured instructional action emitted by the Teaching Agent."""
+
+    action_kind: TeachingActionKind
+    concept_id: str = Field(min_length=1, max_length=128)
+    content: str = Field(
+        description="Instructional explanation written in English with Chinese examples and Pinyin"
+    )
+    pinyin: str | None = Field(default=None, description="Disambiguated tone readings for Hanzi")
+    exercise_payload: dict[str, Any] | None = Field(
+        default=None, description="Structured payload if presenting an assessable practice exercise"
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Exercise(DomainBaseModel):
@@ -252,9 +282,22 @@ class LearnerState(DomainBaseModel):
     """Top-level aggregate root capturing all learner goals, mastery, errors, and plans."""
 
     learner_id: UUID | str = Field(default_factory=uuid4)
+
+    @field_validator("learner_id", mode="before")
+    @classmethod
+    def _parse_learner_id(cls, v: Any) -> UUID | str:
+        if isinstance(v, str):
+            try:
+                return UUID(v)
+            except ValueError:
+                return v
+        return v
+
     display_name: str | None = None
     goal: LearningGoal | None = None
     goal_changed: bool = False
+    needs_replanning: bool = False
+    context_interests: list[str] = Field(default_factory=list)
     mastery: dict[str, ConceptMastery] = Field(default_factory=dict)
     concept_progress: dict[str, ConceptProgress] = Field(default_factory=dict)
     error_profile: list[ErrorRecord] = Field(default_factory=list)
@@ -266,8 +309,14 @@ class LearnerState(DomainBaseModel):
     last_check_in_date: str | None = None
     estimated_days_remaining: int | None = None
     today_mistake_exercise_ids: list[str] = Field(default_factory=list)
+    today_completed_exercise_ids: list[str] = Field(default_factory=list)
     today_studied_concept_ids: list[str] = Field(default_factory=list)
+    today_remediated_concept_ids: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    def all_attempted_exercise_ids(self) -> set[str]:
+        """Returns union of completed and mistake exercise IDs attempted today."""
+        return set(self.today_completed_exercise_ids) | set(self.today_mistake_exercise_ids)
 
     def review_due(self, at: datetime | None = None) -> bool:
         """Checks if any concept in the learner's mastery profile is due for review."""

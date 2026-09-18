@@ -1,6 +1,7 @@
 """Unit tests for deterministic progress reducer and progress summary engine."""
 
 from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from goalcoach.application.progress_reducer import compute_progress_summary, reduce_concept_progress
@@ -102,7 +103,9 @@ def test_mastery_qualification_rule() -> None:
         learner_id="learner_001",
         concept_id="c_hsk1_ma",
         learned_percent=100.0,
-        learning_evidence=LearningEvidence(card_completion=1.0, practice_completion=1.0, output_completion=1.0),
+        learning_evidence=LearningEvidence(
+            card_completion=1.0, practice_completion=1.0, output_completion=1.0
+        ),
         status="almost_mastered",
     )
 

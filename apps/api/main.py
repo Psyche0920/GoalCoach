@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.routes.learning import router as learning_router
+from apps.api.routes.learning_loop import router as learning_loop_router
 from apps.api.routes.tutoring import router as tutoring_router
 from goalcoach.agents.goal_planning import DeterministicGoalPlanner
 from goalcoach.agents.interfaces import GoalPlanner, LearnerRepository
@@ -71,6 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Routers
     application.include_router(learning_router)
+    application.include_router(learning_loop_router)
     application.include_router(tutoring_router, prefix="/api/v1")
 
     # Health check

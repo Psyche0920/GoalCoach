@@ -28,7 +28,7 @@ st.sidebar.caption("Agents: PydanticAI (OpenRouter + Ollama Gemma 4)")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if "grammar_points" in msg and msg["grammar_points"]:
+        if msg.get("grammar_points"):
             st.caption(f"Grammar points: {', '.join(msg['grammar_points'])}")
 
 # Chat input
@@ -37,30 +37,29 @@ if prompt := st.chat_input("Ask a question about HSK1 Chinese..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    with st.chat_message("assistant"):
-        with st.spinner("Consulting curriculum..."):
-            try:
-                res = httpx.post(
-                    f"{API_URL}/tutoring/chat",
-                    json={"learner_id": st.session_state.learner_id, "message": prompt},
-                    timeout=60.0,
-                )
-                if res.status_code == 200:
-                    payload = res.json()
-                    tutor_data = payload["response"]
-                    st.markdown(tutor_data["reply"])
-                    if tutor_data.get("suggested_practice"):
-                        st.info(f"💡 Practice: {tutor_data['suggested_practice']}")
-                    st.caption(f"Inference: `{payload['provider']}`")
+    with st.chat_message("assistant"), st.spinner("Consulting curriculum..."):
+        try:
+            res = httpx.post(
+                f"{API_URL}/tutoring/chat",
+                json={"learner_id": st.session_state.learner_id, "message": prompt},
+                timeout=60.0,
+            )
+            if res.status_code == 200:
+                payload = res.json()
+                tutor_data = payload["response"]
+                st.markdown(tutor_data["reply"])
+                if tutor_data.get("suggested_practice"):
+                    st.info(f"💡 Practice: {tutor_data['suggested_practice']}")
+                st.caption(f"Inference: `{payload['provider']}`")
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": tutor_data["reply"],
-                            "grammar_points": tutor_data.get("grammar_points", []),
-                        }
-                    )
-                else:
-                    st.error(f"API Error {res.status_code}: {res.text}")
-            except Exception as e:
-                st.error(f"Could not connect to backend: {e}")
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": tutor_data["reply"],
+                        "grammar_points": tutor_data.get("grammar_points", []),
+                    }
+                )
+            else:
+                st.error(f"API Error {res.status_code}: {res.text}")
+        except Exception as e:
+            st.error(f"Could not connect to backend: {e}")

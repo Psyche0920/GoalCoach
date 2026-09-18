@@ -29,7 +29,11 @@ from goalcoach.domain.models import (
     RubricScores,
     utc_now,
 )
-from goalcoach.infrastructure.persistence.models import ContentExercise, CurriculumConcept, TeachingCard
+from goalcoach.infrastructure.persistence.models import (
+    ContentExercise,
+    CurriculumConcept,
+    TeachingCard,
+)
 from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
@@ -123,7 +127,9 @@ async def get_or_create_learner(
         state = LearnerState(
             learner_id=learner_id,
             display_name=f"Learner {learner_id}",
-            goal=LearningGoal(title="HSK 1 Complete Goal", target_hsk_level=1, daily_available_minutes=20),
+            goal=LearningGoal(
+                title="HSK 1 Complete Goal", target_hsk_level=1, daily_available_minutes=20
+            ),
         )
         await repo.save(state)
     return state
@@ -448,7 +454,8 @@ async def update_learner_goal(
             for k, v in {
                 "title": req.title or current_goal.title,
                 "target_hsk_level": req.target_hsk_level or current_goal.target_hsk_level,
-                "daily_available_minutes": req.daily_available_minutes or current_goal.daily_available_minutes,
+                "daily_available_minutes": req.daily_available_minutes
+                or current_goal.daily_available_minutes,
             }.items()
             if v is not None
         }

@@ -97,9 +97,7 @@ class ContentRepository:
     def get_exercise(self, exercise_id: str) -> ContentExercise | None:
         """Lookup an exercise by its unique content ID."""
         statement = (
-            select(ContentExercise)
-            .where(ContentExercise.exercise_id == exercise_id)
-            .limit(1)
+            select(ContentExercise).where(ContentExercise.exercise_id == exercise_id).limit(1)
         )
         with self._session_factory() as session:
             return session.scalars(statement).first()

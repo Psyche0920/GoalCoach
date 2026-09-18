@@ -22,21 +22,22 @@ async def test_health_returns_ok(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_learner_returns_501_stub(client: AsyncClient) -> None:
+async def test_get_learner_returns_200(client: AsyncClient) -> None:
     response = await client.get("/api/v1/learners/some-learner-id")
 
-    assert response.status_code == 501
+    assert response.status_code == 200
     body = response.json()
-    assert body["detail"].startswith("TODO(interface): connect LearnerRepository")
+    assert "state" in body
+    assert "nextAction" in body
 
 
 @pytest.mark.asyncio
-async def test_get_learner_includes_id_in_detail(client: AsyncClient) -> None:
+async def test_get_learner_includes_id_in_response(client: AsyncClient) -> None:
     learner_id = "abc-123"
     response = await client.get(f"/api/v1/learners/{learner_id}")
 
-    assert response.status_code == 501
-    assert learner_id in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["state"]["learnerId"] == learner_id
 
 
 # ---------------------------------------------------------------------------
@@ -51,12 +52,12 @@ VALID_ANSWER_PAYLOAD = {
 
 
 @pytest.mark.asyncio
-async def test_submit_answer_returns_501_stub(client: AsyncClient) -> None:
+async def test_submit_answer_returns_200(client: AsyncClient) -> None:
     response = await client.post("/api/v1/answers", json=VALID_ANSWER_PAYLOAD)
 
-    assert response.status_code == 501
+    assert response.status_code == 200
     body = response.json()
-    assert body["detail"].startswith("TODO(interface): connect learning loop")
+    assert "gradingResult" in body
 
 
 @pytest.mark.asyncio
@@ -74,12 +75,23 @@ async def test_submit_answer_rejects_missing_fields(client: AsyncClient) -> None
     assert response.status_code == 422
 
 
-@pytest.mark.asyncio
-async def test_submit_answer_rejects_invalid_uuid(client: AsyncClient) -> None:
-    payload = {**VALID_ANSWER_PAYLOAD, "learner_id": "not-a-uuid"}
-    response = await client.post("/api/v1/answers", json=payload)
+# ---------------------------------------------------------------------------
+# POST /api/v1/events
+# ---------------------------------------------------------------------------
 
-    assert response.status_code == 422
+
+@pytest.mark.asyncio
+async def test_post_event_learning_loop_router(client: AsyncClient) -> None:
+    payload = {
+        "event_type": "SESSION_STARTED",
+        "learner_id": "api-test-user-001",
+        "payload": {},
+    }
+    response = await client.post("/api/v1/events", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "learnerId" in data
+    assert "eventType" in data
 
 
 @pytest.mark.asyncio

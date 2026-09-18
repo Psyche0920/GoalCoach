@@ -11,7 +11,12 @@ from typing import Any
 import httpx
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
+
+try:
+    from pydantic_ai.models.openai import OpenAIChatModel as OpenAIModel
+except ImportError:
+    from pydantic_ai.models.openai import OpenAIModel  # type: ignore[assignment]
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from goalcoach.infrastructure.config import Settings
@@ -61,7 +66,8 @@ def get_openrouter_model() -> OpenAIModel:
     base_url = str(settings.llm_base_url or "https://openrouter.ai/api/v1")
     api_key = settings.llm_api_key or "unconfigured_key"
     model_name = settings.llm_model or "qwen/qwen-2.5-72b-instruct"
-    provider = OpenAIProvider(base_url=base_url, api_key=api_key)
+    http_client = httpx.AsyncClient(timeout=settings.llm_timeout_seconds)
+    provider = OpenAIProvider(base_url=base_url, api_key=api_key, http_client=http_client)
     return OpenAIModel(model_name=model_name, provider=provider)
 
 
@@ -70,19 +76,43 @@ def get_ollama_fallback_model() -> OpenAIModel:
     settings = Settings()
     base_url = str(settings.fallback_llm_base_url or "http://localhost:11434/v1")
     model_name = settings.fallback_llm_model or "unsloth/gemma-4-12b-it-GGUF"
-    provider = OpenAIProvider(base_url=base_url, api_key="ollama")
+    http_client = httpx.AsyncClient(timeout=settings.llm_timeout_seconds)
+    provider = OpenAIProvider(base_url=base_url, api_key="ollama", http_client=http_client)
     return OpenAIModel(model_name=model_name, provider=provider)
 
 
 async def run_with_fallback(agent: Any, prompt: str, deps: Any = None) -> tuple[Any, str]:
-    """Executes a PydanticAI agent on OpenRouter; falls back to Ollama Gemma 4 on connection/timeout errors."""
+    """Run the primary model and optionally use a configured local fallback."""
+    settings = Settings()
     primary_model = get_openrouter_model()
-    fallback_model = get_ollama_fallback_model()
 
     try:
         result = await agent.run(prompt, deps=deps, model=primary_model)
         return result, f"openrouter:{primary_model.model_name}"
-    except (httpx.HTTPError, httpx.TimeoutException, Exception) as err:
-        logger.warning("Primary model failed (%s). Falling back to local Ollama Gemma 4.", err)
+    except (httpx.HTTPError, ModelAPIError, UnexpectedModelBehavior) as err:
+        failure_kind = (
+            "output validation"
+            if isinstance(err, UnexpectedModelBehavior)
+            else "connection or provider"
+        )
+        if not settings.enable_ollama_fallback:
+            logger.warning(
+                "Primary model %s failure (%s); Ollama fallback is disabled.",
+                failure_kind,
+                err,
+            )
+            raise
+
+        logger.warning(
+            "Primary model %s failure (%s); trying configured Ollama fallback.",
+            failure_kind,
+            err,
+        )
+        fallback_model = get_ollama_fallback_model()
         result = await agent.run(prompt, deps=deps, model=fallback_model)
         return result, f"ollama:{fallback_model.model_name}"
+
+
+def get_output_retries() -> int:
+    """Return the configured number of structured-output validation retries."""
+    return Settings().llm_max_retries
