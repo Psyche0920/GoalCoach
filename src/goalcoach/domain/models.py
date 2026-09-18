@@ -192,7 +192,7 @@ class DailyPlan(DomainBaseModel):
     date: datetime = Field(default_factory=utc_now)
     status: PlanStatus = PlanStatus.ACTIVE
     items: list[PlanItem] = Field(min_length=1)
-    rationale: str = Field(min_length=1, max_length=1000)
+    rationale: str = Field(min_length=1, max_length=5000)
     generated_at: datetime = Field(default_factory=utc_now)
 
 
