@@ -40,18 +40,9 @@ class PlanStatus(StrEnum):
     INVALID = "invalid"
 
 
-class RetrievalMode(StrEnum):
-    """Strategies for querying curriculum concepts and exercises from the content store."""
-
-    EXACT = "exact"
-    STRUCTURED = "structured"
-    SEMANTIC = "semantic"
-
-
 __all__ = [
     "EventType",
+    "TeachingActionKind",
     "PlanItemKind",
     "PlanStatus",
-    "RetrievalMode",
-    "TeachingActionKind",
 ]

@@ -4,18 +4,10 @@ from goalcoach.domain.enums import (
     EventType,
     PlanItemKind,
     PlanStatus,
-    RetrievalMode,
     TeachingActionKind,
 )
-from goalcoach.domain.events import (
-    AnswerSubmittedPayload,
-    GoalCreatedPayload,
-    HelpRequestedPayload,
-    InboundEvent,
-    SessionStartedPayload,
-)
+from goalcoach.domain.events import InboundEvent
 from goalcoach.domain.models import (
-    AnswerSubmission,
     ConceptDelta,
     ConceptMastery,
     DailyPlan,
@@ -28,7 +20,6 @@ from goalcoach.domain.models import (
     PlanItem,
     PlanUpdate,
     ProgressUpdate,
-    RetrievalRequest,
     RubricScores,
     Score,
     SessionSummary,
@@ -38,8 +29,6 @@ from goalcoach.domain.models import (
 from goalcoach.domain.retention import calculate_retention, decayed_retention
 
 __all__ = [
-    "AnswerSubmission",
-    "AnswerSubmittedPayload",
     "ConceptDelta",
     "ConceptMastery",
     "DailyPlan",
@@ -47,9 +36,7 @@ __all__ = [
     "ErrorRecord",
     "EventType",
     "Exercise",
-    "GoalCreatedPayload",
     "GradingResult",
-    "HelpRequestedPayload",
     "InboundEvent",
     "LearnerState",
     "LearningGoal",
@@ -58,11 +45,8 @@ __all__ = [
     "PlanStatus",
     "PlanUpdate",
     "ProgressUpdate",
-    "RetrievalMode",
-    "RetrievalRequest",
     "RubricScores",
     "Score",
-    "SessionStartedPayload",
     "SessionSummary",
     "TeachingAction",
     "TeachingActionKind",

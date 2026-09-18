@@ -11,14 +11,12 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
-    model_validator,
 )
 from pydantic.alias_generators import to_camel
 
 from goalcoach.domain.enums import (
     PlanItemKind,
     PlanStatus,
-    RetrievalMode,
     TeachingActionKind,
 )
 from goalcoach.domain.retention import calculate_retention
@@ -235,15 +233,6 @@ class Exercise(DomainBaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
 
-class AnswerSubmission(DomainBaseModel):
-    """A learner's response submission to a specific practice exercise."""
-
-    learner_id: UUID | str
-    exercise_id: UUID | str
-    answer: str = Field(min_length=1)
-    submitted_at: datetime = Field(default_factory=utc_now)
-
-
 class RubricScores(DomainBaseModel):
     """Multi-dimensional evaluation scores graded against rubric standards."""
 
@@ -336,7 +325,7 @@ class LearnerState(DomainBaseModel):
         return float(weighted_sum / total_weight)
 
 
-# --- 6. Event Deltas & Retrieval Requests ---
+# --- 6. Event Deltas ---
 
 
 class ConceptDelta(DomainBaseModel):
@@ -359,25 +348,3 @@ class ProgressUpdate(DomainBaseModel):
     error_codes_added: list[str] = Field(default_factory=list)
     plan_invalidated: bool = False
     updated_at: datetime = Field(default_factory=utc_now)
-
-
-class RetrievalRequest(DomainBaseModel):
-    """Structured query for retrieving concepts, cards, and exercises from content storage."""
-
-    mode: RetrievalMode
-    learner_id: UUID | str
-    concept_id: str | None = None
-    hsk_level: int | None = Field(default=None, ge=1, le=6)
-    content_type: str | None = None
-    semantic_need: str | None = None
-    error_codes: list[str] = Field(default_factory=list)
-    top_k: int = Field(default=5, gt=0, le=20)
-
-    @model_validator(mode="after")
-    def validate_keys(self) -> RetrievalRequest:
-        """Validates that required keys are present for exact or semantic retrieval modes."""
-        if self.mode == RetrievalMode.EXACT and not self.concept_id:
-            raise ValueError("Exact retrieval requires a non-empty concept_id")
-        if self.mode == RetrievalMode.SEMANTIC and not self.semantic_need:
-            raise ValueError("Semantic retrieval requires a non-empty semantic_need")
-        return self

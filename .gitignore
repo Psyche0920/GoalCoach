@@ -8,15 +8,7 @@ __pycache__/
 *.db-shm
 *.db-wal
 *.sqlite*
-.chromadb/
-data/database2/chroma_db/*/
 dist/
 build/
 *.egg-info/
 .DS_Store
-
-# Frontend artifacts
-apps/web/node_modules/
-apps/web/dist/
-apps/web/.vite/
-*.tsbuildinfo

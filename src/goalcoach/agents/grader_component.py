@@ -16,7 +16,6 @@ from uuid import uuid4
 from pydantic_ai import Agent
 
 from goalcoach.domain.models import (
-    AnswerSubmission,
     Exercise,
     GradingResult,
     RubricScores,
@@ -75,11 +74,10 @@ class GraderComponent:
     async def grade(
         self,
         exercise: Exercise,
-        answer: str | AnswerSubmission,
+        answer: str,
     ) -> GradingResult:
         """Evaluates submission against exercise rubrics with fast-path short-circuiting."""
-        raw_answer = answer.answer if isinstance(answer, AnswerSubmission) else str(answer)
-        clean_student_ans = raw_answer.strip()
+        clean_student_ans = answer.strip()
         exercise_id = exercise.id or uuid4()
 
         # 1. Fast Path: Exact reference answer match (bypasses LLM, <5ms)

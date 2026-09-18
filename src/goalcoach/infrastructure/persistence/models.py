@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
-    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -131,13 +129,3 @@ class ConceptPrerequisite(Base):
     prerequisite_id: Mapped[str] = mapped_column(
         ForeignKey("curriculum_concepts.concept_id", ondelete="CASCADE"), primary_key=True
     )
-
-
-class LearnerStateRecord(Base):
-    """Database record storing one learner's complete state as a JSON snapshot."""
-
-    __tablename__ = "learner_states"
-
-    learner_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    state_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -9,8 +9,6 @@ import logging
 from typing import Any
 
 import httpx
-from pydantic_ai import Agent
-from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 
 try:
@@ -22,42 +20,6 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from goalcoach.infrastructure.config import Settings
 
 logger = logging.getLogger(__name__)
-
-# Ensure backward compatibility for result.data -> result.output
-if not hasattr(AgentRunResult, "data"):
-    AgentRunResult.data = property(lambda self: getattr(self, "output", None))  # type: ignore[attr-defined]
-
-# Ensure backward compatibility for Agent(..., result_type=...) -> output_type
-_orig_agent_init = Agent.__init__
-
-
-def _compat_agent_init(self: Any, *args: Any, **kwargs: Any) -> None:
-    if "result_type" in kwargs:
-        kwargs["output_type"] = kwargs.pop("result_type")
-    _orig_agent_init(self, *args, **kwargs)
-
-
-Agent.__init__ = _compat_agent_init  # type: ignore[method-assign]
-
-try:
-    from pydantic_ai.models.test import TestModel
-
-    _orig_test_model_init = TestModel.__init__
-
-    def _compat_test_model_init(self: Any, *args: Any, **kwargs: Any) -> None:
-        if "custom_result_text" in kwargs:
-            val = kwargs.pop("custom_result_text")
-            try:
-                import json
-
-                kwargs["custom_output_args"] = json.loads(val)
-            except Exception:
-                kwargs["custom_output_text"] = val
-        _orig_test_model_init(self, *args, **kwargs)
-
-    TestModel.__init__ = _compat_test_model_init  # type: ignore[method-assign]
-except ImportError:
-    pass
 
 
 def get_openrouter_model() -> OpenAIModel:

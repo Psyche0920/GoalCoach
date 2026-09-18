@@ -11,7 +11,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
 from goalcoach.domain.enums import TeachingActionKind
@@ -292,41 +291,9 @@ class TeachingWorker:
             )
 
 
-# --- Legacy Compatibility Interface ---
-
-
-class TutorResponse(BaseModel):
-    """Backwards-compatible legacy tutor response structure."""
-
-    reply: str = Field(default="", description="Explanations, exercises, or feedback with Pinyin")
-    grammar_points: list[str] = Field(default_factory=list)
-    suggested_practice: str | None = Field(default=None)
-    concept_id: str = Field(default="hsk1_c01")
-    is_evaluating_answer: bool = Field(default=False)
-    passed: bool | None = Field(default=None)
-    hint_given: bool = Field(default=False)
-
-
-tutor_agent = Agent(
-    model=get_openrouter_model(),
-    output_type=TutorResponse,
-    output_retries=get_output_retries(),
-    system_prompt="You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor.",
-)
-
-
-async def chat_with_tutor(deps: Any, user_message: str) -> tuple[TutorResponse, str]:
-    """Legacy helper for conversational tutoring."""
-    result, provider = await run_with_fallback(tutor_agent, user_message, deps=deps)
-    return result.output, provider
-
-
 __all__ = [
     "TEACHING_SYSTEM_PROMPT",
     "TeachingDeps",
     "TeachingWorker",
-    "TutorResponse",
-    "chat_with_tutor",
     "teaching_agent",
-    "tutor_agent",
 ]
