@@ -4,6 +4,6 @@ The orchestrator lives in ``goalcoach.ui`` because it is a deterministic
 controller, not an LLM agent.
 """
 
-from .interfaces import GoalPlanner, Grader, ProgressTracker, Retriever, Teacher
+from .interfaces import GoalPlanner, Grader, ProgressTracker, Teacher
 
-__all__ = ["GoalPlanner", "Grader", "ProgressTracker", "Retriever", "Teacher"]
+__all__ = ["GoalPlanner", "Grader", "ProgressTracker", "Teacher"]

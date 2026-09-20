@@ -10,7 +10,6 @@ from goalcoach.domain.models import (
     GradingResult,
     LearnerState,
     ProgressUpdate,
-    RetrievalRequest,
 )
 
 
@@ -32,10 +31,6 @@ class ProgressTracker(Protocol):
     async def update(
         self, state: LearnerState, exercise: Exercise, grade: GradingResult
     ) -> ProgressUpdate: ...
-
-
-class Retriever(Protocol):
-    async def retrieve(self, request: RetrievalRequest) -> list[dict[str, object]]: ...
 
 
 class LearnerRepository(Protocol):

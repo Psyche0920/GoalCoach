@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from apps.api.dependencies import get_chroma_service, get_content_repo, get_learner_repo
+from apps.api.dependencies import get_content_repo, get_learner_repo
 from goalcoach.agents.teaching_agent import TutorResponse, chat_with_tutor
 from goalcoach.agents.tools.retrieval_tools import AgentDeps
 from goalcoach.domain.models import LearnerState, LearningGoal
@@ -18,7 +18,6 @@ from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
 )
-from goalcoach.infrastructure.retrieval.chroma_service import ChromaService
 
 router = APIRouter(tags=["tutoring"])
 
@@ -40,7 +39,6 @@ async def handle_tutoring_chat(
     req: ChatRequest,
     learner_repo: SqliteLearnerRepository,
     content_repo: ContentRepository,
-    chroma_service: ChromaService,
 ) -> ChatResponse:
     # Extract user message from either single message or messages array
     user_message = req.message
@@ -65,7 +63,6 @@ async def handle_tutoring_chat(
     deps = AgentDeps(
         learner_state=state,
         content_repo=content_repo,
-        chroma_service=chroma_service,
     )
     tutor_reply, provider = await chat_with_tutor(deps, user_message)
     return ChatResponse(
@@ -80,10 +77,9 @@ async def tutoring_chat_endpoint(
     req: ChatRequest,
     learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
     content_repo: ContentRepository = Depends(get_content_repo),
-    chroma_service: ChromaService = Depends(get_chroma_service),
 ) -> ChatResponse:
     """Chat with the adaptive bilingual Chinese tutor agent."""
-    return await handle_tutoring_chat(req, learner_repo, content_repo, chroma_service)
+    return await handle_tutoring_chat(req, learner_repo, content_repo)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -91,7 +87,6 @@ async def legacy_chat_endpoint(
     req: ChatRequest,
     learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
     content_repo: ContentRepository = Depends(get_content_repo),
-    chroma_service: ChromaService = Depends(get_chroma_service),
 ) -> ChatResponse:
     """Backwards compatibility alias for /api/v1/chat."""
-    return await handle_tutoring_chat(req, learner_repo, content_repo, chroma_service)
+    return await handle_tutoring_chat(req, learner_repo, content_repo)

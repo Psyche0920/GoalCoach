@@ -46,9 +46,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             application.state.learner_repository = SqlAlchemyLearnerRepository(session_factory)
             content_repo = ContentRepository(content_session_factory)
             application.state.content_repository = content_repo
-            from goalcoach.infrastructure.retrieval.chroma_service import ChromaService
-
-            application.state.chroma_service = ChromaService(settings=resolved_settings)
             prerequisites = content_repo.get_prerequisites()
             application.state.goal_planner = create_goal_planner(
                 resolved_settings,
