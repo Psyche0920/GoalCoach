@@ -58,7 +58,7 @@ flowchart LR
 5. **Curriculum-Bounded Operation:** The curriculum defines the upper bound of what can be taught; agents operate strictly within verified curriculum boundaries.
 
 
-6. **Zero Heavy Vector DB Overload:** Vector search is optional; no dedicated Retrieval Agent or external Vector DB (ChromaDB) is required for the HSK1 MVP.
+6. **Zero Heavy Vector DB Overload:** Vector search and external Vector DB (ChromaDB) are completely decommissioned; all concept and curriculum lookups execute deterministically via `ContentService` querying SQLite Database #1.
 
 
 
