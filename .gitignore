@@ -8,8 +8,6 @@ __pycache__/
 *.db-shm
 *.db-wal
 *.sqlite*
-.chromadb/
-data/database2/chroma_db/*/
 dist/
 build/
 *.egg-info/
