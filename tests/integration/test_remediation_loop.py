@@ -349,16 +349,12 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
     content_service: ContentService,
 ) -> None:
     """When all exercises for a concept have been attempted, system does not crash and safely falls back."""
+    all_exercises = content_service.get_exercises_for_concept("hsk1_c01", limit=100)
+    all_exercise_ids = [e.exercise_id for e in all_exercises]
     teacher = TeachingWorker()
     state = LearnerState(
         goal=LearningGoal(title="HSK1"),
-        # Simulate all 4 exercises for hsk1_c01 completed
-        today_completed_exercise_ids=[
-            "hsk1_c01_e01",
-            "hsk1_c01_e02",
-            "hsk1_c01_e03",
-            "hsk1_c01_e04",
-        ],
+        today_completed_exercise_ids=all_exercise_ids,
     )
 
     # Should not raise IndexError
@@ -369,12 +365,7 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
         failed_attempts=0,
     )
     assert action.exercise_payload is not None
-    assert action.exercise_payload["exercise_id"] in [
-        "hsk1_c01_e01",
-        "hsk1_c01_e02",
-        "hsk1_c01_e03",
-        "hsk1_c01_e04",
-    ]
+    assert action.exercise_payload["exercise_id"] in all_exercise_ids
 
 
 # --- 7. Stress Test: Zero Error Profile Ingress on Remedial Item ---

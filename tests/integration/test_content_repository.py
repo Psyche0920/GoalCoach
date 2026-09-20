@@ -49,6 +49,7 @@ def test_finds_remedial_exercises_by_exact_error_tag(
 def test_loads_all_prerequisite_relationships(repository: ContentRepository) -> None:
     prerequisites = repository.get_prerequisites()
 
-    assert sum(len(required_ids) for required_ids in prerequisites.values()) == 18
+    assert sum(len(required_ids) for required_ids in prerequisites.values()) == 125
+    assert sum(len(reqs) for cid, reqs in prerequisites.items() if cid.startswith("hsk1_")) == 18
     assert prerequisites["hsk1_c02"] == frozenset({"hsk1_c01"})
     assert prerequisites["hsk1_c20"] == frozenset({"hsk1_c11"})
