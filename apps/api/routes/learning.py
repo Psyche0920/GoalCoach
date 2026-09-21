@@ -200,6 +200,7 @@ async def get_learner_aggregate(
     summary = compute_progress_summary(state, concepts)
     return {
         "state": state,
+        "overallProgress": state.overall_progress(),
         "nextAction": derive_next_action(state),
         "progressSummary": summary,
     }

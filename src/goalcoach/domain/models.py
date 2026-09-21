@@ -339,12 +339,18 @@ class LearnerState(DomainBaseModel):
 
     display_name: str | None = None
     goal: LearningGoal | None = None
+    goal_changed: bool = False
     needs_replanning: bool = False
     roadmap_concept_ids: list[str] = Field(default_factory=list)
     roadmap_adjustments: list[str] = Field(default_factory=list)
     mastery: dict[str, ConceptMastery] = Field(default_factory=dict)
     concept_progress: dict[str, ConceptProgress] = Field(default_factory=dict)
     error_profile: list[ErrorRecord] = Field(default_factory=list)
+    # Per-concept counters of unresolved errors used to gate remediation
+    # (>= 2 -> schedule a fix). These are reset when a fix is scheduled, and are
+    # deliberately separate from ``error_profile``, which is the learner's
+    # lifelong error history and must never be cleared.
+    remediation_counters: dict[str, int] = Field(default_factory=dict)
     active_plan: DailyPlan | None = None
     active_session: ActiveLearningSession | None = None
     sessions: list[SessionSummary] = Field(default_factory=list)
@@ -364,3 +370,16 @@ class LearnerState(DomainBaseModel):
     def review_due(self, at: datetime | None = None) -> bool:
         """Checks if any concept in the learner's mastery profile is due for review."""
         return any(concept.is_review_due(at) for concept in self.mastery.values())
+
+    def overall_progress(self, at: datetime | None = None) -> float:
+        """Calculates normalized overall progress weighted across active mastery and decayed retention."""
+        if not self.mastery:
+            return 0.0
+        total_weight = sum(item.weight for item in self.mastery.values())
+        if total_weight <= 0:
+            return 0.0
+        weighted_sum = sum(
+            item.weight * item.mastery_score * item.current_retention(at)
+            for item in self.mastery.values()
+        )
+        return float(weighted_sum / total_weight)

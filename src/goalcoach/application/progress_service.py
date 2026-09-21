@@ -101,25 +101,13 @@ class ProgressService:
             if is_remedial_item and concept_id not in state.today_remediated_concept_ids:
                 state.today_remediated_concept_ids.append(concept_id)
 
-            # Resolve / decay errors for concept_id without violating ge=1 validation invariant
-            if is_remedial_item:
-                # In remediation: all errors for this concept are cleanly resolved and purged
-                state.error_profile = [e for e in state.error_profile if e.concept_id != concept_id]
-            else:
-                # Standard pass: decrement occurrences by 1, purging if down to 0
-                remaining_errors: list[ErrorRecord] = []
-                for err in state.error_profile:
-                    if err.concept_id == concept_id:
-                        if err.occurrences > 1:
-                            err.occurrences -= 1
-                            remaining_errors.append(err)
-                        # If occurrences == 1, omitted to purge cleanly
-                    else:
-                        remaining_errors.append(err)
-                state.error_profile = remaining_errors
-
-            has_recurring = any(e.occurrences >= 2 for e in state.error_profile)
-            if not has_recurring:
+            # A correct answer resets the whole remediation counter for this
+            # concept to zero (one pass clears all unresolved remediation for
+            # the concept). The lifelong error history (``error_profile``) is
+            # NEVER decremented or cleared.
+            if concept_id in state.remediation_counters:
+                state.remediation_counters.pop(concept_id, None)
+            if not any(value >= 2 for value in state.remediation_counters.values()):
                 state.needs_replanning = False
         else:
             mastery.mastery_score = max(0.0, min(1.0, round(mastery.mastery_score - 0.10, 4)))
@@ -140,20 +128,33 @@ class ProgressService:
             for code in error_codes:
                 self._record_error(state, code=code, concept_id=concept_id, at=now)
 
-            # Check repeated error threshold (occurrences >= 2 for the concept) exclusively on failure
-            total_concept_errors = sum(
-                err.occurrences for err in state.error_profile if err.concept_id == concept_id
-            )
-            if total_concept_errors >= 2 or any(
-                err.concept_id == concept_id and err.occurrences >= 2
-                for err in state.error_profile
-            ):
-                state.needs_replanning = True
-                logger.info(
-                    "Threshold reached for concept %s (total errors: %d); set needs_replanning=True",
-                    concept_id,
-                    total_concept_errors,
-                )
+            # The remediation threshold (>= 2) is tracked independently of the
+            # lifelong error history: ``remediation_counters`` accumulates
+            # unresolved errors until a fix is scheduled, then resets. Inside a
+            # REMEDIAL (fix) item a wrong answer must NOT re-trigger
+            # needs_replanning (that would create a fix -> fail -> replan ->
+            # fix infinite loop), so the counter is only incremented outside it.
+            in_remedial_item = False
+            if state.active_plan:
+                for item in state.active_plan.items:
+                    if (
+                        item.concept_id == concept_id
+                        and not item.completed
+                        and item.kind == PlanItemKind.REMEDIAL
+                    ):
+                        in_remedial_item = True
+                    break
+            if not in_remedial_item:
+                current_counter = state.remediation_counters.get(concept_id, 0) + 1
+                state.remediation_counters[concept_id] = current_counter
+                if current_counter >= 2:
+                    state.needs_replanning = True
+                    logger.info(
+                        "Remediation threshold reached for concept %s (counter: %d); "
+                        "set needs_replanning=True",
+                        concept_id,
+                        current_counter,
+                    )
 
         mastery.last_reviewed_at = now
         state.mastery[concept_id] = mastery

@@ -225,7 +225,10 @@ async def test_remediation_success_clears_error_profile_and_resets_replanning(
     # Verify state in repository
     state = await temp_learner_repo.get(learner_id)
     assert state is not None
-    assert len(state.error_profile) == 0  # Errors for hsk1_c01 resolved!
+    # Lifelong error history is preserved; only the remediation threshold
+    # counter is reset by the successful fix.
+    assert state.error_profile  # historical errors remain
+    assert state.remediation_counters.get("hsk1_c01", 0) == 0
     assert "hsk1_c01" in state.today_remediated_concept_ids
     assert "hsk1_c01_e02" in state.today_completed_exercise_ids
     assert state.needs_replanning is False
@@ -335,8 +338,10 @@ async def test_edge_case_multiple_distinct_errors_for_same_concept(
 
     updated_state = progress_service.apply_grading_result(state, pass_result, concept_id="hsk1_c01")
 
-    # All errors for hsk1_c01 should be cleared
-    assert len(updated_state.error_profile) == 0
+    # The lifelong error history is preserved; the remediation threshold
+    # counter (not the error_profile) is what the successful fix resets.
+    assert len(updated_state.error_profile) == 2  # historical errors remain
+    assert updated_state.remediation_counters.get("hsk1_c01", 0) == 0
     assert updated_state.needs_replanning is False
     assert "hsk1_c01" in updated_state.today_remediated_concept_ids
     assert "hsk1_c01_e02" in updated_state.today_completed_exercise_ids
