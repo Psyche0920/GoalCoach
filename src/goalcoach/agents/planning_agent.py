@@ -320,7 +320,10 @@ class PlanningWorker:
             prerequisites = prerequisite_graph.get(concept_id, frozenset())
             prerequisites_met = all(
                 prerequisite_id in state.mastery
-                and state.mastery[prerequisite_id].mastery_score >= 0.5
+                and (
+                    state.mastery[prerequisite_id].mastery_score >= 0.5
+                    or prerequisite_id in state.today_remediated_concept_ids
+                )
                 for prerequisite_id in prerequisites
             )
             if kind == PlanItemKind.NEW and not prerequisites_met:

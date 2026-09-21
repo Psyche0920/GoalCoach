@@ -59,12 +59,15 @@ def record_session_started(
 ) -> ActiveLearningSession:
     """Open one session, reusing an already active session idempotently."""
     today = utc_now().date().isoformat()
-    if state.daily_activity_date != today:
-        state.daily_activity_date = today
+    # Only roll today's mistake/completion tracking when the recorded activity
+    # date belongs to a *different prior day*. A fresh learner (None) must not
+    # wipe mistakes already recorded today before the first session opens.
+    if state.daily_activity_date not in (None, today):
         state.today_mistake_exercise_ids.clear()
         state.today_completed_exercise_ids.clear()
         state.today_studied_concept_ids.clear()
         state.today_remediated_concept_ids.clear()
+    state.daily_activity_date = today
     if state.active_session is not None and state.active_session.started_at.date().isoformat() != today:
         close_active_session(state)
     if state.active_session is not None:

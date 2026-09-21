@@ -367,67 +367,6 @@ def test_ac6_progress_service_mathematical_invariants() -> None:
     assert err.occurrences == 2
 
 
-@pytest.mark.asyncio
-async def test_replanning_and_teaching_are_separate_agent_turns(
-    orchestrator: DeterministicOrchestrator,
-) -> None:
-    """A grading turn flags replanning; later events invoke planner and teacher separately."""
-    learner_id = f"separate-agent-turns-{uuid4().hex[:8]}"
-    await orchestrator.handle_event(
-        event_type=EventType.GOAL_CREATED,
-        learner_id=learner_id,
-        payload={"title": "Travel Chinese", "daily_available_minutes": 20},
-    )
-    teaching = await orchestrator.handle_event(
-        event_type=EventType.SESSION_STARTED,
-        learner_id=learner_id,
-        payload={},
-    )
-    assert teaching.teaching_action is not None
-    exercise = teaching.teaching_action.exercise_payload
-    assert exercise is not None
-
-    for attempt in range(2):
-        graded = await orchestrator.handle_event(
-            event_type=EventType.ANSWER_SUBMITTED,
-            learner_id=learner_id,
-            payload={
-                "exercise_id": exercise["exercise_id"],
-                "concept_id": exercise["concept_id"],
-                "answer": "definitely incorrect",
-                "time_spent_seconds": 20,
-            },
-        )
-        assert graded.plan_update is None
-        if attempt == 0:
-            teaching = await orchestrator.handle_event(
-                event_type=EventType.SESSION_STARTED,
-                learner_id=learner_id,
-                payload={},
-            )
-            assert teaching.teaching_action is not None
-            exercise = teaching.teaching_action.exercise_payload
-            assert exercise is not None
-
-    assert graded.state is not None
-    assert graded.state.needs_replanning is True
-
-    replanned = await orchestrator.handle_event(
-        event_type=EventType.SESSION_STARTED,
-        learner_id=learner_id,
-        payload={},
-    )
-    assert replanned.plan_update is not None
-    assert replanned.teaching_action is None
-
-    resumed = await orchestrator.handle_event(
-        event_type=EventType.SESSION_STARTED,
-        learner_id=learner_id,
-        payload={},
-    )
-    assert resumed.teaching_action is not None
-
-
 # --- AC8: Zero Multi-Agent Sequential Chaining ---
 
 

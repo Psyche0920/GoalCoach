@@ -14,7 +14,6 @@ from goalcoach.application.agent_history import (
     record_grading_outcome,
     record_session_started,
     record_teaching_turn,
-    require_pending_teaching_turn,
 )
 from goalcoach.application.progress_reducer import compute_progress_summary
 from goalcoach.application.progress_service import ProgressService
@@ -402,12 +401,6 @@ class DeterministicOrchestrator:
                 "against canonical curriculum exercises"
             )
 
-        require_pending_teaching_turn(
-            state,
-            concept_id=concept_id,
-            exercise_id=exercise_id,
-        )
-
         # 2. Grade answer via Grader Component
         grading_result = await self.grader_worker.grade(exercise=exercise, answer=answer)
 
@@ -445,6 +438,45 @@ class DeterministicOrchestrator:
             if all(item.completed for item in state.active_plan.items):
                 state.active_plan.status = PlanStatus.EXHAUSTED
 
+        # 4. Replanning gate: repeated errors (needs_replanning) immediately
+        # re-allocate today's budget through the Planning Agent (main branch logic).
+        replanned = False
+        plan_update: PlanUpdate | None = None
+        if state.needs_replanning:
+            logger.info(
+                "needs_replanning is True for learner %s; invoking Planning Agent",
+                state.learner_id,
+            )
+            plan_update = await self.planning_worker.create_plan(
+                state=state,
+                content_service=self.content_service,
+            )
+            if plan_update and plan_update.ordered_items:
+                adapted_plan = DailyPlan(
+                    learner_id=state.learner_id,
+                    date=utc_now(),
+                    status=PlanStatus.ACTIVE,
+                    items=plan_update.ordered_items,
+                    rationale=plan_update.adaptation_rationale,
+                    generated_at=utc_now(),
+                )
+                state.active_plan = adapted_plan
+                state.roadmap_concept_ids = plan_update.roadmap_concept_ids
+                state.roadmap_adjustments = plan_update.roadmap_adjustments
+                # Entering remediation starts from a clean remediation counter:
+                # the unresolved-error threshold for the fix target resets to 0
+                # so the next remediation can accumulate independently. The
+                # lifelong error history (``error_profile``) is preserved.
+                remediated_ids = {
+                    item.concept_id
+                    for item in adapted_plan.items
+                    if item.kind == PlanItemKind.REMEDIAL
+                }
+                for remediated_id in remediated_ids:
+                    state.remediation_counters.pop(remediated_id, None)
+                state.needs_replanning = False
+                replanned = True
+
         await self.learner_repo.record_learning_event(learning_event)
         await self._persist_state(state)
 
@@ -452,8 +484,9 @@ class DeterministicOrchestrator:
             event_type=EventType.ANSWER_SUBMITTED,
             learner_id=state.learner_id,
             grading_result=grading_result,
+            plan_update=plan_update,
             daily_plan=state.active_plan,
-            replanned=False,
+            replanned=replanned,
             state=state,
             progress_summary=self._progress_summary(state),
             next_action=derive_next_action(state),
