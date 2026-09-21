@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-09-20
 
+### Added
+- **AI Agent Workspace Configuration & Customizations (`.agents/`)**:
+  - **Code Review Subagent (`.agents/agents/code-reviewer/agent.md`)**: Configured an autonomous `code-reviewer` agent specification emphasizing Karpathy-inspired simplicity principles, OOP/SOLID Python architecture, surgical non-breaking modifications, and strict security rules (e.g., zero `.env` exposure).
+
 ### Removed
 - **Vector Database (ChromaDB) Decommissioning**: Fully removed ChromaDB and all associated vector retrieval components in accordance with PRD Principle 6 ("Zero Heavy Vector DB Overload"):
   - Removed `src/goalcoach/infrastructure/retrieval/` directory (`chroma_service.py`, `chunk_factory.py`, and `__init__.py`).
@@ -20,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Heavy ML Dependencies**: Removed `chromadb>=0.6.3`, `sentence-transformers>=3.0.0`, and `posthog<3` from `pyproject.toml` (`[project.optional-dependencies.retrieval]`).
 - **Dependency Pruning**: Pruned 38 transitive packages via `uv lock` (including PyTorch/torch, transformers, sentence-transformers, onnxruntime, flatbuffers, and CUDA libraries), reducing resolved dependencies from 244 to 187 packages and drastically reducing CI install overhead.
 - **Retriever Protocol**: Removed unused `Retriever` protocol from `src/goalcoach/agents/interfaces.py` and `src/goalcoach/agents/__init__.py`.
+- **Legacy Agent Specification**: Removed older `agent.md` from the root workspace in favor of the structured subagent architecture under `.agents/agents/code-reviewer/agent.md`.
 
 ### Changed
 - **Deterministic Curriculum Retrieval**: Refactored `search_hsk_curriculum` in `src/goalcoach/agents/tools/retrieval_tools.py` to query the SQLite `ContentRepository` deterministically without ChromaDB fallback.
