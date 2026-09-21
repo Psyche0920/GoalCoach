@@ -41,38 +41,16 @@ async def test_get_learner_includes_id_in_response(client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/answers
+# GET /api/v1/curriculum/concepts
 # ---------------------------------------------------------------------------
 
-VALID_ANSWER_PAYLOAD = {
-    "learner_id": "550e8400-e29b-41d4-a716-446655440000",
-    "exercise_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-    "answer": "你好",
-}
-
 
 @pytest.mark.asyncio
-async def test_submit_answer_returns_200(client: AsyncClient) -> None:
-    response = await client.post("/api/v1/answers", json=VALID_ANSWER_PAYLOAD)
-
+async def test_get_curriculum_concepts_returns_200(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/curriculum/concepts")
     assert response.status_code == 200
-    body = response.json()
-    assert "gradingResult" in body
-
-
-@pytest.mark.asyncio
-async def test_submit_answer_rejects_empty_answer(client: AsyncClient) -> None:
-    payload = {**VALID_ANSWER_PAYLOAD, "answer": ""}
-    response = await client.post("/api/v1/answers", json=payload)
-
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_submit_answer_rejects_missing_fields(client: AsyncClient) -> None:
-    response = await client.post("/api/v1/answers", json={})
-
-    assert response.status_code == 422
+    data = response.json()
+    assert isinstance(data, list)
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +59,7 @@ async def test_submit_answer_rejects_missing_fields(client: AsyncClient) -> None
 
 
 @pytest.mark.asyncio
-async def test_post_event_learning_loop_router(client: AsyncClient) -> None:
+async def test_post_event_session_started(client: AsyncClient) -> None:
     payload = {
         "event_type": "SESSION_STARTED",
         "learner_id": "api-test-user-001",
@@ -95,13 +73,18 @@ async def test_post_event_learning_loop_router(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_answer_rejects_invalid_json_body(client: AsyncClient) -> None:
+async def test_post_event_rejects_missing_fields(client: AsyncClient) -> None:
+    response = await client.post("/api/v1/events", json={})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_event_rejects_invalid_json_body(client: AsyncClient) -> None:
     response = await client.post(
-        "/api/v1/answers",
+        "/api/v1/events",
         content="not json",
         headers={"Content-Type": "application/json"},
     )
-
     assert response.status_code == 422
 
 
