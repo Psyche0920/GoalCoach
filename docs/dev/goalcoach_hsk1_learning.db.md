@@ -327,9 +327,11 @@ complete database change.
 
 ## Licensing & Attribution
 
-The underlying HSK curriculum vocabulary, examples, and exercise materials are adapted from [wuxialearn](https://github.com/wuxialearn) under the **MIT License**.
+The GoalCoach codebase software is licensed under the **MIT License** (see [`LICENSE`](../../LICENSE)).
 
-- **Copyright**: (c) 2024 wuxialearn
-- **License**: MIT License (full text available at [`docs/LICENSE`](../LICENSE))
+The underlying HSK curriculum vocabulary, frequency examples, and exercise learning materials are adapted from [wuxialearn](https://github.com/wuxialearn) under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)** license.
+
+- **Source**: [wuxialearn](https://github.com/wuxialearn) (c) 2024
+- **Content License**: CC BY-NC-SA 4.0 (full text available at [`data/LICENSE`](../../data/LICENSE))
 - **Adaptation & Modeling**: Normalized into relational SQLite tables (`curriculum_concepts`, `teaching_cards`, `exercises`, `concept_prerequisites`) and enhanced with prerequisite dependencies, structured JSON attributes, and taxonomy error tags for GoalCoach adaptive closed-loop learning.
 

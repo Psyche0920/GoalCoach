@@ -1,5 +1,5 @@
--- Learning materials adapted from wuxialearn (c) 2024 under MIT License.
--- See docs/LICENSE for the complete license text.
+-- Learning materials adapted from wuxialearn (c) 2024 under CC BY-NC-SA 4.0 License.
+-- See data/LICENSE for the complete license text.
 -- GoalCoach Standardized Multi-Level Learning Content Database (SQLite)
 -- Structured HSK 1-6 & Reading tracks with clean concept_id (hsk[level]_[id])
 -- Preserves compatibility with GoalCoach domain & persistence models.

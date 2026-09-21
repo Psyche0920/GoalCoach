@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PRD Documentation**: Updated Principle 6 in `docs/GOALCOACH_MVP_PRD.md` to record that the vector database has been permanently decommissioned in favor of deterministic `ContentService` querying SQLite Database #1.
 
 ### Fixed
+- **Curriculum & Learning Content Licensing Rectification**: Corrected the license for the imported HSK curriculum and vocabulary learning materials in `data/`:
+  - Identified dual-licensing structure in the upstream [wuxialearn](https://github.com/wuxialearn) project: while application client code is under MIT, language frequency dictionary and learning datasets are governed by **CC BY-NC-SA 4.0** ([WuxiaLearn Frequency Dictionary LICENSE](https://github.com/wuxialearn/Chinese-English-Frequency-Dictionary/blob/master/LICENSE)).
+  - Replaced the erroneous root MIT copy in `data/LICENSE` with the complete **CC BY-NC-SA 4.0** license text and proper attribution to `wuxialearn`.
+  - Updated `data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql` header comments to reference CC BY-NC-SA 4.0 and `data/LICENSE`.
+  - Updated `docs/dev/goalcoach_hsk1_learning.db.md` with explicit attribution and licensing boundaries separating application software (MIT) from educational content (CC BY-NC-SA 4.0).
 - **CI Integration Test Failures from Expanded Curriculum**:
   - **Prerequisite Count Assertion**: Updated `test_loads_all_prerequisite_relationships` in `tests/integration/test_content_repository.py` to assert the 125 total prerequisite rules present in the expanded HSK 1–6 dataset, while preserving the invariant that HSK 1 concepts retain their 18 prerequisite rules.
   - **Exercise Exhaustion Graceful Fallback**: Updated `test_edge_case_exercise_exhaustion_graceful_fallback` in `tests/integration/test_remediation_loop.py` to dynamically query all exercises for `hsk1_c01` (8 exercises in the expanded dataset) before simulating exercise exhaustion.
