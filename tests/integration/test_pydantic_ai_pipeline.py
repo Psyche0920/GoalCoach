@@ -5,7 +5,7 @@ Integration tests for PydanticAI RAG pipeline, tutoring endpoint, and Gemma 4 fa
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -40,20 +40,6 @@ def mock_content_repo():
 
 
 @pytest.fixture
-def mock_chroma_service():
-    service = MagicMock()
-    service.query_chunks_async = AsyncMock(
-        return_value=[
-            {
-                "content": "Concept: Negation (不 vs 没)\nPattern: 不 + verb / 没 + 有",
-                "metadata": {"concept_id": "hsk1_c10", "hsk_level": 1},
-            }
-        ]
-    )
-    return service
-
-
-@pytest.fixture
 def sample_learner_state():
     return LearnerState(
         learner_id=uuid4(),
@@ -62,14 +48,11 @@ def sample_learner_state():
 
 
 @pytest.mark.asyncio
-async def test_tutor_agent_tool_execution(
-    mock_content_repo, mock_chroma_service, sample_learner_state
-):
+async def test_tutor_agent_tool_execution(mock_content_repo, sample_learner_state):
     """Verify tutor agent execution and response schema validation with TestModel."""
     deps = AgentDeps(
         learner_state=sample_learner_state,
         content_repo=mock_content_repo,
-        chroma_service=mock_chroma_service,
     )
 
     test_model = TestModel(
@@ -85,50 +68,39 @@ async def test_tutor_agent_tool_execution(
 
 
 @pytest.mark.asyncio
-async def test_search_hsk_curriculum_exact_match(
-    mock_content_repo, mock_chroma_service, sample_learner_state
-):
+async def test_search_hsk_curriculum_exact_match(mock_content_repo, sample_learner_state):
     """Ensure exact concept queries route to SQLite ContentRepository."""
     deps = AgentDeps(
         learner_state=sample_learner_state,
         content_repo=mock_content_repo,
-        chroma_service=mock_chroma_service,
     )
     ctx = RunContext(deps=deps, model=MagicMock(), usage=MagicMock(), prompt="test")
 
     res = await search_hsk_curriculum(ctx, query="hsk1_c01")
     assert "[Curriculum Card - Exact Match: Greetings]" in res
     assert "nǐ hǎo" in res
-    mock_chroma_service.query_chunks_async.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_search_hsk_curriculum_semantic_fallback(
-    mock_content_repo, mock_chroma_service, sample_learner_state
-):
-    """Ensure non-exact queries fall back to ChromaDB vector search."""
+async def test_search_hsk_curriculum_unknown_concept(mock_content_repo, sample_learner_state):
+    """Ensure unmatched concept queries safely return graceful empty notice."""
     deps = AgentDeps(
         learner_state=sample_learner_state,
         content_repo=mock_content_repo,
-        chroma_service=mock_chroma_service,
     )
     ctx = RunContext(deps=deps, model=MagicMock(), usage=MagicMock(), prompt="test")
 
-    res = await search_hsk_curriculum(ctx, query="how do I say not have")
-    assert "[Curriculum Context: hsk1_c10]" in res
-    mock_chroma_service.query_chunks_async.assert_called_once()
+    res = await search_hsk_curriculum(ctx, query="unknown_concept_query")
+    assert res == "No relevant HSK curriculum cards found."
 
 
 @pytest.mark.asyncio
-async def test_openrouter_failover_to_ollama(
-    mock_content_repo, mock_chroma_service, sample_learner_state, monkeypatch
-):
+async def test_openrouter_failover_to_ollama(mock_content_repo, sample_learner_state, monkeypatch):
     """Assert automatic failover to local Ollama Gemma 4 when OpenRouter raises connection errors."""
     monkeypatch.setenv("GOALCOACH_ENABLE_OLLAMA_FALLBACK", "true")
     deps = AgentDeps(
         learner_state=sample_learner_state,
         content_repo=mock_content_repo,
-        chroma_service=mock_chroma_service,
     )
 
     mock_fallback_model = TestModel(
@@ -183,7 +155,7 @@ async def test_grading_agent_deterministic_fast_path():
     assert provider == "deterministic:rule_match"
 
 
-def test_api_tutoring_chat_endpoint(mock_content_repo, mock_chroma_service):
+def test_api_tutoring_chat_endpoint(mock_content_repo):
     """Verify HTTP POST /api/v1/tutoring/chat endpoint returns 200 and schema response."""
     with patch("goalcoach.agents.teaching_agent.run_with_fallback") as mock_fallback:
         mock_result = MagicMock()

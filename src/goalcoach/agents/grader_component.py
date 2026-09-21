@@ -84,7 +84,20 @@ class GraderComponent:
 
         # 1. Fast Path: Exact reference answer match (bypasses LLM, <5ms)
         accepted = [ans.strip() for ans in exercise.reference_answers if ans]
-        if clean_student_ans in accepted:
+        
+        # If exercise has options (MCQ), check if user selected by index or letter (e.g. 1, 2, A, B)
+        resolved_answer = clean_student_ans
+        if exercise.options and len(exercise.options) > 0:
+            if clean_student_ans.isdigit():
+                idx = int(clean_student_ans) - 1
+                if 0 <= idx < len(exercise.options):
+                    resolved_answer = exercise.options[idx].strip()
+            elif clean_student_ans.upper() in ("A", "B", "C", "D"):
+                idx = ord(clean_student_ans.upper()) - ord("A")
+                if 0 <= idx < len(exercise.options):
+                    resolved_answer = exercise.options[idx].strip()
+
+        if clean_student_ans in accepted or resolved_answer in accepted:
             return GradingResult(
                 exercise_id=exercise_id,
                 scores=RubricScores(

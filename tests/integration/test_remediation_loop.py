@@ -349,16 +349,12 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
     content_service: ContentService,
 ) -> None:
     """When all exercises for a concept have been attempted, system does not crash and safely falls back."""
+    all_exercises = content_service.get_exercises_for_concept("hsk1_c01", limit=100)
+    all_exercise_ids = [e.exercise_id for e in all_exercises]
     teacher = TeachingWorker()
     state = LearnerState(
         goal=LearningGoal(title="HSK1"),
-        # Simulate all 4 exercises for hsk1_c01 completed
-        today_completed_exercise_ids=[
-            "hsk1_c01_e01",
-            "hsk1_c01_e02",
-            "hsk1_c01_e03",
-            "hsk1_c01_e04",
-        ],
+        today_completed_exercise_ids=all_exercise_ids,
     )
 
     # Should not raise IndexError
@@ -369,12 +365,7 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
         failed_attempts=0,
     )
     assert action.exercise_payload is not None
-    assert action.exercise_payload["exercise_id"] in [
-        "hsk1_c01_e01",
-        "hsk1_c01_e02",
-        "hsk1_c01_e03",
-        "hsk1_c01_e04",
-    ]
+    assert action.exercise_payload["exercise_id"] in all_exercise_ids
 
 
 # --- 7. Stress Test: Zero Error Profile Ingress on Remedial Item ---
@@ -482,3 +473,53 @@ async def test_edge_case_state_persistence_and_reload_with_new_fields(
     assert reloaded.today_completed_exercise_ids == ["hsk1_c01_e01", "hsk1_c01_e02"]
     assert reloaded.today_remediated_concept_ids == ["hsk1_c01"]
     assert reloaded.all_attempted_exercise_ids() == {"hsk1_c01_e01", "hsk1_c01_e02"}
+
+
+# --- 10. MCQ Options & 1-Click Answering Test ---
+
+
+@pytest.mark.asyncio
+async def test_mcq_options_in_payload_and_1_click_grading(
+    orchestrator: DeterministicOrchestrator,
+    temp_learner_repo: SqliteLearnerRepository,
+) -> None:
+    """Exercises with options populate payload with options and accept 1-based index answers."""
+    learner_id = f"mcq_test_{uuid4().hex[:8]}"
+
+    # Start session on hsk1_c01
+    await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "HSK 1", "daily_available_minutes": 20},
+    )
+
+    session_res = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+
+    action = session_res.teaching_action
+    assert action is not None
+    assert action.exercise_payload is not None
+    assert action.exercise_payload["exercise_id"] == "hsk1_c01_e01"
+
+    # Verify options are present in payload
+    options = action.exercise_payload.get("options")
+    assert options == ["Hello", "Thank you", "Goodbye", "Sorry"]
+
+    # Option 1 is "Hello", which is the correct answer to hsk1_c01_e01 ("你好")
+    # Submitting "1" or "A" should be resolved to "Hello" and pass gates!
+    pass_res = await orchestrator.handle_event(
+        event_type=EventType.ANSWER_SUBMITTED,
+        learner_id=learner_id,
+        payload={
+            "exercise_id": "hsk1_c01_e01",
+            "concept_id": "hsk1_c01",
+            "answer": "1",
+        },
+    )
+
+    assert pass_res.grading_result.passed_gates is True
+    assert pass_res.grading_result.scores.grammatical_correctness == 1.0
+    assert pass_res.grading_result.scores.semantic_precision == 1.0

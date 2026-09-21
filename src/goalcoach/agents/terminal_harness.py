@@ -164,18 +164,32 @@ async def main() -> None:
             )
         )
 
+        options = exercise_payload.get("options")
+        options_text = ""
+        if options and isinstance(options, list):
+            options_lines = [
+                f"  [bold cyan]({i+1})[/bold cyan] {opt}" for i, opt in enumerate(options)
+            ]
+            options_text = "\n\n" + "\n".join(options_lines)
+
         console.print(
             Panel(
                 f"[bold]{exercise_payload.get('instruction', '')}[/bold]\n\n"
-                f"{exercise_payload.get('prompt', '')}",
+                f"{exercise_payload.get('prompt', '')}"
+                f"{options_text}",
                 title="[bold green]Practice[/bold green]",
                 border_style="green",
             )
         )
 
-        console.print(
-            "[dim]Commands: Type your Chinese answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
-        )
+        if options:
+            console.print(
+                "[dim]Commands: Choose a number (e.g. 1), type your answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
+            )
+        else:
+            console.print(
+                "[dim]Commands: Type your Chinese answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
+            )
         user_input = Prompt.ask("\n[bold green]Your Input[/bold green]").strip()
 
         if user_input.lower() in ("exit", "quit"):
@@ -197,10 +211,19 @@ async def main() -> None:
             help_action = help_response.teaching_action
             if help_action.exercise_payload:
                 exercise_payload = help_action.exercise_payload
+            help_options = exercise_payload.get("options")
+            help_prompt_note = ""
+            if help_options and isinstance(help_options, list):
+                help_lines = [
+                    f"  [bold cyan]({i+1})[/bold cyan] {opt}" for i, opt in enumerate(help_options)
+                ]
+                help_prompt_note = "\n\n[bold green]Options:[/bold green]\n" + "\n".join(help_lines)
+
             console.print(
                 Panel(
                     f"[bold yellow]Adapted Modality:[/bold yellow] {help_action.action_kind.value}\n\n"
-                    f"{help_action.content}",
+                    f"{help_action.content}"
+                    f"{help_prompt_note}",
                     title=f"[bold magenta]Coach Guidance ({concept_id})[/bold magenta]",
                     border_style="magenta",
                 )

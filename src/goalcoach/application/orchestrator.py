@@ -287,6 +287,7 @@ class DeterministicOrchestrator:
                 prompt=content_ex.prompt,
                 target_instruction=content_ex.instruction or "",
                 reference_answers=ref_answers,
+                options=content_ex.options,
                 hsk_level=1,
             )
         else:
@@ -479,7 +480,19 @@ class DeterministicOrchestrator:
         from goalcoach.domain.models import RubricScores
 
         clean_answer = answer.strip()
-        passed = clean_answer in [a.strip() for a in exercise.reference_answers]
+        accepted = [a.strip() for a in exercise.reference_answers]
+        resolved = clean_answer
+        if exercise.options:
+            if clean_answer.isdigit():
+                idx = int(clean_answer) - 1
+                if 0 <= idx < len(exercise.options):
+                    resolved = exercise.options[idx].strip()
+            elif clean_answer.upper() in ("A", "B", "C", "D"):
+                idx = ord(clean_answer.upper()) - ord("A")
+                if 0 <= idx < len(exercise.options):
+                    resolved = exercise.options[idx].strip()
+
+        passed = clean_answer in accepted or resolved in accepted
         score = 1.0 if passed else 0.4
         return GradingResult(
             exercise_id=exercise.id or uuid4(),
