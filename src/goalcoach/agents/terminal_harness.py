@@ -253,5 +253,10 @@ async def main() -> None:
             console.print(err_table)
 
 
-if __name__ == "__main__":
+def run_cli() -> None:
+    """CLI entrypoint for GoalCoach interactive terminal harness."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run_cli()

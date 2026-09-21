@@ -1,9 +1,7 @@
-"""Named GoalCoach components from the project proposal.
+"""Named GoalCoach agent and worker components."""
 
-The orchestrator lives in ``goalcoach.ui`` because it is a deterministic
-controller, not an LLM agent.
-"""
+from .grader_component import GraderComponent
+from .planning_agent import PlanningWorker
+from .teaching_agent import TeachingWorker
 
-from .interfaces import GoalPlanner, Grader, ProgressTracker, Teacher
-
-__all__ = ["GoalPlanner", "Grader", "ProgressTracker", "Teacher"]
+__all__ = ["GraderComponent", "PlanningWorker", "TeachingWorker"]
