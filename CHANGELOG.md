@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-09-21
+
+### Removed
+- **Legacy Core Python Modules**:
+  - Removed deprecated `src/goalcoach/ui/` package (`orchestrator.py`, `interfaces.py`, and `__init__.py`).
+  - Removed `src/goalcoach/agents/goal_planning.py` (legacy heuristic planner).
+  - Removed `src/goalcoach/agents/grading_agent.py` (pre-PydanticAI rubric grader).
+  - Removed `src/goalcoach/agents/interfaces.py` (abstract class stubs).
+  - Removed `src/goalcoach/application/progress_reducer.py` (pre-PRD 40/40/20 state reducer).
+- **Duplicate / Legacy API Routes**:
+  - Removed `apps/api/routes/learning.py` (552 lines of ad-hoc routes maintaining divergent state mutations).
+  - Removed `apps/api/routes/tutoring.py` (93 lines; chat handler merged into canonical learning loop router).
+- **Streamlit Prototype Decommissioned**:
+  - Removed `apps/web/app.py` and `src/goalcoach/cli.py`.
+  - Pruned `streamlit>=1.62.0` and `langgraph>=0.2,<1` from `pyproject.toml` dependencies and optional dependencies, dropping resolved packages from 187 to 157 in `uv.lock`.
+- **Redundant Frontend Client-Side Domain Logic (16 Files)**:
+  - Removed 15 dead TypeScript domain/utility/test files in `apps/web/src/domain/`, `apps/web/src/infrastructure/`, and `apps/web/src/utils/` (`grader.ts`, `orchestrator.ts`, `conceptProgressReducer.ts`, `planner.ts`, `curriculumValidator.ts`, `freeformAssessment.ts`, `learningCompletion.ts`, `sqliteLearnerRepository.ts`, `vectorRagMatcher.ts`, and test files).
+  - Removed `apps/web/src/data/curriculumEngine.ts` (211 lines of unused client-side curriculum builder).
+- **Decommissioned Vector DB Debris & Empty Stubs**:
+  - Removed empty packages `src/goalcoach/infrastructure/telemetry/` and `scripts/`.
+  - Deleted obsolete documentation: `docs/GOALCOACH_PRD.md` (superseded by `docs/GOALCOACH_MVP_PRD.md`) and `docs/PR-Reviews/`.
+- **Obsolete Unit Tests**:
+  - Removed `tests/unit/test_orchestrator.py`, `tests/unit/test_goal_planning.py`, and `tests/unit/test_progress_reducer.py`.
+
+### Changed
+- **Unified FastAPI Router (`apps/api/routes/learning_loop.py`)**:
+  - Consolidated all REST endpoints into a single router:
+    - `POST /api/v1/events`: Closed-loop event dispatcher (`ANSWER_SUBMITTED`, `GOAL_CREATED`, `SESSION_STARTED`, `HELP_REQUESTED`).
+    - `GET /api/v1/learners/{learner_id}`: Learner aggregate state and deterministic next action resolution.
+    - `GET /api/v1/learners/{learner_id}/today-plan`: Adaptive daily planning via canonical `PlanningWorker`.
+    - `POST /api/v1/learners/{learner_id}/complete-concept`: Concept completion recording directly into SQLite learner mastery.
+    - `GET /api/v1/curriculum/concepts` & `GET /api/v1/curriculum/concepts/{concept_id}`: Curriculum definitions, teaching cards, and practice exercises.
+    - `POST /api/v1/tutoring/chat`: Interactive bilingual tutor chat with fallback.
+    - `GET /api/tts` & `GET /api/v1/tts`: Mandarin audio synthesis proxy with memory caching.
+- **FastAPI Entrypoint Simplification (`apps/api/main.py`)**:
+  - Mounts only `learning_loop_router` and `/health`, removing legacy planner factory hooks (`create_goal_planner`, `get_goal_planner`).
+- **Frontend Closed-Loop Event Alignment (`apps/web`)**:
+  - Replaced multi-step client grading in `apps/web/src/components/DailyPlanView.tsx` (`/grade-freeform` + elapsed seconds + `/learning-events`) with a single atomic call to `POST /api/v1/events` (`ANSWER_SUBMITTED`).
+  - Updated `apps/web/src/App.tsx` (`handleSubmitAnswer` and `handleUpdateGoal`) to dispatch events directly to `POST /api/v1/events`.
+- **Primary CLI Modernization**:
+  - Wired `[project.scripts] goalcoach` to `goalcoach.agents.terminal_harness:run_cli`.
+- **Canonical Agent Exports (`src/goalcoach/agents/__init__.py`)**:
+  - Exported canonical components: `PlanningWorker`, `TeachingWorker`, `GraderComponent`.
+
+### Fixed
+- **Integration and Unit Test Suite Harmonization**:
+  - Updated `tests/integration/test_pydantic_ai_pipeline.py` to test `GraderComponent.grade()` fast-path.
+  - Updated `tests/api/test_api.py` and `tests/unit/test_api_learning.py` to validate the unified endpoints (`/api/v1/events`, `/api/v1/learners/{id}`, `/api/v1/curriculum/concepts`, and `/api/tts`).
+  - All 73 tests passing cleanly in 2.6s.
+
+---
+
 ## [0.1.1] - 2026-09-21
 
 ### Added
