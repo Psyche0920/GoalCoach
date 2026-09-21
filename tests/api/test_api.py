@@ -117,7 +117,9 @@ async def test_goal_event_preserves_free_form_title_for_agents(
 
 
 @pytest.mark.asyncio
-async def test_roadmap_projection_uses_the_same_state_as_daily_plan(client: AsyncClient) -> None:
+async def test_roadmap_is_empty_until_planning_selects_goal_relevant_units(
+    client: AsyncClient,
+) -> None:
     learner_id = f"api-roadmap-empty-{uuid4().hex}"
     plan_response = await client.get(f"/api/v1/learners/{learner_id}/today-plan")
     roadmap_response = await client.get(f"/api/v1/learners/{learner_id}/roadmap")
@@ -126,7 +128,7 @@ async def test_roadmap_projection_uses_the_same_state_as_daily_plan(client: Asyn
     assert roadmap_response.status_code == 200
     body = roadmap_response.json()
     assert body["dailyPlan"] is None
-    assert body["roadmap"]
+    assert body["roadmap"] == []
     assert "progressSummary" in body
 
 
@@ -216,6 +218,59 @@ async def test_help_event_rejects_unknown_curriculum_concept(client: AsyncClient
 
     assert response.status_code == 422
     assert "Unknown curriculum concept" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_replan_is_an_explicit_single_worker_event(client: AsyncClient) -> None:
+    learner_id = f"api-replan-{uuid4().hex}"
+    await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "GOAL_CREATED",
+            "learner_id": learner_id,
+            "payload": {"title": "Travel in China", "daily_available_minutes": 20},
+        },
+    )
+    response = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "REPLAN_REQUESTED",
+            "learner_id": learner_id,
+            "payload": {"reason": "Refresh today's plan"},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["replanned"] is True
+    assert body["planUpdate"] is not None
+    assert body["teachingAction"] is None
+
+
+@pytest.mark.asyncio
+async def test_answer_requires_current_pending_teaching_turn(client: AsyncClient) -> None:
+    learner_id = f"api-no-pending-turn-{uuid4().hex}"
+    await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "GOAL_CREATED",
+            "learner_id": learner_id,
+            "payload": {"title": "Travel in China", "daily_available_minutes": 20},
+        },
+    )
+    response = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "ANSWER_SUBMITTED",
+            "learner_id": learner_id,
+            "payload": {
+                "exercise_id": "hsk1_c01_e01",
+                "concept_id": "hsk1_c01",
+                "answer": "Hello",
+            },
+        },
+    )
+    assert response.status_code == 409
+    assert "Start a learning session" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

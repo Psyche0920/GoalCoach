@@ -30,8 +30,8 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
   masteredProgress,
   onUpdateGoal,
 }) => {
-  const masteredPercent = Math.round(masteredProgress > 1 ? Math.min(100, masteredProgress) : Math.max(0, masteredProgress) * 100);
-  const learnedPercent = Math.round(learnedProgress > 1 ? Math.min(100, learnedProgress) : Math.max(0, learnedProgress) * 100);
+  const masteredPercent = Math.round(Math.max(0, Math.min(100, masteredProgress)));
+  const learnedPercent = Math.round(Math.max(0, Math.min(100, learnedProgress)));
   const [goalText, setGoalText] = useState(goal?.title || 'Learn practical HSK 1 Chinese');
   const [minutes, setMinutes] = useState<number>(goal?.dailyAvailableMinutes || 15);
   const [saving, setSaving] = useState(false);

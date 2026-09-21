@@ -55,8 +55,7 @@ export interface ErrorRecord {
 
 export interface PlanItem {
   id: string;
-  /** @deprecated Use conceptIds. Retained while legacy lesson launchers migrate. */
-  conceptId?: string;
+  conceptId: string;
   conceptIds?: string[];
   unitIds?: string[];
   kind: PlanItemKind;
@@ -112,7 +111,7 @@ export interface TeachingAction {
 
 export interface LearningLoopResponse {
   status: string;
-  eventType: 'GOAL_CREATED' | 'SESSION_STARTED' | 'SESSION_ENDED' | 'HELP_REQUESTED' | 'ANSWER_SUBMITTED';
+  eventType: 'GOAL_CREATED' | 'SESSION_STARTED' | 'SESSION_ENDED' | 'HELP_REQUESTED' | 'ANSWER_SUBMITTED' | 'REPLAN_REQUESTED';
   learnerId: string;
   teachingAction?: TeachingAction;
   dailyPlan?: DailyPlan;
@@ -304,10 +303,9 @@ export interface ProgressSummary {
   courseCoverage: number;
   learnedProgress: number;
   masteredProgress: number;
+  masteredConceptRate: number;
   goalCompletion: number;
-  goalScopeLearnedPercent?: number;
-  goalScopeMasteredPercent?: number;
-  communicationOutcomePercent?: number;
+  communicationOutcomePercent: number;
   dailyEffectiveMinutes: number;
   totalEffectiveMinutes: number;
   activeDays: number;

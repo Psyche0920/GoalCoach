@@ -42,7 +42,10 @@ def test_roadmap_embeds_items_from_the_persisted_daily_plan() -> None:
         ),
     )
 
-    roadmap = build_roadmap_projection(state, [_concept("c1", 1), _concept("c2", 2)])
+    roadmap = build_roadmap_projection(
+        state,
+        [_concept("c1", 1), _concept("c2", 2), _concept("c3", 3)],
+    )
 
     assert [node["conceptId"] for node in roadmap] == ["c2", "c1"]
     assert roadmap[0]["dailyPlanItem"] is plan_item

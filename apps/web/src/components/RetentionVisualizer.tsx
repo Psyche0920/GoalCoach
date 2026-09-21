@@ -7,7 +7,6 @@ interface RetentionVisualizerProps {
   concepts: CurriculumConcept[];
   overallProgress: number;
   progressSummary: ProgressSummary | null;
-  onReviewConcept: (conceptId: string, isPinyin?: boolean) => void;
 }
 
 const toPercent = (value: number): number => Math.round(Math.max(0, Math.min(100, value)));
@@ -18,12 +17,12 @@ export const RetentionVisualizer: React.FC<RetentionVisualizerProps> = ({
   concepts,
   overallProgress,
   progressSummary,
-  onReviewConcept,
 }) => {
   const goalCompletion = toPercent(overallProgress);
   const tracked = concepts.filter((concept) => learnerState?.conceptProgress?.[concept.conceptId]);
   const learned = toPercent(progressSummary?.learnedProgress ?? 0);
   const mastered = toPercent(progressSummary?.masteredProgress ?? 0);
+  const masteredConceptRate = toPercent(progressSummary?.masteredConceptRate ?? 0);
 
   return (
     <div className="space-y-6 pb-12">
@@ -34,9 +33,16 @@ export const RetentionVisualizer: React.FC<RetentionVisualizerProps> = ({
         <div className="mt-5 h-4 overflow-hidden rounded-full border-2 border-zinc-200 bg-zinc-100 p-0.5"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${goalCompletion}%` }} /></div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2">
+      <section className="grid gap-3 sm:grid-cols-3">
         <Metric icon={<BookOpen className="h-5 w-5" />} label="Learned" value={`${learned}%`} />
-        <Metric icon={<CheckCircle2 className="h-5 w-5" />} label="Mastery" value={`${mastered}%`} />
+        <Metric icon={<CheckCircle2 className="h-5 w-5" />} label="Effective mastery" value={`${mastered}%`} />
+        <Metric icon={<CheckCircle2 className="h-5 w-5" />} label="Strictly mastered" value={`${masteredConceptRate}%`} />
+      </section>
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <Metric icon={<Target className="h-5 w-5" />} label="Today" value={`${progressSummary?.dailyEffectiveMinutes ?? 0} min`} />
+        <Metric icon={<Target className="h-5 w-5" />} label="Total study" value={`${progressSummary?.totalEffectiveMinutes ?? 0} min`} />
+        <Metric icon={<Target className="h-5 w-5" />} label="Active days" value={`${progressSummary?.activeDays ?? 0}`} />
       </section>
 
       <section className="rounded-3xl border-2 border-zinc-200 bg-white p-6">
@@ -47,7 +53,7 @@ export const RetentionVisualizer: React.FC<RetentionVisualizerProps> = ({
           {tracked.map((concept) => {
             const progress = learnerState?.conceptProgress?.[concept.conceptId];
             if (!progress) return null;
-            return <button key={concept.conceptId} type="button" onClick={() => onReviewConcept(concept.conceptId)} className="flex w-full items-center justify-between rounded-2xl border-2 border-zinc-200 p-4 text-left hover:border-emerald-500"><span><strong className="block">{concept.titleEn}</strong><span className="text-xs text-zinc-500">{progress.status.replaceAll('_', ' ')}</span></span><span className="text-right text-sm font-black text-emerald-700">Learned {toPercent(progress.learnedPercent)}%<br /><span className="text-amber-700">Mastery {toPercent(progress.masteryScore * 100)}%</span></span></button>;
+            return <div key={concept.conceptId} className="flex w-full items-center justify-between rounded-2xl border-2 border-zinc-200 p-4"><span><strong className="block">{concept.titleEn}</strong><span className="text-xs text-zinc-500">{progress.status.replaceAll('_', ' ')}</span></span><span className="text-right text-sm font-black text-emerald-700">Learned {toPercent(progress.learnedPercent)}%</span></div>;
           })}
         </div>
       </section>

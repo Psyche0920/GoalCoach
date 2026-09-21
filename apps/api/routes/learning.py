@@ -65,14 +65,8 @@ def build_roadmap_projection(
     persisted ``concept_progress`` and today's queue is ``active_plan``.
     """
     by_id = {concept.concept_id: concept for concept in concepts}
-    canonical_ids = [concept.concept_id for concept in concepts]
     ordered_ids = [
-        *[concept_id for concept_id in state.roadmap_concept_ids if concept_id in by_id],
-        *[
-            concept_id
-            for concept_id in canonical_ids
-            if concept_id not in state.roadmap_concept_ids
-        ],
+        concept_id for concept_id in state.roadmap_concept_ids if concept_id in by_id
     ]
     plan_items = {
         item.concept_id: item

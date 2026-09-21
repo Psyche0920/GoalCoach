@@ -143,9 +143,8 @@ class ProgressSummary(DomainBaseModel):
     course_coverage: float = 0.0
     learned_progress: float = 0.0
     mastered_progress: float = 0.0
+    mastered_concept_rate: float = 0.0
     goal_completion: float = 0.0
-    goal_scope_learned_percent: float = 0.0
-    goal_scope_mastered_percent: float = 0.0
     communication_outcome_percent: float = 0.0
     daily_effective_minutes: float = 0.0
     total_effective_minutes: float = 0.0

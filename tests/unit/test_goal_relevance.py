@@ -11,7 +11,7 @@ def test_agent_roadmap_order_is_preserved() -> None:
     assert ordered == ["c3", "c1", "c2"]
 
 
-def test_invalid_duplicate_and_missing_ids_are_normalized() -> None:
+def test_invalid_and_duplicate_ids_are_removed_without_expanding_scope() -> None:
     concepts = ["c1", "c2", "c3"]
 
-    assert validate_agent_roadmap(["unknown", "c2", "c2"], concepts) == ["c2", "c1", "c3"]
+    assert validate_agent_roadmap(["unknown", "c2", "c2"], concepts) == ["c2"]

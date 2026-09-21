@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from goalcoach.domain.models import ConceptProgress, LearnerState, LearningEvent, ProgressSummary
+from goalcoach.domain.retention import calculate_retention
 
 
 def reduce_concept_progress(
@@ -145,15 +146,16 @@ def compute_progress_summary(
         str(getattr(concept, "concept_id", None) or concept.get("id") or concept.get("conceptId"))
         for concept in (all_concepts or [])
     ]
-    scope_ids = [
+    roadmap_ids = [
         concept_id
         for concept_id in state.roadmap_concept_ids
         if not curriculum_ids or concept_id in curriculum_ids
     ] or curriculum_ids or list(tracked)
-    scoped_progress = [tracked[concept_id] for concept_id in scope_ids if concept_id in tracked]
-    total_scope_count = max(len(scope_ids), 1)
+    roadmap_progress = [tracked[concept_id] for concept_id in roadmap_ids if concept_id in tracked]
+    total_roadmap_count = max(len(roadmap_ids), 1)
+    now = datetime.now(UTC)
 
-    today = datetime.now(UTC).date()
+    today = now.date()
     completed_seconds = sum(
         session.active_seconds for session in state.sessions if session.ended_at.date() == today
     )
@@ -175,9 +177,8 @@ def compute_progress_summary(
             course_coverage=0.0,
             learned_progress=0.0,
             mastered_progress=0.0,
+            mastered_concept_rate=0.0,
             goal_completion=0.0,
-            goal_scope_learned_percent=0.0,
-            goal_scope_mastered_percent=0.0,
             communication_outcome_percent=0.0,
             daily_effective_minutes=daily_effective_minutes,
             total_effective_minutes=total_effective_minutes,
@@ -185,38 +186,58 @@ def compute_progress_summary(
         )
 
     # 1. Course Coverage & Progress
-    concepts_started = sum(1 for p in scoped_progress if p.learned_percent > 0)
-    course_coverage = min(100.0, round(100.0 * (concepts_started / total_scope_count), 1))
+    concepts_started = sum(1 for progress in roadmap_progress if progress.learned_percent > 0)
+    course_coverage = min(100.0, round(100.0 * (concepts_started / total_roadmap_count), 1))
 
-    total_learned = sum(p.learned_percent for p in scoped_progress)
-    learned_progress = min(100.0, round(total_learned / total_scope_count, 1))
+    total_learned = sum(progress.learned_percent for progress in roadmap_progress)
+    learned_progress = min(100.0, round(total_learned / total_roadmap_count, 1))
 
-    concepts_mastered = sum(1 for p in scoped_progress if p.is_mastered)
+    # Effective mastery follows the PRD's honest-progress rule: mastery multiplied
+    # by current retention. The scheduling projection is authoritative when present.
+    effective_mastery = 0.0
+    for concept_id in roadmap_ids:
+        authority = state.mastery.get(concept_id)
+        if authority is not None:
+            effective_mastery += authority.mastery_score * authority.current_retention(now)
+            continue
+        projection = tracked.get(concept_id)
+        if projection is None:
+            continue
+        retention = calculate_retention(
+            retention_at_review=projection.retention_at_review,
+            last_reviewed_at=projection.last_reviewed_at or now,
+            at=now,
+            decay_lambda=projection.decay_lambda,
+        )
+        effective_mastery += projection.mastery_score * retention
     mastered_progress = min(
-        100.0, round(100.0 * (concepts_mastered / total_scope_count), 1)
+        100.0,
+        round(100.0 * effective_mastery / total_roadmap_count, 1),
     )
 
-    # 2. Goal Scope Progress
-    goal_scope_learned_percent = learned_progress
-    total_mastery = sum(p.mastery_score for p in scoped_progress)
-    goal_scope_mastered_percent = min(
-        100.0, round(100.0 * (total_mastery / total_scope_count), 1)
+    concepts_mastered = sum(1 for progress in roadmap_progress if progress.is_mastered)
+    mastered_concept_rate = min(
+        100.0,
+        round(100.0 * concepts_mastered / total_roadmap_count, 1),
     )
 
     # Communication outcomes are represented by successful assessed output evidence.
     communication_outcome_percent = min(
         100.0,
         round(
-            sum(p.learning_evidence.output_completion * 100.0 for p in scoped_progress)
-            / total_scope_count,
+            sum(
+                progress.learning_evidence.output_completion * 100.0
+                for progress in roadmap_progress
+            )
+            / total_roadmap_count,
             1,
         ),
     )
 
     # Goal completion combines coverage, durable mastery, and communicative output.
     goal_completion = round(
-        0.45 * goal_scope_learned_percent
-        + 0.35 * goal_scope_mastered_percent
+        0.45 * learned_progress
+        + 0.35 * mastered_progress
         + 0.20 * communication_outcome_percent
     )
 
@@ -225,9 +246,8 @@ def compute_progress_summary(
         course_coverage=course_coverage,
         learned_progress=learned_progress,
         mastered_progress=mastered_progress,
+        mastered_concept_rate=mastered_concept_rate,
         goal_completion=float(goal_completion),
-        goal_scope_learned_percent=goal_scope_learned_percent,
-        goal_scope_mastered_percent=goal_scope_mastered_percent,
         communication_outcome_percent=communication_outcome_percent,
         daily_effective_minutes=daily_effective_minutes,
         total_effective_minutes=total_effective_minutes,

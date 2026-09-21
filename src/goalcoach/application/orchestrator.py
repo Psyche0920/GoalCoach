@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -14,6 +13,7 @@ from goalcoach.application.agent_history import (
     record_grading_outcome,
     record_session_started,
     record_teaching_turn,
+    require_pending_teaching_turn,
 )
 from goalcoach.application.progress_reducer import compute_progress_summary
 from goalcoach.application.progress_service import ProgressService
@@ -33,8 +33,6 @@ from goalcoach.domain.models import (
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
 from goalcoach.infrastructure.persistence.learner_repository import SqliteLearnerRepository
-
-logger = logging.getLogger(__name__)
 
 
 def derive_next_action(state: LearnerState) -> str:
@@ -160,6 +158,8 @@ class DeterministicOrchestrator:
                 return await self._handle_help_requested(state, event.payload)
             case EventType.ANSWER_SUBMITTED:
                 return await self._handle_answer_submitted(state, event.payload)
+            case EventType.REPLAN_REQUESTED:
+                return await self._handle_replan_requested(state, event.payload)
             case _:
                 raise ValueError(f"Unknown event type: {event.event_type}")
 
@@ -180,6 +180,9 @@ class DeterministicOrchestrator:
             daily_available_minutes=daily_minutes,
         )
         state.needs_replanning = False
+        # A changed free-form goal owns a newly selected roadmap. Historical
+        # learning evidence remains intact and can still inform the new plan.
+        state.roadmap_concept_ids = []
 
         plan_update = await self.planning_worker.create_plan(
             state=state,
@@ -370,7 +373,7 @@ class DeterministicOrchestrator:
         state: LearnerState,
         payload: dict[str, Any],
     ) -> OrchestratorResponse:
-        """Process ANSWER_SUBMITTED: grade submission, update state, and re-plan if needs_replanning."""
+        """Grade one pending exercise and persist its deterministic state transition."""
         exercise_id = payload["exercise_id"]
         concept_id = payload["concept_id"]
         answer = payload["answer"]
@@ -400,6 +403,12 @@ class DeterministicOrchestrator:
                 f"Unknown exercise_id {exercise_id!r}; answers can only be graded "
                 "against canonical curriculum exercises"
             )
+
+        require_pending_teaching_turn(
+            state,
+            concept_id=concept_id,
+            exercise_id=str(exercise_id),
+        )
 
         # 2. Grade answer via Grader Component
         grading_result = await self.grader_worker.grade(exercise=exercise, answer=answer)
@@ -438,44 +447,11 @@ class DeterministicOrchestrator:
             if all(item.completed for item in state.active_plan.items):
                 state.active_plan.status = PlanStatus.EXHAUSTED
 
-        # 4. Replanning gate: repeated errors (needs_replanning) immediately
-        # re-allocate today's budget through the Planning Agent (main branch logic).
+        # 4. Replanning gate: ProgressService marks the state only. Planning runs
+        # on the next SESSION_STARTED or explicit REPLAN_REQUESTED event, keeping
+        # the one-reasoning-worker-per-event invariant intact.
         replanned = False
         plan_update: PlanUpdate | None = None
-        if state.needs_replanning:
-            logger.info(
-                "needs_replanning is True for learner %s; invoking Planning Agent",
-                state.learner_id,
-            )
-            plan_update = await self.planning_worker.create_plan(
-                state=state,
-                content_service=self.content_service,
-            )
-            if plan_update and plan_update.ordered_items:
-                adapted_plan = DailyPlan(
-                    learner_id=state.learner_id,
-                    date=utc_now(),
-                    status=PlanStatus.ACTIVE,
-                    items=plan_update.ordered_items,
-                    rationale=plan_update.adaptation_rationale,
-                    generated_at=utc_now(),
-                )
-                state.active_plan = adapted_plan
-                state.roadmap_concept_ids = plan_update.roadmap_concept_ids
-                state.roadmap_adjustments = plan_update.roadmap_adjustments
-                # Entering remediation starts from a clean remediation counter:
-                # the unresolved-error threshold for the fix target resets to 0
-                # so the next remediation can accumulate independently. The
-                # lifelong error history (``error_profile``) is preserved.
-                remediated_ids = {
-                    item.concept_id
-                    for item in adapted_plan.items
-                    if item.kind == PlanItemKind.REMEDIAL
-                }
-                for remediated_id in remediated_ids:
-                    state.remediation_counters.pop(remediated_id, None)
-                state.needs_replanning = False
-                replanned = True
 
         await self.learner_repo.record_learning_event(learning_event)
         await self._persist_state(state)
@@ -490,6 +466,48 @@ class DeterministicOrchestrator:
             state=state,
             progress_summary=self._progress_summary(state),
             next_action=derive_next_action(state),
+        )
+
+    async def _handle_replan_requested(
+        self,
+        state: LearnerState,
+        payload: dict[str, Any],
+    ) -> OrchestratorResponse:
+        """Regenerate the daily plan through one explicit Planning Agent event."""
+        if state.goal is None:
+            raise SessionLifecycleError("Create a learning goal before requesting a new plan")
+        plan_update = await self.planning_worker.create_plan(
+            state=state,
+            content_service=self.content_service,
+        )
+        plan = DailyPlan(
+            learner_id=state.learner_id,
+            date=utc_now(),
+            status=PlanStatus.ACTIVE,
+            items=plan_update.ordered_items,
+            rationale=plan_update.adaptation_rationale,
+            generated_at=utc_now(),
+        )
+        state.active_plan = plan
+        state.roadmap_concept_ids = plan_update.roadmap_concept_ids
+        state.roadmap_adjustments = plan_update.roadmap_adjustments
+        state.needs_replanning = False
+        remediated_ids = {
+            item.concept_id for item in plan.items if item.kind == PlanItemKind.REMEDIAL
+        }
+        for concept_id in remediated_ids:
+            state.remediation_counters.pop(concept_id, None)
+        await self._persist_state(state)
+        return OrchestratorResponse(
+            event_type=EventType.REPLAN_REQUESTED,
+            learner_id=state.learner_id,
+            plan_update=plan_update,
+            daily_plan=plan,
+            replanned=True,
+            state=state,
+            progress_summary=self._progress_summary(state),
+            next_action=derive_next_action(state),
+            metadata={"reason": payload.get("reason")},
         )
 
 __all__ = [

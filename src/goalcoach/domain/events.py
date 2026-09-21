@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from goalcoach.domain.enums import EventType
 from goalcoach.domain.models import DomainBaseModel, utc_now
@@ -19,12 +19,21 @@ class GoalCreatedPayload(DomainBaseModel):
     target_hsk_level: int = Field(default=1, ge=1, le=6)
     daily_available_minutes: int = Field(default=20, gt=0, le=240)
 
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        """Reject goals that contain no meaningful user input."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Goal title cannot be blank")
+        return normalized
+
 
 class SessionStartedPayload(DomainBaseModel):
     """Payload provided when a learner starts a daily study session."""
 
     preferred_duration_minutes: int | None = Field(default=None, gt=0, le=240)
-    session_focus: str | None = None
+    session_focus: str | None = Field(default=None, max_length=255)
 
 
 class SessionEndedPayload(DomainBaseModel):
@@ -37,9 +46,9 @@ class HelpRequestedPayload(DomainBaseModel):
     """Payload provided when a learner explicitly signals confusion or asks for coach guidance."""
 
     concept_id: str = Field(min_length=1, max_length=128)
-    current_exercise_id: str | None = None
-    learner_query: str | None = None
-    previous_response: str | None = None
+    current_exercise_id: str | None = Field(default=None, max_length=128)
+    learner_query: str | None = Field(default=None, max_length=2000)
+    previous_response: str | None = Field(default=None, max_length=5000)
 
 
 class AnswerSubmittedPayload(DomainBaseModel):
@@ -47,8 +56,23 @@ class AnswerSubmittedPayload(DomainBaseModel):
 
     exercise_id: str = Field(min_length=1, max_length=128)
     concept_id: str = Field(min_length=1, max_length=128)
-    answer: str = Field(min_length=1)
-    time_spent_seconds: int = Field(default=30, ge=0)
+    answer: str = Field(min_length=1, max_length=5000)
+    time_spent_seconds: int = Field(default=30, ge=0, le=86400)
+
+    @field_validator("answer")
+    @classmethod
+    def validate_answer(cls, value: str) -> str:
+        """Reject whitespace-only answers while retaining free-form content."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Answer cannot be blank")
+        return normalized
+
+
+class ReplanRequestedPayload(DomainBaseModel):
+    """Payload for an explicit learner-requested daily-plan refresh."""
+
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class InboundEvent(DomainBaseModel):
@@ -66,6 +90,7 @@ __all__ = [
     "GoalCreatedPayload",
     "HelpRequestedPayload",
     "InboundEvent",
+    "ReplanRequestedPayload",
     "SessionEndedPayload",
     "SessionStartedPayload",
 ]

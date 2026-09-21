@@ -27,6 +27,7 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
   onRegeneratePlan,
 }) => {
   const completedCount = plan?.items.filter((item) => item.completed).length ?? 0;
+  const currentItemId = plan?.items.find((item) => !item.completed)?.id;
   const plannedMinutes = plan?.estimatedMinutes ?? plan?.items.reduce((sum, item) => sum + item.estimatedMinutes, 0) ?? 0;
   const todayOutcome = plan?.outcome ?? plan?.rationale ?? 'Complete the next step in your learning path.';
   const remainingMinutes = useMemo(() => plan?.items
@@ -55,14 +56,15 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
   }, [plan]);
 
   const learningType = (item: DailyPlan['items'][number]): string => {
-    const categories = (item.conceptIds ?? []).map((conceptId) => concepts.find((concept) => concept.conceptId === conceptId)?.category);
+    const conceptIds = item.conceptIds?.length ? item.conceptIds : [item.conceptId];
+    const categories = conceptIds.map((conceptId) => concepts.find((concept) => concept.conceptId === conceptId)?.category);
     return categories.includes('pinyin') ? 'Pinyin' : 'Grammar';
   };
 
   const launchItem = (itemId: string): void => {
     const item = plan?.items.find((candidate) => candidate.id === itemId);
     if (!item) return;
-    if (!item.completed) onStartStudy();
+    if (!item.completed && item.id === currentItemId) onStartStudy();
   };
 
   if (!plan) {
@@ -127,7 +129,8 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
               <div className="space-y-2">
                 {section.items.map((item) => {
                   const visual = ITEM_VISUALS[item.kind];
-                  return <button key={item.id} type="button" onClick={() => launchItem(item.id)} className={`w-full flex items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${visual.card}`}>
+                  const isCurrent = item.id === currentItemId;
+                  return <button key={item.id} type="button" disabled={!isCurrent || item.completed} onClick={() => launchItem(item.id)} className={`w-full flex items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all ${isCurrent && !item.completed ? 'hover:-translate-y-0.5 hover:shadow-sm cursor-pointer' : 'cursor-default opacity-70'} ${visual.card}`}>
                     <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black ${item.completed ? 'bg-emerald-500 text-white' : visual.badge}`}>{item.completed ? <Check className="w-4 h-4" /> : visual.icon}</span>
                     <span className="flex-1 min-w-0">
                       <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-black ${visual.badge}`}>{section.id === 'learn' ? learningType(item) : visual.label}</span>

@@ -29,10 +29,9 @@ def validate_agent_roadmap(
     proposed_ids: list[str],
     curriculum_ids: list[str],
 ) -> list[str]:
-    """Keep an agent-defined order while guaranteeing a complete, valid roadmap."""
+    """Keep only the unique, curriculum-valid concepts selected by the agent."""
     valid_ids = set(curriculum_ids)
-    ordered = list(dict.fromkeys(cid for cid in proposed_ids if cid in valid_ids))
-    return [*ordered, *(cid for cid in curriculum_ids if cid not in ordered)]
+    return list(dict.fromkeys(cid for cid in proposed_ids if cid in valid_ids))
 
 
 @dataclass
@@ -62,8 +61,9 @@ Key Pedagogical Rules:
 5. Adaptation Rationale:
    - Provide a clear, transparent explanation in `adaptation_rationale` explaining why this plan was chosen.
 6. Dynamic Roadmap:
-   - Produce `roadmap_concept_ids` containing every catalog concept exactly once.
-   - Order it by relevance to the learner's free-form goal, evidence, errors, and prerequisites.
+   - Produce a non-empty `roadmap_concept_ids` subset containing only concepts relevant to the
+     learner's free-form goal, evidence, and errors. Do not include the full catalog by default.
+   - Order the selected concepts by relevance and learning sequence.
    - Reason directly from the goal and each concept's communicative purpose; do not use fixed goal categories.
    - Keep prerequisites before concepts that depend on them.
 7. Cross-Session Continuity:
@@ -146,7 +146,7 @@ class PlanningWorker:
         mastery_summary = {
             cid: {
                 "score": round(m.mastery_score, 2),
-                "retention": round(m.retention_score, 2),
+                "retention": round(m.current_retention(), 2),
                 "is_due": m.is_review_due(),
             }
             for cid, m in state.mastery.items()
@@ -199,6 +199,10 @@ class PlanningWorker:
             validated_items = [
                 item for item in plan_update.ordered_items if item.concept_id in all_valid_ids
             ]
+            daily_ids = list(dict.fromkeys(item.concept_id for item in validated_items))
+            plan_update.roadmap_concept_ids = list(
+                dict.fromkeys([*plan_update.roadmap_concept_ids, *daily_ids])
+            )
 
             if validated_items:
                 # Ensure budget not exceeded
@@ -278,7 +282,7 @@ class PlanningWorker:
         if not concepts:
             raise AgentOutputError("No curriculum concepts are available for deterministic planning")
         concept_by_id = {concept.concept_id: concept for concept in concepts}
-        roadmap_ids = [concept.concept_id for concept in concepts]
+        catalog_ids = [concept.concept_id for concept in concepts]
         prerequisite_graph = (
             content_service.get_all_prerequisites() if self.enable_prerequisites else {}
         )
@@ -304,7 +308,7 @@ class PlanningWorker:
         ]
         new_ids = [
             concept_id
-            for concept_id in roadmap_ids
+            for concept_id in catalog_ids
             if concept_id not in state.mastery
             and concept_id not in state.today_studied_concept_ids
         ]
@@ -361,7 +365,11 @@ class PlanningWorker:
             ordered_items=selected,
             adaptation_rationale="Deterministic curriculum and learner-state allocation.",
             roadmap_adjustments=["Deterministic fallback retained the canonical roadmap."],
-            roadmap_concept_ids=roadmap_ids,
+            roadmap_concept_ids=list(
+                dict.fromkeys(
+                    [*state.roadmap_concept_ids, *(item.concept_id for item in selected)]
+                )
+            ),
             metadata={
                 "provider": "deterministic",
                 "fallback_used": True,

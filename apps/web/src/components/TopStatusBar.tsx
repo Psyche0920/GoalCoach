@@ -18,7 +18,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
   onRegeneratePlan,
   onOpenProfile,
 }) => {
-  const goalCompletionPercent = Math.round(overallProgress > 1 ? Math.min(100, overallProgress) : Math.max(0, overallProgress) * 100);
+  const goalCompletionPercent = Math.round(Math.max(0, Math.min(100, overallProgress)));
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b-2 border-zinc-200 px-4 sm:px-8 py-3 select-none">
       <div className="max-w-5xl mx-auto flex items-center justify-between">

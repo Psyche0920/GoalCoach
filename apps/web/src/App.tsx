@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar.tsx';
 import { TopStatusBar } from './components/TopStatusBar.tsx';
 import { BottomNav } from './components/BottomNav.tsx';
 import { DailyPlanView } from './components/DailyPlanView.tsx';
-import { CurriculumRoadmapView } from './components/CurriculumRoadmapView.tsx';
+import { RoadmapView } from './components/RoadmapView.tsx';
 import { RetentionVisualizer } from './components/RetentionVisualizer.tsx';
 import { LearnerProfileDrawer } from './components/LearnerProfileDrawer.tsx';
 import { TeachingAgentModal } from './components/TeachingAgentModal.tsx';
@@ -28,6 +28,8 @@ export function App() {
   const [teachingError, setTeachingError] = useState<string | null>(null);
   const [agentGradingResult, setAgentGradingResult] = useState<GradingResult | null>(null);
   const [agentReplanned, setAgentReplanned] = useState(false);
+  const [appError, setAppError] = useState<string | null>(null);
+  const activityStartedAt = useRef<number | null>(null);
 
   const acceptLearnerState = (incoming: LearnerState) => {
     setLearnerState((current) => {
@@ -65,6 +67,38 @@ export function App() {
     return response.json() as Promise<LearningLoopResponse>;
   };
 
+  const refreshRoadmap = async (): Promise<void> => {
+    const response = await fetch(`/api/v1/learners/${learnerId}/roadmap`);
+    if (!response.ok) throw new Error(await parseApiError(response, 'The roadmap could not be loaded.'));
+    const body = await response.json() as { roadmap?: CurriculumConcept[] };
+    setConcepts(Array.isArray(body.roadmap) ? body.roadmap : []);
+  };
+
+  const acceptProgress = (summary: ProgressSummary): void => {
+    setProgressSummary(summary);
+    setOverallProgress(summary.goalCompletion);
+    setLearnedProgress(summary.learnedProgress);
+    setMasteredProgress(summary.masteredProgress);
+  };
+
+  const acceptResponse = async (
+    data: LearningLoopResponse,
+    refreshRoadmapProjection = false,
+  ): Promise<void> => {
+    if (data.state) acceptLearnerState(data.state);
+    if (data.progressSummary) acceptProgress(data.progressSummary);
+    setNextAction(data.nextAction);
+    if (refreshRoadmapProjection) await refreshRoadmap();
+  };
+
+  const currentActivitySeconds = (): number => {
+    if (activityStartedAt.current === null) return 0;
+    return Math.min(
+      86_400,
+      Math.max(0, Math.round((Date.now() - activityStartedAt.current) / 1_000)),
+    );
+  };
+
   // Fetch initial learner state and curriculum
   useEffect(() => {
     async function init() {
@@ -73,28 +107,12 @@ export function App() {
         if (res.ok) {
           const data = await res.json();
           setNextAction(data.nextAction);
-          setProgressSummary(data.progressSummary ?? null);
-          setOverallProgress(data.progressSummary?.goalCompletion ?? 0);
-          setLearnedProgress(data.progressSummary?.learnedProgress ?? 0);
-          setMasteredProgress(data.progressSummary?.masteredProgress ?? 0);
-          let initialState = data.state as LearnerState;
-          const planRes = await fetch(`/api/v1/learners/${learnerId}/today-plan`);
-          if (planRes.ok) {
-            const plan = await planRes.json();
-            initialState = { ...initialState, activePlan: plan };
-          }
-          acceptLearnerState(initialState);
+          if (data.progressSummary) acceptProgress(data.progressSummary);
+          acceptLearnerState(data.state as LearnerState);
         }
-
-        const conceptsRes = await fetch('/api/v1/curriculum/concepts');
-        if (conceptsRes.ok) {
-          const data = await conceptsRes.json();
-          if (Array.isArray(data) && data.length > 0) {
-            setConcepts(data);
-          }
-        }
+        await refreshRoadmap();
       } catch (err) {
-        console.error('Failed to initialize learner state:', err);
+        setAppError(err instanceof Error ? err.message : 'GoalCoach could not be initialized.');
       } finally {
         setLoading(false);
       }
@@ -102,16 +120,16 @@ export function App() {
     init();
   }, [learnerId]);
 
-  // Handle plan regeneration
-  const handleRegeneratePlan = async () => {
+  // Replanning is an explicit backend event, never a read-only plan fetch.
+  const handleRegeneratePlan = async (): Promise<void> => {
+    setAppError(null);
     try {
-      const res = await fetch(`/api/v1/learners/${learnerId}/today-plan`);
-      if (res.ok) {
-        const plan = await res.json();
-        setLearnerState((current) => current ? { ...current, activePlan: plan } : current);
-      }
-    } catch (err) {
-      console.error('Failed to regenerate plan:', err);
+      const data = await dispatchLearningEvent('REPLAN_REQUESTED', {
+        reason: 'Learner requested a refreshed daily plan.',
+      });
+      await acceptResponse(data, true);
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Today’s plan could not be refreshed.');
     }
   };
 
@@ -130,8 +148,7 @@ export function App() {
       daily_available_minutes: dailyMinutes,
     });
     if (!data.state) throw new Error('The updated learner state was missing from the server response.');
-    acceptLearnerState(data.state);
-    setNextAction('teach');
+    await acceptResponse(data, true);
   };
 
   const handleStartAgentSession = async (): Promise<void> => {
@@ -141,17 +158,25 @@ export function App() {
     setAgentGradingResult(null);
     setAgentReplanned(false);
     try {
-      const data = await dispatchLearningEvent('SESSION_STARTED', {});
-      if (!data.teachingAction) throw new Error('No teaching action was returned.');
-      setTeachingAction(data.teachingAction);
-      if (data.progressSummary) {
-        setProgressSummary(data.progressSummary);
-        setOverallProgress(data.progressSummary.goalCompletion);
-        setLearnedProgress(data.progressSummary.learnedProgress);
-        setMasteredProgress(data.progressSummary.masteredProgress);
+      let data = await dispatchLearningEvent('SESSION_STARTED', {});
+      const replanned = data.replanned;
+      await acceptResponse(data, replanned);
+      // Planning and teaching remain separate backend events. If this turn
+      // regenerated the plan, request the teaching turn only after it finishes.
+      if (!data.teachingAction && data.nextAction === 'teach') {
+        data = await dispatchLearningEvent('SESSION_STARTED', {});
+        await acceptResponse(data);
       }
-      if (data.state) acceptLearnerState(data.state);
-      setNextAction(data.nextAction);
+      if (!data.teachingAction) {
+        throw new Error(
+          data.nextAction === 'complete'
+            ? 'Today’s plan is complete.'
+            : 'No teaching action was returned.',
+        );
+      }
+      setTeachingAction(data.teachingAction);
+      setAgentReplanned(replanned || data.replanned);
+      activityStartedAt.current = Date.now();
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'The lesson could not be started.');
     } finally {
@@ -173,14 +198,7 @@ export function App() {
       });
       if (!data.teachingAction) throw new Error('No alternative explanation was returned.');
       setTeachingAction(data.teachingAction);
-      if (data.progressSummary) {
-        setProgressSummary(data.progressSummary);
-        setOverallProgress(data.progressSummary.goalCompletion);
-        setLearnedProgress(data.progressSummary.learnedProgress);
-        setMasteredProgress(data.progressSummary.masteredProgress);
-      }
-      if (data.state) acceptLearnerState(data.state);
-      setNextAction(data.nextAction);
+      await acceptResponse(data);
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'Coach help is temporarily unavailable.');
     } finally {
@@ -202,18 +220,12 @@ export function App() {
         exercise_id: exerciseId,
         concept_id: conceptId,
         answer,
-        time_spent_seconds: 30,
+        time_spent_seconds: currentActivitySeconds(),
       });
       setAgentGradingResult(data.gradingResult ?? null);
       setAgentReplanned(data.replanned);
-      if (data.progressSummary) {
-        setProgressSummary(data.progressSummary);
-        setOverallProgress(data.progressSummary.goalCompletion);
-        setLearnedProgress(data.progressSummary.learnedProgress);
-        setMasteredProgress(data.progressSummary.masteredProgress);
-      }
-      if (data.state) acceptLearnerState(data.state);
-      setNextAction(data.nextAction);
+      await acceptResponse(data, true);
+      activityStartedAt.current = Date.now();
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'Your answer could not be checked.');
     } finally {
@@ -229,15 +241,11 @@ export function App() {
     setTeachingLoading(true);
     setTeachingError(null);
     try {
-      const data = await dispatchLearningEvent('SESSION_ENDED', {});
-      if (data.state) acceptLearnerState(data.state);
-      if (data.progressSummary) {
-        setProgressSummary(data.progressSummary);
-        setOverallProgress(data.progressSummary.goalCompletion);
-        setLearnedProgress(data.progressSummary.learnedProgress);
-        setMasteredProgress(data.progressSummary.masteredProgress);
-      }
-      setNextAction(data.nextAction);
+      const data = await dispatchLearningEvent('SESSION_ENDED', {
+        additional_active_seconds: currentActivitySeconds(),
+      });
+      await acceptResponse(data, true);
+      activityStartedAt.current = null;
       setIsTeachingOpen(false);
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'The study session could not be closed.');
@@ -283,6 +291,11 @@ export function App() {
 
         {/* Main Content View */}
         <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-8 py-6">
+          {appError && (
+            <p role="alert" className="mb-5 rounded-2xl bg-rose-50 p-4 text-sm font-bold text-rose-800">
+              {appError}
+            </p>
+          )}
           {activeTab === 'plan' && (
             <DailyPlanView
               plan={learnerState?.activePlan || null}
@@ -299,7 +312,7 @@ export function App() {
           )}
 
           {activeTab === 'curriculum' && (
-            <CurriculumRoadmapView
+            <RoadmapView
               concepts={concepts}
               learnerState={learnerState}
               onStartStudy={() => {
@@ -314,9 +327,6 @@ export function App() {
               concepts={concepts}
               overallProgress={overallProgress}
               progressSummary={progressSummary}
-              onReviewConcept={() => {
-                void handleStartAgentSession();
-              }}
             />
           )}
         </main>

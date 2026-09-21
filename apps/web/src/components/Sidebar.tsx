@@ -25,7 +25,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   overallProgress,
   nextAction,
 }) => {
-  const overallPercent = Math.round(overallProgress > 1 ? Math.min(100, overallProgress) : Math.max(0, overallProgress) * 100);
+  const overallPercent = Math.round(Math.max(0, Math.min(100, overallProgress)));
   return (
     <aside className="w-68 shrink-0 hidden lg:flex flex-col border-r-2 border-zinc-200 bg-white min-h-screen px-5 py-6 select-none">
       {/* Brand Header with Bamboo Panda Logo (Clickable to open profile) */}

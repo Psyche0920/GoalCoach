@@ -32,6 +32,7 @@ from goalcoach.domain.events import (
     AnswerSubmittedPayload,
     GoalCreatedPayload,
     HelpRequestedPayload,
+    ReplanRequestedPayload,
     SessionEndedPayload,
     SessionStartedPayload,
 )
@@ -60,6 +61,7 @@ _EVENT_PAYLOAD_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.SESSION_ENDED: SessionEndedPayload,
     EventType.HELP_REQUESTED: HelpRequestedPayload,
     EventType.ANSWER_SUBMITTED: AnswerSubmittedPayload,
+    EventType.REPLAN_REQUESTED: ReplanRequestedPayload,
 }
 
 
