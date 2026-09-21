@@ -232,6 +232,7 @@ class Exercise(DomainBaseModel):
     target_instruction: str = Field(min_length=1)
     hsk_level: int = Field(default=3, ge=1, le=6)
     reference_answers: list[str] = Field(default_factory=list)
+    options: list[str] | None = Field(default=None, description="Optional MCQ choices if available")
     metadata: dict[str, str] = Field(default_factory=dict)
 
 

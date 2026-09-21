@@ -52,3 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`uv run pytest tests/unit/ -v`**: PASSED (67/67 tests passed in 0.62s).
 - **`uv run pytest tests/integration/ -v`**: PASSED (27/27 tests passed in 47.47s).
 - **Total Test Suite**: 94/94 tests passing (100% pass rate).
+
+
+## [0.1.1] - 2026-09-21
+
+### Added
+- **Pedagogical Pre-Selection & Context Synchronization**:
+  - Implemented `_select_candidate_exercise()` in `src/goalcoach/agents/teaching_agent.py` to pre-select candidate practice activities before LLM invocation, injecting the target upcoming exercise directly into the prompt so explanations are grounded, relevant, and bridge directly into practice.
+- **Rich MCQ Options & 1-Click Answering**:
+  - Attached `options` and `exercise_type` to `TeachingAction.exercise_payload` and `Exercise` domain model in `src/goalcoach/domain/models.py`.
+  - Added fast-path index (`1`, `2`, `3`, `4`) and letter (`A`, `B`, `C`, `D`) option resolution in `src/goalcoach/agents/grader_component.py` and `src/goalcoach/application/orchestrator.py` (<5ms execution).
+  - Enhanced terminal harness (`src/goalcoach/agents/terminal_harness.py`) to render formatted choices `(1)`, `(2)`, `(3)`, `(4)` for multiple-choice questions.
+  - Added comprehensive integration test `test_mcq_options_in_payload_and_1_click_grading` in `tests/integration/test_remediation_loop.py`.
+
+### Changed
+- **Empathetic "Coach Baobao" Teaching Persona**: Upgraded system prompt in `src/goalcoach/agents/teaching_agent.py` to eliminate "naked exercises" on repeated learner errors (`failed_attempts >= 2`), ensuring patient scaffolding, emotional validation, and structural grammar breakdowns prior to retries.
+- **Pedagogical Preservation of Open-Input Modalities**: Maintained authentic active-recall input for `fill_blank` and `translate_to_zh` exercises (supporting Hanzi and Pinyin responses) without artificial or synthetic distractors.
