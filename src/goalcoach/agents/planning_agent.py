@@ -6,22 +6,33 @@ Produces a validated PlanUpdate schema strictly bounded by the learner's time bu
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
 
+from goalcoach.application.agent_history import format_agent_history
 from goalcoach.domain.enums import PlanItemKind
 from goalcoach.domain.models import LearnerState, PlanItem, PlanUpdate
+from goalcoach.infrastructure.config import Settings
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
+    AgentOutputError,
+    LLMUnavailableError,
     get_openrouter_model,
     get_output_retries,
     run_with_fallback,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
 
-logger = logging.getLogger(__name__)
+
+def validate_agent_roadmap(
+    proposed_ids: list[str],
+    curriculum_ids: list[str],
+) -> list[str]:
+    """Keep an agent-defined order while guaranteeing a complete, valid roadmap."""
+    valid_ids = set(curriculum_ids)
+    ordered = list(dict.fromkeys(cid for cid in proposed_ids if cid in valid_ids))
+    return [*ordered, *(cid for cid in curriculum_ids if cid not in ordered)]
 
 
 @dataclass
@@ -30,6 +41,7 @@ class PlanningDeps:
 
     state: LearnerState
     content_service: ContentService
+    enable_prerequisites: bool
 
 
 PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for HSK1 Chinese.
@@ -40,7 +52,8 @@ Key Pedagogical Rules:
    - If `needs_replanning` is True or recurring error tags exist, prioritize REMEDIAL items for the weak concepts and postpone introducing new topics.
    - Schedule REVIEW items for concepts due for spaced review or with low retention.
 2. Introduce Feasible New Topics:
-   - Schedule NEW concepts only if their prerequisites are satisfied.
+   - Schedule NEW concepts only if their prerequisites are satisfied. A prerequisite is satisfied if the learner has mastery >= 0.50 OR completed remediation today.
+   - If a concept has already been studied or remediated today (listed in Remediated Today / Studied Today), do not schedule it again today; advance to subsequent concepts.
 3. Strict Budget Allocation:
    - The sum of `estimated_minutes` across `ordered_items` must not exceed `daily_allocation_minutes`.
    - Categorize each item kind strictly as 'review', 'remedial', or 'new'.
@@ -48,6 +61,14 @@ Key Pedagogical Rules:
    - Only output valid concept_id strings provided by the curriculum tool.
 5. Adaptation Rationale:
    - Provide a clear, transparent explanation in `adaptation_rationale` explaining why this plan was chosen.
+6. Dynamic Roadmap:
+   - Produce `roadmap_concept_ids` containing every catalog concept exactly once.
+   - Order it by relevance to the learner's free-form goal, evidence, errors, and prerequisites.
+   - Reason directly from the goal and each concept's communicative purpose; do not use fixed goal categories.
+   - Keep prerequisites before concepts that depend on them.
+7. Cross-Session Continuity:
+   - Use the compact learning history as evidence when choosing review, remediation, and new work.
+   - Avoid needless immediate repetition, but repeat a concept when its outcome or error evidence justifies it.
 """
 
 planning_agent = Agent(
@@ -70,6 +91,11 @@ def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]
             "title_en": c.title_en,
             "sequence_no": c.sequence_no,
             "difficulty": c.difficulty,
+            "communicative_goal": c.communicative_goal,
+            "grammar_focus": c.grammar_focus,
+            "vocabulary_focus": c.vocabulary_focus,
+            "metadata": c.metadata_json or {},
+            "prerequisites": ctx.deps.content_service.get_prerequisites(c.concept_id),
         }
         for c in concepts
     ]
@@ -78,14 +104,26 @@ def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]
 @planning_agent.tool
 def get_concept_prerequisites(ctx: RunContext[PlanningDeps], concept_id: str) -> list[str]:
     """Fetch prerequisite concept IDs that must be mastered before studying this concept."""
+    if not ctx.deps.enable_prerequisites:
+        return []
     return ctx.deps.content_service.get_prerequisites(concept_id)
 
 
 class PlanningWorker:
     """Wrapper class managing the execution, validation, and deterministic fallback for planning."""
 
-    def __init__(self, agent: Agent = planning_agent) -> None:
+    def __init__(
+        self,
+        agent: Agent = planning_agent,
+        *,
+        enable_prerequisites: bool | None = None,
+    ) -> None:
         self.agent = agent
+        self.enable_prerequisites = (
+            Settings().enable_prerequisites
+            if enable_prerequisites is None
+            else enable_prerequisites
+        )
 
     async def create_plan(
         self,
@@ -93,8 +131,16 @@ class PlanningWorker:
         content_service: ContentService,
     ) -> PlanUpdate:
         """Invokes the Planning Agent with fallback to deterministic heuristic rules."""
-        deps = PlanningDeps(state=state, content_service=content_service)
-        available_minutes = state.goal.daily_available_minutes if state.goal else 20
+        deps = PlanningDeps(
+            state=state,
+            content_service=content_service,
+            enable_prerequisites=self.enable_prerequisites,
+        )
+        available_minutes = (
+            state.active_session.planned_minutes
+            if state.active_session is not None
+            else (state.goal.daily_available_minutes if state.goal else 20)
+        )
 
         # Construct concise prompt summarizing learner context
         mastery_summary = {
@@ -110,22 +156,46 @@ class PlanningWorker:
             for err in state.error_profile
         ]
 
+        remediated_summary = ", ".join(state.today_remediated_concept_ids) or "None"
+        studied_summary = ", ".join(state.today_studied_concept_ids) or "None"
+        history_summary = format_agent_history(state)
+
         prompt = (
             f"Learner Goal: {state.goal.title if state.goal else 'HSK1'}\n"
             f"Daily Time Budget: {available_minutes} minutes\n"
             f"Needs Replanning: {state.needs_replanning}\n"
-            f"Interests: {state.context_interests}\n"
+            f"Prerequisite Enforcement Enabled: {self.enable_prerequisites}\n"
+            f"Remediated Today: {remediated_summary}\n"
+            f"Studied Today: {studied_summary}\n"
             f"Current Mastery: {mastery_summary}\n"
             f"Active Errors: {error_summary}\n"
-            "Generate today's optimal PlanUpdate conforming to the schema."
+            f"Recent Cross-Session Learning History:\n{history_summary}\n"
+            "Generate today's optimal PlanUpdate and a complete personalized roadmap "
+            "conforming to the schema."
         )
 
         try:
-            result, _ = await run_with_fallback(self.agent, prompt, deps=deps)
+            result, provider = await run_with_fallback(self.agent, prompt, deps=deps)
             plan_update: PlanUpdate = result.output
+            plan_update.metadata.update(
+                {
+                    "provider": provider,
+                    "fallback_used": provider.startswith("ollama:"),
+                    "notice": (
+                        "The primary model was unavailable; the configured fallback model was used."
+                        if provider.startswith("ollama:")
+                        else None
+                    ),
+                }
+            )
 
             # Guardrail: Validate all concept IDs against Database #1
-            all_valid_ids = {c.concept_id for c in content_service.list_all_concepts()}
+            curriculum_ids = [c.concept_id for c in content_service.list_all_concepts()]
+            all_valid_ids = set(curriculum_ids)
+            plan_update.roadmap_concept_ids = validate_agent_roadmap(
+                plan_update.roadmap_concept_ids,
+                curriculum_ids,
+            )
             validated_items = [
                 item for item in plan_update.ordered_items if item.concept_id in all_valid_ids
             ]
@@ -146,10 +216,19 @@ class PlanningWorker:
 
                 if budgeted_items:
                     # Guardrail: Validate DAG prerequisites for scheduled NEW concepts
-                    prereq_graph = content_service.get_all_prerequisites()
+                    prereq_graph = (
+                        content_service.get_all_prerequisites()
+                        if self.enable_prerequisites
+                        else {}
+                    )
                     validated_budgeted: list[PlanItem] = []
                     for item in budgeted_items:
                         if item.kind == PlanItemKind.NEW:
+                            if (
+                                item.concept_id in state.today_remediated_concept_ids
+                                or item.concept_id in state.today_studied_concept_ids
+                            ):
+                                continue
                             prereqs = prereq_graph.get(item.concept_id, frozenset())
                             prereqs_met = all(
                                 (
@@ -172,146 +251,125 @@ class PlanningWorker:
                         )
                         return plan_update
 
-        except Exception as exc:
-            logger.warning(
-                "PlanningAgent LLM execution failed (%s); using deterministic heuristic.", exc
+        except LLMUnavailableError as exc:
+            return self._deterministic_fallback(
+                state,
+                content_service,
+                available_minutes,
+                notice=f"LLM unavailable; deterministic planning fallback used: {exc}",
             )
+        return self._deterministic_fallback(
+            state,
+            content_service,
+            available_minutes,
+            notice="Planning Agent returned no valid items; deterministic fallback used.",
+        )
 
-        # Deterministic Heuristic Fallback
-        return self._heuristic_fallback(state, content_service, available_minutes)
-
-    def _heuristic_fallback(
+    def _deterministic_fallback(
         self,
         state: LearnerState,
         content_service: ContentService,
         available_minutes: int,
+        *,
+        notice: str,
     ) -> PlanUpdate:
-        """Deterministic algorithm guaranteeing valid PlanUpdate execution."""
-        all_concepts = content_service.list_all_concepts()
-        all_ids = [c.concept_id for c in all_concepts] or ["hsk1_c01", "hsk1_c02"]
-        prereq_graph = content_service.get_all_prerequisites()
+        """Create a conservative, curriculum-grounded plan when model reasoning is unavailable."""
+        concepts = content_service.list_all_concepts()
+        if not concepts:
+            raise AgentOutputError("No curriculum concepts are available for deterministic planning")
+        concept_by_id = {concept.concept_id: concept for concept in concepts}
+        roadmap_ids = [concept.concept_id for concept in concepts]
+        prerequisite_graph = (
+            content_service.get_all_prerequisites() if self.enable_prerequisites else {}
+        )
+        selected: list[PlanItem] = []
+        allocated = 0
 
-        items: list[PlanItem] = []
-        allocated_minutes = 0
-
-        # 1. Remedial: Check errors or weak mastery (< 0.60)
-        remedial_candidates: list[str] = []
-        if state.needs_replanning and state.error_profile:
-            # Prioritize concept with most frequent error
-            sorted_errors = sorted(state.error_profile, key=lambda e: e.occurrences, reverse=True)
-            for e in sorted_errors:
-                if (
-                    e.concept_id not in state.today_remediated_concept_ids
-                    and e.concept_id not in remedial_candidates
-                ):
-                    remedial_candidates.append(e.concept_id)
-
-        for cid, m in state.mastery.items():
-            if (
-                m.mastery_score < 0.60
-                and cid not in state.today_remediated_concept_ids
-                and cid not in state.today_studied_concept_ids
-                and cid not in remedial_candidates
-            ):
-                remedial_candidates.append(cid)
-
-        for cid in remedial_candidates:
-            if allocated_minutes + 10 <= available_minutes:
-                items.append(
-                    PlanItem(
-                        concept_id=cid,
-                        kind=PlanItemKind.REMEDIAL,
-                        objective=f"Strengthen weak concept {cid} through targeted practice",
-                        estimated_minutes=10,
-                    )
+        weak_ids = list(
+            dict.fromkeys(
+                error.concept_id
+                for error in sorted(
+                    state.error_profile,
+                    key=lambda item: item.occurrences,
+                    reverse=True,
                 )
-                allocated_minutes += 10
-            if allocated_minutes >= available_minutes:
+                if error.concept_id in concept_by_id
+                and error.concept_id not in state.today_remediated_concept_ids
+            )
+        )
+        due_ids = [
+            concept_id
+            for concept_id, mastery in state.mastery.items()
+            if concept_id in concept_by_id and mastery.is_review_due()
+        ]
+        new_ids = [
+            concept_id
+            for concept_id in roadmap_ids
+            if concept_id not in state.mastery
+            and concept_id not in state.today_studied_concept_ids
+        ]
+
+        candidates = [
+            *((concept_id, PlanItemKind.REMEDIAL, 10) for concept_id in weak_ids),
+            *((concept_id, PlanItemKind.REVIEW, 5) for concept_id in due_ids),
+            *((concept_id, PlanItemKind.NEW, 5) for concept_id in new_ids),
+        ]
+        for concept_id, kind, requested_minutes in candidates:
+            if concept_id in {item.concept_id for item in selected}:
+                continue
+            prerequisites = prerequisite_graph.get(concept_id, frozenset())
+            prerequisites_met = all(
+                prerequisite_id in state.mastery
+                and state.mastery[prerequisite_id].mastery_score >= 0.5
+                for prerequisite_id in prerequisites
+            )
+            if kind == PlanItemKind.NEW and not prerequisites_met:
+                continue
+            remaining = available_minutes - allocated
+            if remaining <= 0:
                 break
-
-        # 2. Spaced Review
-        for cid, m in state.mastery.items():
-            if (
-                m.is_review_due()
-                and cid not in [it.concept_id for it in items]
-                and allocated_minutes + 5 <= available_minutes
-            ):
-                items.append(
-                    PlanItem(
-                        concept_id=cid,
-                        kind=PlanItemKind.REVIEW,
-                        objective=f"Review spaced repetition concept {cid}",
-                        estimated_minutes=5,
-                    )
-                )
-                allocated_minutes += 5
-            if allocated_minutes >= available_minutes:
-                break
-
-        # 3. New Concepts (only if needs_replanning is False or budget allows)
-        if not state.needs_replanning or not items:
-            for cid in all_ids:
-                if cid not in state.mastery and cid not in [it.concept_id for it in items]:
-                    # Check prerequisites (accept mastery >= 0.50 or remediated today)
-                    prereqs = prereq_graph.get(cid, frozenset())
-                    prereqs_met = all(
-                        (
-                            p in state.mastery
-                            and (
-                                state.mastery[p].mastery_score >= 0.50
-                                or p in state.today_remediated_concept_ids
-                            )
-                        )
-                        for p in prereqs
-                    )
-                    if prereqs_met and allocated_minutes + 5 <= available_minutes:
-                        items.append(
-                            PlanItem(
-                                concept_id=cid,
-                                kind=PlanItemKind.NEW,
-                                objective=f"Master new concept {cid}",
-                                estimated_minutes=5,
-                            )
-                        )
-                        allocated_minutes += 5
-                if allocated_minutes >= available_minutes or len(items) >= 4:
-                    break
-
-        # If nothing allocated, add first curriculum concept
-        if not items:
-            default_id = all_ids[0]
-            items.append(
+            minutes = min(requested_minutes, remaining)
+            concept = concept_by_id[concept_id]
+            selected.append(
                 PlanItem(
-                    concept_id=default_id,
-                    kind=PlanItemKind.NEW,
-                    objective=f"Introduction to HSK1: {default_id}",
-                    estimated_minutes=min(10, available_minutes),
+                    concept_id=concept_id,
+                    kind=kind,
+                    objective=f"{concept.title_en}: {concept.communicative_goal}",
+                    estimated_minutes=minutes,
                 )
             )
-            allocated_minutes = items[0].estimated_minutes
+            allocated += minutes
 
-        rationale = (
-            f"Adaptive plan created ({allocated_minutes}m allocated): "
-            f"{sum(1 for i in items if i.kind == PlanItemKind.REMEDIAL)} remedial, "
-            f"{sum(1 for i in items if i.kind == PlanItemKind.REVIEW)} review, "
-            f"{sum(1 for i in items if i.kind == PlanItemKind.NEW)} new."
-        )
-        if state.needs_replanning:
-            rationale += " Adjusted to prioritize remediation after detected recurring errors."
+        if not selected:
+            concept = concepts[0]
+            minutes = min(5, available_minutes)
+            selected.append(
+                PlanItem(
+                    concept_id=concept.concept_id,
+                    kind=PlanItemKind.NEW,
+                    objective=f"{concept.title_en}: {concept.communicative_goal}",
+                    estimated_minutes=minutes,
+                )
+            )
+            allocated = minutes
 
         return PlanUpdate(
-            daily_allocation_minutes=allocated_minutes,
-            ordered_items=items,
-            adaptation_rationale=rationale,
-            roadmap_adjustments=["Remediate error concepts first"]
-            if state.needs_replanning
-            else [],
+            daily_allocation_minutes=allocated,
+            ordered_items=selected,
+            adaptation_rationale="Deterministic curriculum and learner-state allocation.",
+            roadmap_adjustments=["Deterministic fallback retained the canonical roadmap."],
+            roadmap_concept_ids=roadmap_ids,
+            metadata={
+                "provider": "deterministic",
+                "fallback_used": True,
+                "notice": notice,
+            },
         )
-
 
 __all__ = [
     "PLANNING_SYSTEM_PROMPT",
     "PlanningDeps",
     "PlanningWorker",
     "planning_agent",
+    "validate_agent_roadmap",
 ]

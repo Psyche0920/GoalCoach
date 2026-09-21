@@ -191,6 +191,7 @@ def test_composite_goal_progress_formulation() -> None:
         learned_percent=100.0,
         mastery_score=1.0,
         is_mastered=True,
+        learning_evidence=LearningEvidence(output_completion=1.0),
     )
     cp2 = ConceptProgress(
         learner_id="learner_001",
@@ -202,7 +203,6 @@ def test_composite_goal_progress_formulation() -> None:
     state = LearnerState(
         learner_id="learner_001",
         concept_progress={"c1": cp1, "c2": cp2},
-        passed_blueprint_ids=["bp_ordering_food"],
     )
 
     summary = compute_progress_summary(state, all_concepts=[{"id": "c1"}, {"id": "c2"}])
@@ -210,8 +210,33 @@ def test_composite_goal_progress_formulation() -> None:
     assert summary.learned_progress == 80.0
     assert summary.mastered_progress == 50.0
 
-    # 1 blueprint passed out of 5 = 20%
-    assert summary.communication_outcome_percent == 20.0
+    # One of two roadmap concepts has assessed output evidence.
+    assert summary.communication_outcome_percent == 50.0
 
-    # 0.45 * 80 + 0.35 * 60 + 0.20 * 20 = 36 + 21 + 4 = 61
-    assert summary.goal_completion == 61.0
+    # 0.45 * 80 + 0.35 * 60 + 0.20 * 50 = 36 + 21 + 10 = 67
+    assert summary.goal_completion == 67.0
+
+
+def test_progress_summary_counts_untracked_curriculum_as_not_learned() -> None:
+    state = LearnerState(
+        learner_id="learner_001",
+        concept_progress={
+            "c1": ConceptProgress(
+                learner_id="learner_001",
+                concept_id="c1",
+                learned_percent=100.0,
+                mastery_score=1.0,
+                is_mastered=True,
+            )
+        },
+    )
+
+    summary = compute_progress_summary(
+        state,
+        all_concepts=[{"id": "c1"}, {"id": "c2"}],
+    )
+
+    assert summary.course_coverage == 50.0
+    assert summary.learned_progress == 50.0
+    assert summary.mastered_progress == 50.0
+    assert summary.goal_scope_mastered_percent == 50.0

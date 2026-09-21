@@ -1,8 +1,10 @@
 export type Score = number; // 0.0 to 1.0
 
-export type PlanItemKind = 'review' | 'remedial' | 'new' | 'free_play' | 'daily_quiz';
-export type PlanStatus = 'active' | 'learning_complete' | 'assessment_required' | 'completed' | 'exhausted' | 'invalid';
-export type NextAction = 'plan_goal' | 'plan_review' | 'regenerate_plan' | 'teach';
+export type PlanItemKind = 'review' | 'remedial' | 'new';
+export type PlanStatus = 'active' | 'exhausted' | 'invalid';
+export type NextAction = 'set_goal' | 'plan' | 'teach' | 'retry' | 'complete';
+export type TeachingActionKind = 'EXPLANATION' | 'HINT' | 'CONTRAST_EXAMPLE' | 'EXERCISE' | 'DIALOGUE' | 'RETRY' | 'FREEFORM';
+
 
 export type ConceptCategory = 'pinyin' | 'grammar' | 'general_knowledge' | 'scenario';
 
@@ -27,8 +29,6 @@ export interface LearningGoal {
   targetHskLevel: number; // 1 to 6
   targetDate?: string;
   dailyAvailableMinutes: number;
-  interests?: CurriculumTheme[];
-  targetDomain?: 'general' | 'travel' | 'dining' | 'work' | 'daily';
   version: number;
   createdAt: string;
 }
@@ -86,10 +86,41 @@ export interface DailyPlan {
   freeformCompleted?: boolean;
   freeformAssessment?: FreeformAssessmentSpec;
   stateVersion?: number;
+  dailyActivityDate?: string;
   generatedAt: string;
   createdAt?: string;
   completedAt?: string;
   plannerVersion?: number;
+}
+
+export interface TeachingAction {
+  actionKind: TeachingActionKind;
+  conceptId: string;
+  content: string;
+  historySummary: string;
+  pinyin?: string;
+  exercisePayload?: {
+    exercise_id?: string;
+    concept_id?: string;
+    prompt?: string;
+    instruction?: string;
+    type?: string;
+    target?: string;
+  };
+  metadata?: Record<string, unknown>;
+}
+
+export interface LearningLoopResponse {
+  status: string;
+  eventType: 'GOAL_CREATED' | 'SESSION_STARTED' | 'SESSION_ENDED' | 'HELP_REQUESTED' | 'ANSWER_SUBMITTED';
+  learnerId: string;
+  teachingAction?: TeachingAction;
+  dailyPlan?: DailyPlan;
+  gradingResult?: GradingResult;
+  replanned: boolean;
+  state?: LearnerState;
+  progressSummary?: ProgressSummary;
+  nextAction: NextAction;
 }
 
 export type ExerciseType = 
@@ -278,6 +309,8 @@ export interface ProgressSummary {
   goalScopeMasteredPercent?: number;
   communicationOutcomePercent?: number;
   dailyEffectiveMinutes: number;
+  totalEffectiveMinutes: number;
+  activeDays: number;
 }
 
 export interface LearningUpdateResponse {
@@ -349,24 +382,28 @@ export interface SessionSummary {
   summary: string;
 }
 
+export interface ActiveLearningSession {
+  sessionId: string;
+  startedAt: string;
+  lastActivityAt: string;
+  plannedMinutes: number;
+  activeSeconds: number;
+}
+
 export interface LearnerState {
   learnerId: string;
   displayName?: string;
   goal: LearningGoal | null;
-  goalChanged: boolean;
+  roadmapConceptIds?: string[];
+  roadmapAdjustments?: string[];
   mastery: Record<string, ConceptMastery>;
   errorProfile: ErrorRecord[];
   activePlan: DailyPlan | null;
+  activeSession?: ActiveLearningSession | null;
   sessions: SessionSummary[];
-  todayCheckedIn?: boolean;
-  lastCheckInDate?: string;
-  estimatedDaysRemaining?: number;
   todayMistakeExerciseIds?: string[];
   todayStudiedConceptIds?: string[];
-  coachChatHistory?: Array<{ role: 'user' | 'assistant'; content: string; timestamp?: string }>;
-  coachPreferences?: Record<string, any>;
   updatedAt: string;
   stateVersion?: number;
   conceptProgress?: Record<string, ConceptProgress>;
-  passedBlueprintIds?: string[];
 }

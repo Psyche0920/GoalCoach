@@ -15,85 +15,75 @@ import {
   BookOpen
 } from 'lucide-react';
 import { PandaMascot } from './PandaMascot.tsx';
-import { CurriculumConcept, LearningGoal, LearnerState, CurriculumTheme } from '../types.ts';
-import { GOAL_PRESETS, THEME_REGISTRY } from '../data/curriculumThemes.ts';
+import { CurriculumConcept, LearnerState } from '../types.ts';
 import { playMandarinAudio } from '../utils/pinyinAudio.ts';
 import { curriculumChineseSummary, curriculumShortTitle } from '../data/curriculumPresentation.ts';
-import { masteredProgressScore } from '../domain/progress.ts';
 
 interface CurriculumRoadmapViewProps {
   concepts: CurriculumConcept[];
   learnerState: LearnerState | null;
-  goal: LearningGoal | null;
   onStartStudy: (conceptId: string, isPinyin: boolean) => void;
-  onUpdateGoal: (goal: Partial<LearningGoal>) => void;
-  onOpenProfile?: () => void;
 }
-
 
 export const CurriculumRoadmapView: React.FC<CurriculumRoadmapViewProps> = ({
   concepts,
   learnerState,
-  goal,
   onStartStudy,
-  onUpdateGoal,
-  onOpenProfile,
 }) => {
   const [activeModuleTab, setActiveModuleTab] = useState<'all' | 'module1' | 'module2' | 'module3'>('all');
   const [showPedagogyExplanation, setShowPedagogyExplanation] = useState(false);
 
-  const activeTargetDomain = goal?.targetDomain || 'general';
-  const activePreset = GOAL_PRESETS.find((p) => p.id === activeTargetDomain) || GOAL_PRESETS[0];
+  const todayPlanOrder = new Map(
+    (learnerState?.activePlan?.items ?? []).flatMap((item, itemIndex) =>
+      (item.conceptIds?.length ? item.conceptIds : item.conceptId ? [item.conceptId] : [])
+        .map((conceptId) => [conceptId, itemIndex] as const)
+    )
+  );
+  const agentRoadmapOrder = new Map(
+    (learnerState?.roadmapConceptIds ?? []).map((conceptId, index) => [conceptId, index] as const)
+  );
+  const personalizeForToday = (items: CurriculumConcept[]): CurriculumConcept[] =>
+    [...items].sort((left, right) => {
+      const leftPlanIndex = todayPlanOrder.get(left.conceptId);
+      const rightPlanIndex = todayPlanOrder.get(right.conceptId);
+      if (leftPlanIndex !== undefined || rightPlanIndex !== undefined) {
+        if (leftPlanIndex === undefined) return 1;
+        if (rightPlanIndex === undefined) return -1;
+        return leftPlanIndex - rightPlanIndex;
+      }
+      const leftAgentIndex = agentRoadmapOrder.get(left.conceptId);
+      const rightAgentIndex = agentRoadmapOrder.get(right.conceptId);
+      if (leftAgentIndex !== undefined || rightAgentIndex !== undefined) {
+        if (leftAgentIndex === undefined) return 1;
+        if (rightAgentIndex === undefined) return -1;
+        return leftAgentIndex - rightAgentIndex;
+      }
+      return left.sequenceNo - right.sequenceNo;
+    });
 
   // Group concepts into the 3 canonical modules
   // Module 1: 拼音 (Pinyin Foundation)
-  const module1Concepts = concepts.filter(
+  const module1Concepts = personalizeForToday(concepts.filter(
     (c) => c.module === 'module1_pinyin' || c.category === 'pinyin'
-  );
+  ));
 
   // Module 2: 核心语法 (Core Grammar)
-  const module2Concepts = concepts.filter(
+  const module2Concepts = personalizeForToday(concepts.filter(
     (c) => c.module === 'module2_grammar' || c.category === 'grammar' || c.isCoreGrammar
-  );
+  ));
 
-  // Module 3: 目标生活场景与主题库 (Thematic Real-life Living Chinese)
-  // Dynamically reorder based on active target domain & user interests
+  // Module 3 is rendered in the canonical order supplied by the backend.
   const rawThematicConcepts = concepts.filter(
     (c) => !(c.module === 'module1_pinyin' || c.category === 'pinyin' || c.category === 'grammar' || c.isCoreGrammar)
   );
 
-  const themePriorityOrder = activePreset.module2UnitOrder || [
-    'dining_food',
-    'shopping_prices',
-    'travel_directions',
-    'numbers_time',
-    'greetings_etiquette',
-    'identity_family',
-    'daily_life',
-    'work_study',
-    'weather_feelings',
-  ];
-
-  const module3Concepts = [...rawThematicConcepts].sort((a, b) => {
-    const priorityA = activePreset.priorityThemes.includes(a.theme);
-    const priorityB = activePreset.priorityThemes.includes(b.theme);
-    if (priorityA && !priorityB) return -1;
-    if (!priorityA && priorityB) return 1;
-
-    const idxA = themePriorityOrder.indexOf(a.theme);
-    const idxB = themePriorityOrder.indexOf(b.theme);
-    const orderA = idxA === -1 ? 999 : idxA;
-    const orderB = idxB === -1 ? 999 : idxB;
-    if (orderA !== orderB) return orderA - orderB;
-
-    return a.sequenceNo - b.sequenceNo;
-  });
+  const module3Concepts = personalizeForToday(rawThematicConcepts);
 
   // Learned measures unit completion. Mastered measures retained mastery over time.
   const getNodeProgress = (concept: CurriculumConcept, moduleList: CurriculumConcept[], idx: number) => {
     const progress = learnerState?.conceptProgress?.[concept.conceptId];
     const learnedPercent = progress?.learnedPercent ?? 0;
-    const score = progress ? masteredProgressScore(progress) : 0;
+    const score = progress?.masteryScore ?? 0;
     const isMastered = progress?.status === 'mastered';
     const isCompleted = learnedPercent === 100;
 
@@ -128,7 +118,7 @@ export const CurriculumRoadmapView: React.FC<CurriculumRoadmapViewProps> = ({
       if (progress?.status === 'mastered') masteredCount++;
       const weight = c.weight ?? 1;
       learnedTotal += weight * learnedPercent;
-      readinessTotal += weight * (progress ? masteredProgressScore(progress) : 0) * 100;
+      readinessTotal += weight * (progress?.masteryScore ?? 0) * 100;
       weightTotal += weight;
     }
 
@@ -147,18 +137,6 @@ export const CurriculumRoadmapView: React.FC<CurriculumRoadmapViewProps> = ({
 
   const isMilestone1Complete = m1Stats.masteredPct === 100 && m2Stats.masteredPct === 100 && m3Stats.masteredPct === 100;
   const isMilestone1Learned = m1Stats.completedPct === 100 && m2Stats.completedPct === 100 && m3Stats.completedPct === 100;
-
-  // Handle switching goal domain
-  const handleSelectDomain = (domainId: 'general' | 'travel' | 'dining' | 'work' | 'daily') => {
-    const preset = GOAL_PRESETS.find((p) => p.id === domainId);
-    if (!preset) return;
-    onUpdateGoal({
-      title: `${preset.titleEn} (${preset.badge})`,
-      targetDomain: preset.id,
-      interests: preset.priorityThemes,
-      dailyAvailableMinutes: goal?.dailyAvailableMinutes || 20,
-    });
-  };
 
   // Serpentine offset for HelloChinese / Duolingo zigzag effect
   const getZigzagOffsetClass = (index: number) => {
@@ -322,15 +300,20 @@ export const CurriculumRoadmapView: React.FC<CurriculumRoadmapViewProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                  Curriculum Roadmap
+                  Roadmap
                 </span>
                 <span className="text-[10px] font-bold text-zinc-500 bg-zinc-100 px-2.5 py-0.5 rounded-full">
                   Skill Path
                 </span>
               </div>
               <h2 className="text-2xl font-black text-zinc-950 tracking-tight mt-1">
-                HSK 1 Curriculum Roadmap
+                HSK 1 Roadmap
               </h2>
+              {learnerState?.goal?.title && (
+                <p className="mt-1 max-w-md text-xs font-bold text-zinc-500">
+                  Personalized for: {learnerState.goal.title}
+                </p>
+              )}
             </div>
           </div>
 
@@ -559,7 +542,7 @@ export const CurriculumRoadmapView: React.FC<CurriculumRoadmapViewProps> = ({
       {(activeModuleTab === 'all' || activeModuleTab === 'module3') &&
         renderModuleSection(
           'module3',
-          `Module 3: Communication (${activePreset.badge || 'Focus'})`,
+          'Module 3: Communication',
           'Everyday communication with familiar HSK 1 language',
           'Real-Life Application',
           'amber',

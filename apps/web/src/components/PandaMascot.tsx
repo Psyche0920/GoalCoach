@@ -214,7 +214,7 @@ export const PandaMascot: React.FC<PandaMascotProps> = ({
           {/* Triangle pointer */}
           <div className="absolute top-1/2 -left-2 -translate-y-1/2 w-0 h-0 border-t-6 border-t-transparent border-b-6 border-b-transparent border-r-8 border-r-white" />
           <div className="text-[10px] font-black text-emerald-600 uppercase tracking-wider mb-0.5">
-            Coach Baobao
+            Learning guide
           </div>
           <div className="leading-snug text-zinc-700">{speech}</div>
         </div>
@@ -224,7 +224,7 @@ export const PandaMascot: React.FC<PandaMascotProps> = ({
       {showNameBadge && !speech && (
         <div className="text-left">
           <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-black text-emerald-700">
-            <span>🐼 Coach Baobao</span>
+            <span>🐼 Learning guide</span>
           </div>
         </div>
       )}

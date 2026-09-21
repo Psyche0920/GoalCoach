@@ -8,6 +8,7 @@ class EventType(StrEnum):
 
     GOAL_CREATED = "GOAL_CREATED"
     SESSION_STARTED = "SESSION_STARTED"
+    SESSION_ENDED = "SESSION_ENDED"
     HELP_REQUESTED = "HELP_REQUESTED"
     ANSWER_SUBMITTED = "ANSWER_SUBMITTED"
 
@@ -40,18 +41,9 @@ class PlanStatus(StrEnum):
     INVALID = "invalid"
 
 
-class RetrievalMode(StrEnum):
-    """Strategies for querying curriculum concepts and exercises from the content store."""
-
-    EXACT = "exact"
-    STRUCTURED = "structured"
-    SEMANTIC = "semantic"
-
-
 __all__ = [
     "EventType",
     "PlanItemKind",
     "PlanStatus",
-    "RetrievalMode",
     "TeachingActionKind",
 ]

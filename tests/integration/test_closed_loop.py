@@ -17,8 +17,6 @@ from uuid import uuid4
 import pytest
 
 from goalcoach.agents.grader_component import GraderComponent
-from goalcoach.agents.planning_agent import PlanningWorker
-from goalcoach.agents.teaching_agent import TeachingWorker
 from goalcoach.application.orchestrator import DeterministicOrchestrator
 from goalcoach.application.progress_service import ProgressService
 from goalcoach.domain.enums import EventType, PlanItemKind, TeachingActionKind
@@ -40,6 +38,7 @@ from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
 )
+from tests.fakes import FakeGraderComponent, FakePlanningWorker, FakeTeachingWorker
 
 CONTENT_DB_PATH = Path("data/database1/goalcoach_hsk1_learning.db")
 
@@ -67,9 +66,9 @@ def orchestrator(
     content_service: ContentService,
 ) -> DeterministicOrchestrator:
     progress_service = ProgressService(learner_repo=temp_learner_repo)
-    planning_worker = PlanningWorker()
-    teaching_worker = TeachingWorker()
-    grader_worker = GraderComponent()
+    planning_worker = FakePlanningWorker()
+    teaching_worker = FakeTeachingWorker()
+    grader_worker = FakeGraderComponent()
 
     return DeterministicOrchestrator(
         learner_repo=temp_learner_repo,
@@ -107,6 +106,13 @@ async def test_ac1_ac7_closed_loop_state_mutation_and_durability(
     assert reloaded_state.goal.title == "HSK 1 Complete Goal"
     assert reloaded_state.active_plan is not None
 
+    session_res = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert session_res.teaching_action is not None
+
     # Step 2: Submit a correct answer for hsk1_c01 (prompt: 你好 -> meaning: Hello)
     answer_res = await orchestrator.handle_event(
         event_type=EventType.ANSWER_SUBMITTED,
@@ -115,10 +121,20 @@ async def test_ac1_ac7_closed_loop_state_mutation_and_durability(
             "exercise_id": "hsk1_c01_e01",
             "concept_id": "hsk1_c01",
             "answer": "Hello",
+            "time_spent_seconds": 90,
         },
     )
     assert answer_res.grading_result is not None
     assert answer_res.grading_result.passed_gates is True
+    assert answer_res.progress_summary is not None
+    assert answer_res.progress_summary.learned_progress > 0.0
+    assert answer_res.state is not None
+    assert answer_res.state.concept_progress["hsk1_c01"].learned_percent == 100.0
+    assert answer_res.state.active_plan is not None
+    completed_item = next(
+        item for item in answer_res.state.active_plan.items if item.concept_id == "hsk1_c01"
+    )
+    assert completed_item.completed is True
 
     # Verify state updated and persisted
     persisted_state = await temp_learner_repo.get(learner_id)
@@ -126,6 +142,27 @@ async def test_ac1_ac7_closed_loop_state_mutation_and_durability(
     assert "hsk1_c01" in persisted_state.mastery
     assert persisted_state.mastery["hsk1_c01"].mastery_score == 0.25
     assert persisted_state.mastery["hsk1_c01"].retention_score == 1.0
+    assert (
+        persisted_state.concept_progress["hsk1_c01"].mastery_score
+        == persisted_state.mastery["hsk1_c01"].mastery_score
+    )
+
+    events = await temp_learner_repo.get_learning_events(learner_id)
+    assert len(events) == 1
+    assert events[0].active_seconds == 90
+
+    ended = await orchestrator.handle_event(
+        event_type=EventType.SESSION_ENDED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert ended.progress_summary is not None
+    assert ended.progress_summary.daily_effective_minutes == 1.5
+    assert ended.progress_summary.total_effective_minutes == 1.5
+    assert ended.progress_summary.active_days == 1
+    assert ended.state is not None
+    assert ended.state.active_session is None
+    assert len(ended.state.sessions) == 1
 
 
 # --- AC2 & AC10: The Core Planning Proof ---
@@ -141,7 +178,7 @@ async def test_ac2_ac10_core_planning_proof_same_goal_different_state(
     Learner A (clean state): gets NEW concepts.
     Learner B (repeated error ERR_QUESTION_MA): gets REMEDIAL priority on hsk1_c04.
     """
-    planner = PlanningWorker()
+    planner = FakePlanningWorker()
 
     # Learner A: Clean state
     state_a = LearnerState(
@@ -206,10 +243,9 @@ async def test_ac4_ac11_core_teaching_proof_adaptive_strategy_switching(
     Turn 1 (no error): Teacher outputs EXPLANATION.
     Turn 2 (previous explanation failed / student confused): Teacher switches to CONTRAST_EXAMPLE or HINT.
     """
-    teacher = TeachingWorker()
+    teacher = FakeTeachingWorker()
     state = LearnerState(
         goal=LearningGoal(title="HSK 1 Target", target_hsk_level=1),
-        context_interests=["Travel"],
     )
 
     # Turn 1: Fresh encounter
@@ -277,7 +313,7 @@ async def test_ac5_grader_fast_path_and_rubric() -> None:
     assert res_fast.grader_version == "deterministic-fast-path"
 
     # 2. Incorrect answer
-    res_wrong = await grader.grade(exercise, "你是老师")  # Missing 吗
+    res_wrong = await FakeGraderComponent().grade(exercise, "你是老师")  # Missing 吗
     assert res_wrong.passed_gates is False
     assert "ERR_QUESTION_MA" in res_wrong.detected_errors or len(res_wrong.detected_errors) > 0
 
@@ -329,6 +365,67 @@ def test_ac6_progress_service_mathematical_invariants() -> None:
     assert state.needs_replanning is True
     err = next(e for e in state.error_profile if e.code == "ERR_QUESTION_MA")
     assert err.occurrences == 2
+
+
+@pytest.mark.asyncio
+async def test_replanning_and_teaching_are_separate_agent_turns(
+    orchestrator: DeterministicOrchestrator,
+) -> None:
+    """A grading turn flags replanning; later events invoke planner and teacher separately."""
+    learner_id = f"separate-agent-turns-{uuid4().hex[:8]}"
+    await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "Travel Chinese", "daily_available_minutes": 20},
+    )
+    teaching = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert teaching.teaching_action is not None
+    exercise = teaching.teaching_action.exercise_payload
+    assert exercise is not None
+
+    for attempt in range(2):
+        graded = await orchestrator.handle_event(
+            event_type=EventType.ANSWER_SUBMITTED,
+            learner_id=learner_id,
+            payload={
+                "exercise_id": exercise["exercise_id"],
+                "concept_id": exercise["concept_id"],
+                "answer": "definitely incorrect",
+                "time_spent_seconds": 20,
+            },
+        )
+        assert graded.plan_update is None
+        if attempt == 0:
+            teaching = await orchestrator.handle_event(
+                event_type=EventType.SESSION_STARTED,
+                learner_id=learner_id,
+                payload={},
+            )
+            assert teaching.teaching_action is not None
+            exercise = teaching.teaching_action.exercise_payload
+            assert exercise is not None
+
+    assert graded.state is not None
+    assert graded.state.needs_replanning is True
+
+    replanned = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert replanned.plan_update is not None
+    assert replanned.teaching_action is None
+
+    resumed = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert resumed.teaching_action is not None
 
 
 # --- AC8: Zero Multi-Agent Sequential Chaining ---

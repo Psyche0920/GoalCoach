@@ -125,7 +125,6 @@ async def main() -> None:
                 "title": "HSK 1 Complete Goal",
                 "target_hsk_level": 1,
                 "daily_available_minutes": 20,
-                "context_interests": ["Travel", "Daily Life"],
             },
         )
 

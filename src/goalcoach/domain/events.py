@@ -18,7 +18,6 @@ class GoalCreatedPayload(DomainBaseModel):
     title: str = Field(default="HSK 1 Complete Goal", min_length=1, max_length=255)
     target_hsk_level: int = Field(default=1, ge=1, le=6)
     daily_available_minutes: int = Field(default=20, gt=0, le=240)
-    context_interests: list[str] = Field(default_factory=list)
 
 
 class SessionStartedPayload(DomainBaseModel):
@@ -26,6 +25,12 @@ class SessionStartedPayload(DomainBaseModel):
 
     preferred_duration_minutes: int | None = Field(default=None, gt=0, le=240)
     session_focus: str | None = None
+
+
+class SessionEndedPayload(DomainBaseModel):
+    """Payload provided when the learner explicitly closes a study session."""
+
+    additional_active_seconds: int = Field(default=0, ge=0, le=86400)
 
 
 class HelpRequestedPayload(DomainBaseModel):
@@ -61,5 +66,6 @@ __all__ = [
     "GoalCreatedPayload",
     "HelpRequestedPayload",
     "InboundEvent",
+    "SessionEndedPayload",
     "SessionStartedPayload",
 ]

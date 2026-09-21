@@ -177,6 +177,7 @@ async def test_remediation_exercise_rotates_and_does_not_repeat_e01(
         TeachingActionKind.CONTRAST_EXAMPLE,
         TeachingActionKind.HINT,
         TeachingActionKind.RETRY,
+        TeachingActionKind.EXERCISE,
     )
 
 
@@ -350,15 +351,12 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
 ) -> None:
     """When all exercises for a concept have been attempted, system does not crash and safely falls back."""
     teacher = TeachingWorker()
+    all_c01_exercises = content_service.get_exercises_for_concept("hsk1_c01", limit=20)
+    all_c01_exercise_ids = [e.exercise_id for e in all_c01_exercises]
     state = LearnerState(
         goal=LearningGoal(title="HSK1"),
-        # Simulate all 4 exercises for hsk1_c01 completed
-        today_completed_exercise_ids=[
-            "hsk1_c01_e01",
-            "hsk1_c01_e02",
-            "hsk1_c01_e03",
-            "hsk1_c01_e04",
-        ],
+        # Simulate all exercises for hsk1_c01 completed
+        today_completed_exercise_ids=all_c01_exercise_ids,
     )
 
     # Should not raise IndexError
@@ -369,12 +367,7 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
         failed_attempts=0,
     )
     assert action.exercise_payload is not None
-    assert action.exercise_payload["exercise_id"] in [
-        "hsk1_c01_e01",
-        "hsk1_c01_e02",
-        "hsk1_c01_e03",
-        "hsk1_c01_e04",
-    ]
+    assert action.exercise_payload["exercise_id"] in all_c01_exercise_ids
 
 
 # --- 7. Stress Test: Zero Error Profile Ingress on Remedial Item ---
@@ -431,7 +424,7 @@ async def test_edge_case_prerequisite_dag_blocks_unready_and_unlocks_remediated(
     content_service: ContentService,
 ) -> None:
     """hsk1_c02 requires hsk1_c01. It is strictly blocked if hsk1_c01 has 0 mastery, but unlocked if remediated."""
-    planner = PlanningWorker()
+    planner = PlanningWorker(enable_prerequisites=True)
 
     # Case A: Clean state -> hsk1_c02 is blocked because hsk1_c01 not started
     state_a = LearnerState(goal=LearningGoal(title="HSK1", daily_available_minutes=20))

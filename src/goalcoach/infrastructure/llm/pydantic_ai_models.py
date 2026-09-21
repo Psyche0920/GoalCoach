@@ -6,6 +6,7 @@ PydanticAI model providers for hosted OpenRouter and local Ollama Gemma 4 fallba
 from __future__ import annotations
 
 import logging
+from json import JSONDecodeError
 from typing import Any
 
 import httpx
@@ -22,6 +23,14 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from goalcoach.infrastructure.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+class LLMUnavailableError(RuntimeError):
+    """Raised when no configured LLM can complete an agent request."""
+
+
+class AgentOutputError(RuntimeError):
+    """Raised when a model response cannot satisfy deterministic domain guardrails."""
 
 # Ensure backward compatibility for result.data -> result.output
 if not hasattr(AgentRunResult, "data"):
@@ -51,7 +60,7 @@ try:
                 import json
 
                 kwargs["custom_output_args"] = json.loads(val)
-            except Exception:
+            except JSONDecodeError:
                 kwargs["custom_output_text"] = val
         _orig_test_model_init(self, *args, **kwargs)
 
@@ -101,7 +110,7 @@ async def run_with_fallback(agent: Any, prompt: str, deps: Any = None) -> tuple[
                 failure_kind,
                 err,
             )
-            raise
+            raise LLMUnavailableError("LLM unavailable: primary model request failed") from err
 
         logger.warning(
             "Primary model %s failure (%s); trying configured Ollama fallback.",
@@ -109,8 +118,13 @@ async def run_with_fallback(agent: Any, prompt: str, deps: Any = None) -> tuple[
             err,
         )
         fallback_model = get_ollama_fallback_model()
-        result = await agent.run(prompt, deps=deps, model=fallback_model)
-        return result, f"ollama:{fallback_model.model_name}"
+        try:
+            result = await agent.run(prompt, deps=deps, model=fallback_model)
+            return result, f"ollama:{fallback_model.model_name}"
+        except (httpx.HTTPError, ModelAPIError, UnexpectedModelBehavior) as fallback_err:
+            raise LLMUnavailableError(
+                "LLM unavailable: primary and fallback model requests failed"
+            ) from fallback_err
 
 
 def get_output_retries() -> int:

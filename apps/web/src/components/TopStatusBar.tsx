@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw, MessageSquare } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { GoalCoachLogo } from './GoalCoachLogo.tsx';
 import { LearnerState, NextAction } from '../types.ts';
 
@@ -8,7 +8,6 @@ interface TopStatusBarProps {
   overallProgress: number;
   nextAction: NextAction;
   onRegeneratePlan: () => void;
-  onOpenChat: () => void;
   onOpenProfile?: () => void;
 }
 
@@ -17,7 +16,6 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
   overallProgress,
   nextAction,
   onRegeneratePlan,
-  onOpenChat,
   onOpenProfile,
 }) => {
   const goalCompletionPercent = Math.round(overallProgress > 1 ? Math.min(100, overallProgress) : Math.max(0, overallProgress) * 100);
@@ -57,14 +55,6 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
             <RefreshCw className="w-4 h-4" />
           </button>
 
-          <button
-            id="btn-top-coach"
-            onClick={onOpenChat}
-            className="lg:hidden flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold uppercase shadow-[0_2px_0_#15803d] cursor-pointer"
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>Coach</span>
-          </button>
         </div>
       </div>
     </header>

@@ -49,7 +49,14 @@ def start_api() -> subprocess.Popen:
 
 
 def start_web() -> subprocess.Popen:
-    return _run_python(["-m", "streamlit", "run", "apps/web/app.py", "--server.port", WEB_PORT])
+    """Start the maintained React/Vite client."""
+    npm = shutil.which("npm")
+    if npm is None:
+        raise RuntimeError("npm was not found on PATH; install Node.js before starting the web app")
+    return subprocess.Popen(
+        [npm, "run", "dev", "--", "--port", WEB_PORT],
+        cwd="apps/web",
+    )
 
 
 def start_all() -> None:

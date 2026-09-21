@@ -4,10 +4,8 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from goalcoach.domain.enums import PlanItemKind, PlanStatus, RetrievalMode
+from goalcoach.domain.enums import PlanItemKind, PlanStatus
 from goalcoach.domain.models import (
-    AnswerSubmission,
-    ConceptDelta,
     ConceptMastery,
     DailyPlan,
     ErrorRecord,
@@ -16,8 +14,6 @@ from goalcoach.domain.models import (
     LearnerState,
     LearningGoal,
     PlanItem,
-    ProgressUpdate,
-    RetrievalRequest,
     RubricScores,
     SessionSummary,
     utc_now,
@@ -244,7 +240,7 @@ def test_plan_item_and_daily_plan_validation() -> None:
         )
 
 
-# --- Exercise, GradingResult, Submission Tests ---
+# --- Exercise and GradingResult Tests ---
 
 
 def test_exercise_and_grading_models() -> None:
@@ -257,13 +253,6 @@ def test_exercise_and_grading_models() -> None:
     )
     assert ex.hsk_level == 1
     assert len(ex.reference_answers) == 2
-
-    sub = AnswerSubmission(
-        learner_id=uuid4(),
-        exercise_id=ex.id,
-        answer="你是老师吗？",
-    )
-    assert sub.exercise_id == ex.id
 
     scores = RubricScores(
         grammatical_correctness=1.0,
@@ -284,10 +273,10 @@ def test_exercise_and_grading_models() -> None:
     assert result.grader_version == "v1.0.0"
 
 
-# --- SessionSummary & ProgressUpdate Tests ---
+# --- SessionSummary Tests ---
 
 
-def test_session_summary_and_progress_update() -> None:
+def test_session_summary() -> None:
     now = utc_now()
     session = SessionSummary(
         started_at=now - timedelta(minutes=20),
@@ -296,98 +285,6 @@ def test_session_summary_and_progress_update() -> None:
         summary="Completed daily review and new concept.",
     )
     assert len(session.concepts_covered) == 2
-
-    delta = ConceptDelta(
-        concept_id="c1",
-        previous_mastery=0.5,
-        new_mastery=0.8,
-        previous_retention=0.6,
-        new_retention=1.0,
-        next_review_at=now + timedelta(days=2),
-    )
-    update = ProgressUpdate(
-        learner_id=uuid4(),
-        exercise_id=uuid4(),
-        concept_delta=delta,
-        error_codes_added=["ERR_PUNCTUATION"],
-        plan_invalidated=False,
-    )
-    assert update.concept_delta.new_mastery == 0.8
-    assert not update.plan_invalidated
-
-
-# --- RetrievalRequest Conditional Validation Tests ---
-
-
-def test_retrieval_request_exact_mode_validation() -> None:
-    learner_id = uuid4()
-    # Exact mode with concept_id is valid
-    req = RetrievalRequest(
-        mode=RetrievalMode.EXACT,
-        learner_id=learner_id,
-        concept_id="c1",
-    )
-    assert req.mode == RetrievalMode.EXACT
-    assert req.concept_id == "c1"
-
-    # Exact mode without concept_id raises ValidationError
-    with pytest.raises(ValidationError, match="Exact retrieval requires a non-empty concept_id"):
-        RetrievalRequest(
-            mode=RetrievalMode.EXACT,
-            learner_id=learner_id,
-            concept_id=None,
-        )
-
-    with pytest.raises(ValidationError, match="Exact retrieval requires a non-empty concept_id"):
-        RetrievalRequest(
-            mode=RetrievalMode.EXACT,
-            learner_id=learner_id,
-            concept_id="",
-        )
-
-
-def test_retrieval_request_semantic_mode_validation() -> None:
-    learner_id = uuid4()
-    # Semantic mode with semantic_need is valid
-    req = RetrievalRequest(
-        mode=RetrievalMode.SEMANTIC,
-        learner_id=learner_id,
-        semantic_need="Exercises focusing on asking for directions",
-    )
-    assert req.mode == RetrievalMode.SEMANTIC
-    assert req.semantic_need is not None
-
-    # Semantic mode without semantic_need raises ValidationError
-    with pytest.raises(
-        ValidationError, match="Semantic retrieval requires a non-empty semantic_need"
-    ):
-        RetrievalRequest(
-            mode=RetrievalMode.SEMANTIC,
-            learner_id=learner_id,
-            semantic_need=None,
-        )
-
-    with pytest.raises(
-        ValidationError, match="Semantic retrieval requires a non-empty semantic_need"
-    ):
-        RetrievalRequest(
-            mode=RetrievalMode.SEMANTIC,
-            learner_id=learner_id,
-            semantic_need="",
-        )
-
-
-def test_retrieval_request_structured_mode() -> None:
-    learner_id = uuid4()
-    req = RetrievalRequest(
-        mode=RetrievalMode.STRUCTURED,
-        learner_id=learner_id,
-        hsk_level=2,
-        top_k=10,
-    )
-    assert req.mode == RetrievalMode.STRUCTURED
-    assert req.top_k == 10
-
 
 # --- Full JSON Roundtrip Serialization Test ---
 

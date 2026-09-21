@@ -7,23 +7,22 @@ based on student confusion and error profile.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
+from goalcoach.application.agent_history import format_agent_history
 from goalcoach.domain.enums import TeachingActionKind
 from goalcoach.domain.models import LearnerState, TeachingAction
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
+    AgentOutputError,
+    LLMUnavailableError,
     get_openrouter_model,
     get_output_retries,
     run_with_fallback,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,6 +42,16 @@ You teach strictly within the verified HSK1 curriculum boundaries.
 Core Pedagogical Invariant:
 Same concept + different error history -> different instructional action.
 
+Cross-Session Continuity:
+- Treat the compact learning history as advisory evidence, not a ban on repetition.
+- Do not reproduce prior wording or an identical exercise unless repetition is pedagogically justified.
+- When revisiting a concept, adapt the explanation or practice using its prior outcome and errors.
+
+Goal Grounding:
+- The learner's complete free-form goal is the authoritative teaching context.
+- Interpret that goal directly when choosing examples and communicative situations.
+- Do not invent material beyond the verified curriculum cards and exercises.
+
 Modality Selection Rules:
 1. Fresh Encounter (failed_attempts == 0):
    - Choose `EXPLANATION` or `DIALOGUE`.
@@ -50,7 +59,7 @@ Modality Selection Rules:
      | Character | Pinyin | Meaning |
      | :--- | :--- | :--- |
      | <Hanzi> | <tone-marked pinyin> | <English meaning> |
-   - If the learner has context interests (e.g., travel, food, business), weave them into the example sentences!
+   - Adapt examples directly to the learner's free-form goal when it fits the active concept.
 2. First Confusion / Help Requested (failed_attempts == 1 or learner asking for help):
    - Switch strategy! Do NOT simply repeat the same explanation.
    - Choose `HINT` or `CONTRAST_EXAMPLE`.
@@ -64,6 +73,7 @@ Emit a structured `TeachingAction` containing:
 - `action_kind`: The chosen modality tag.
 - `concept_id`: The canonical concept tag being taught.
 - `content`: The teaching text shown to the student. For explanations, it MUST include the Markdown table (`| Character | Pinyin | Meaning |`).
+- `history_summary`: A self-contained semantic summary, in one or two complete English sentences and no more than 240 characters. State what was taught, the teaching strategy, and the practice objective. Do not merely copy the beginning of `content`.
 - `pinyin`: Tone-marked Pinyin for any Chinese characters.
 
 Language Requirements (STRICT):
@@ -142,38 +152,61 @@ class TeachingWorker:
         )
 
         relevant_errors = [err.code for err in state.error_profile if err.concept_id == concept_id]
-        interests_str = ", ".join(state.context_interests) if state.context_interests else "general"
-
+        history_summary = format_agent_history(state)
         prompt = (
             f"Active Concept: {concept_id}\n"
+            f"Learner Goal: {state.goal.title if state.goal else 'General HSK1 Chinese'}\n"
             f"Failed Attempts on this concept: {failed_attempts}\n"
             f"Recurring Error Codes: {relevant_errors}\n"
-            f"Learner Interests: {interests_str}\n"
             f"Learner Query / Context: {learner_query or 'Normal lesson progression'}\n"
+            f"Recent Cross-Session Learning History:\n{history_summary}\n"
             "Emit the optimal TeachingAction for this turn."
         )
 
         try:
-            result, _ = await run_with_fallback(self.agent, prompt, deps=deps)
+            result, provider = await run_with_fallback(self.agent, prompt, deps=deps)
             action: TeachingAction = result.output
+            action.metadata.update(
+                {
+                    "provider": provider,
+                    "fallback_used": provider.startswith("ollama:"),
+                    "notice": (
+                        "The primary model was unavailable; the configured fallback model was used."
+                        if provider.startswith("ollama:")
+                        else None
+                    ),
+                }
+            )
             if action.concept_id == concept_id and action.content:
                 return self._attach_curriculum_exercise(
                     action, content_service, state=state, is_remedial=(failed_attempts > 0)
                 )
-        except Exception as exc:
-            logger.warning(
-                "TeachingAgent LLM execution failed (%s); using heuristic fallback.", exc
+        except LLMUnavailableError as exc:
+            action = self._deterministic_fallback(
+                concept_id,
+                state,
+                content_service,
+                failed_attempts,
+                notice=f"LLM unavailable; deterministic teaching fallback used: {exc}",
             )
-
-        fallback = self._heuristic_fallback(
+            return self._attach_curriculum_exercise(
+                action,
+                content_service,
+                state=state,
+                is_remedial=failed_attempts > 0,
+            )
+        action = self._deterministic_fallback(
             concept_id,
             state,
             content_service,
             failed_attempts,
-            learner_query,
+            notice="Teaching Agent returned an invalid action; deterministic fallback used.",
         )
         return self._attach_curriculum_exercise(
-            fallback, content_service, state=state, is_remedial=(failed_attempts > 0)
+            action,
+            content_service,
+            state=state,
+            is_remedial=failed_attempts > 0,
         )
 
     @staticmethod
@@ -194,20 +227,42 @@ class TeachingWorker:
 
         completed = set(state.today_completed_exercise_ids) if state else set()
         mistakes = set(state.today_mistake_exercise_ids) if state else set()
+        recent = (
+            {
+                turn.exercise_id
+                for turn in state.agent_history.recent_teaching_turns
+                if turn.concept_id == action.concept_id and turn.exercise_id
+            }
+            if state
+            else set()
+        )
 
         if is_remedial:
             # In remediation: prioritize unattempted exercises (neither completed nor failed today)
             candidates = [
                 e
                 for e in all_exercises
-                if e.exercise_id not in completed and e.exercise_id not in mistakes
+                if e.exercise_id not in completed
+                and e.exercise_id not in mistakes
+                and e.exercise_id not in recent
             ]
             if not candidates:
-                # If all exercises have been attempted, pick one not yet completed
+                candidates = [
+                    e
+                    for e in all_exercises
+                    if e.exercise_id not in completed and e.exercise_id not in recent
+                ]
+            if not candidates:
                 candidates = [e for e in all_exercises if e.exercise_id not in completed]
             selected = candidates[0] if candidates else all_exercises[0]
         else:
-            uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
+            uncompleted = [
+                e
+                for e in all_exercises
+                if e.exercise_id not in completed and e.exercise_id not in recent
+            ]
+            if not uncompleted:
+                uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
             selected = uncompleted[0] if uncompleted else all_exercises[0]
 
         payload = dict(action.exercise_payload or {})
@@ -222,111 +277,56 @@ class TeachingWorker:
         action.exercise_payload = payload
         return action
 
-    def _heuristic_fallback(
-        self,
+    @staticmethod
+    def _deterministic_fallback(
         concept_id: str,
         state: LearnerState,
         content_service: ContentService,
         failed_attempts: int,
-        learner_query: str | None,
+        *,
+        notice: str,
     ) -> TeachingAction:
-        """Deterministic strategy fallback based on state and attempt counts."""
+        """Build a transparent fallback solely from canonical curriculum material."""
         concept = content_service.get_concept(concept_id)
         cards = content_service.get_teaching_cards(concept_id)
-        title_zh = concept.title_zh if concept else "你好"
-        title_en = concept.title_en if concept else "Hello"
-
-        card = cards[0] if cards else None
-        pinyin = card.pinyin if card and card.pinyin else "nǐ hǎo"
-        example_zh = card.example_zh if card and card.example_zh else title_zh
-        example_pinyin = card.example_pinyin if card and card.example_pinyin else pinyin
-        example_en = card.example_en if card and card.example_en else title_en
-
+        if concept is None or not cards:
+            raise AgentOutputError(f"No canonical teaching material exists for {concept_id}")
+        card = cards[0]
         if failed_attempts == 0:
-            # Standard Explanation
-            interests = (
-                f" (Focus: {', '.join(state.context_interests)})" if state.context_interests else ""
-            )
-            content = (
-                f"Let's learn **{title_zh}** ({title_en}){interests}!\n\n"
-                f"| Character | Pinyin | Meaning |\n"
-                f"| :--- | :--- | :--- |\n"
-                f"| {example_zh} | {example_pinyin} | {example_en} |\n\n"
-                "Try forming a sentence using this pattern!"
-            )
-            return TeachingAction(
-                action_kind=TeachingActionKind.EXPLANATION,
-                concept_id=concept_id,
-                content=content,
-                pinyin=example_pinyin,
-            )
+            action_kind = TeachingActionKind.EXPLANATION
+            strategy = "a concise canonical explanation"
         elif failed_attempts == 1:
-            # Contrast Example or Hint
-            content = (
-                f"**Coach Hint for {title_zh}:**\n\n"
-                f"Remember the key structure: In Chinese, yes/no questions simply place **吗 (ma)** "
-                f"at the very end of a statement without changing the word order!\n\n"
-                f"**Example:**\n"
-                f"• Statement: 你是老师。 (Nǐ shì lǎoshī - You are a teacher.)\n"
-                f"• Question: 你是老师**吗**？ (Nǐ shì lǎoshī **ma**? - Are you a teacher?)"
-            )
-            return TeachingAction(
-                action_kind=TeachingActionKind.CONTRAST_EXAMPLE,
-                concept_id=concept_id,
-                content=content,
-                pinyin="ma?",
-            )
+            action_kind = TeachingActionKind.CONTRAST_EXAMPLE
+            strategy = "a different curriculum example after confusion"
         else:
-            # Retry / Simplified scaffold
-            content = (
-                "Let's simplify! Fill in the blank to ask 'Are you busy?':\n\n"
-                "你忙 ___ ？\n"
-                "(Hint: Use the question particle you just learned!)"
-            )
-            return TeachingAction(
-                action_kind=TeachingActionKind.RETRY,
-                concept_id=concept_id,
-                content=content,
-                pinyin="Nǐ máng ___ ?",
-                exercise_payload={"type": "fill_blank", "target": "吗"},
-            )
-
-
-# --- Legacy Compatibility Interface ---
-
-
-class TutorResponse(BaseModel):
-    """Backwards-compatible legacy tutor response structure."""
-
-    reply: str = Field(default="", description="Explanations, exercises, or feedback with Pinyin")
-    grammar_points: list[str] = Field(default_factory=list)
-    suggested_practice: str | None = Field(default=None)
-    concept_id: str = Field(default="hsk1_c01")
-    is_evaluating_answer: bool = Field(default=False)
-    passed: bool | None = Field(default=None)
-    hint_given: bool = Field(default=False)
-
-
-tutor_agent = Agent(
-    model=get_openrouter_model(),
-    output_type=TutorResponse,
-    output_retries=get_output_retries(),
-    system_prompt="You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor.",
-)
-
-
-async def chat_with_tutor(deps: Any, user_message: str) -> tuple[TutorResponse, str]:
-    """Legacy helper for conversational tutoring."""
-    result, provider = await run_with_fallback(tutor_agent, user_message, deps=deps)
-    return result.output, provider
-
+            action_kind = TeachingActionKind.RETRY
+            strategy = "a simplified retry grounded in one curriculum example"
+        goal = state.goal.title if state.goal else "HSK1 communication"
+        content = (
+            f"Goal context: {goal}\n\n"
+            f"| Character | Pinyin | Meaning |\n"
+            f"| :--- | :--- | :--- |\n"
+            f"| {card.example_zh or card.prompt_zh} | "
+            f"{card.example_pinyin or card.pinyin or ''} | "
+            f"{card.example_en or card.meaning_en or ''} |\n\n"
+            f"{card.explanation_en or concept.communicative_goal}"
+        )
+        return TeachingAction(
+            action_kind=action_kind,
+            concept_id=concept_id,
+            content=content,
+            history_summary=f"Taught {concept.title_en} using {strategy} for the learner goal.",
+            pinyin=card.example_pinyin or card.pinyin,
+            metadata={
+                "provider": "deterministic",
+                "fallback_used": True,
+                "notice": notice,
+            },
+        )
 
 __all__ = [
     "TEACHING_SYSTEM_PROMPT",
     "TeachingDeps",
     "TeachingWorker",
-    "TutorResponse",
-    "chat_with_tutor",
     "teaching_agent",
-    "tutor_agent",
 ]

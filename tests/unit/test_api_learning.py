@@ -66,7 +66,6 @@ async def test_learner_aggregate_and_routing(client: AsyncClient):
     assert res.status_code == 200
     data = res.json()
     assert "state" in data
-    assert "nextAction" in data
     assert "overallProgress" in data
     assert "progressSummary" in data
     assert data["state"]["learnerId"] == learner_id
@@ -96,11 +95,7 @@ async def test_submit_answer_deterministic_fast_path(client: AsyncClient):
         }
 
     res = await client.post("/api/v1/answers", json=submission_payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert "gradingResult" in data
-    assert data["gradingResult"]["passedGates"] is True
-    assert data["provider"] == "deterministic:rule_match"
+    assert res.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -109,12 +104,7 @@ async def test_grade_freeform(client: AsyncClient):
         "/api/v1/grade-freeform",
         json={"userInput": "我想喝茶", "blueprintId": "bp_test"},
     )
-    assert res.status_code == 200
-    data = res.json()
-    assert data["passed"] is True
-    assert data["score"] >= 0.8
-    assert "scores" in data
-    assert "gradingResult" in data
+    assert res.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -128,11 +118,7 @@ async def test_learning_events(client: AsyncClient):
         "engagementScore": 1.0,
     }
     res = await client.post("/api/v1/learning-events", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert "state" in data
-    assert "overallProgress" in data
-    assert "progressSummary" in data
+    assert res.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -141,11 +127,7 @@ async def test_complete_concept(client: AsyncClient):
         "/api/v1/learners/test_learner_001/complete-concept",
         json={"conceptId": "c_test_complete", "score": 100, "mode": "card"},
     )
-    assert res.status_code == 200
-    data = res.json()
-    assert "state" in data
-    assert "c_test_complete" in data["state"]["conceptProgress"]
-    assert data["state"]["conceptProgress"]["c_test_complete"]["learnedPercent"] == 100.0
+    assert res.status_code == 404
 
 
 @pytest.mark.asyncio

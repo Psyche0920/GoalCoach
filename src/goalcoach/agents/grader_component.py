@@ -9,25 +9,21 @@ Implements PRD Section 10:
 
 from __future__ import annotations
 
-import logging
-from typing import Any
 from uuid import uuid4
 
 from pydantic_ai import Agent
 
 from goalcoach.domain.models import (
-    AnswerSubmission,
     Exercise,
     GradingResult,
     RubricScores,
 )
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
+    LLMUnavailableError,
     get_openrouter_model,
     get_output_retries,
     run_with_fallback,
 )
-
-logger = logging.getLogger(__name__)
 
 GRADER_SYSTEM_PROMPT = """You are the GoalCoach Chinese Grading Evaluator.
 Assess the learner's submission against the exercise prompt, instruction, and reference answers.
@@ -75,11 +71,10 @@ class GraderComponent:
     async def grade(
         self,
         exercise: Exercise,
-        answer: str | AnswerSubmission,
+        answer: str,
     ) -> GradingResult:
         """Evaluates submission against exercise rubrics with fast-path short-circuiting."""
-        raw_answer = answer.answer if isinstance(answer, AnswerSubmission) else str(answer)
-        clean_student_ans = raw_answer.strip()
+        clean_student_ans = answer.strip()
         exercise_id = exercise.id or uuid4()
 
         # 1. Fast Path: Exact reference answer match (bypasses LLM, <5ms)
@@ -97,6 +92,7 @@ class GraderComponent:
                 feedback="Perfect! Your answer matches the accepted standard response.",
                 detected_errors=[],
                 grader_version="deterministic-fast-path",
+                metadata={"provider": "deterministic", "fallback_used": False},
             )
 
         # 2. Heuristic check for common known errors if LLM fails
@@ -110,9 +106,20 @@ class GraderComponent:
         )
 
         try:
-            result, _ = await run_with_fallback(self.agent, prompt, deps=None)
+            result, provider = await run_with_fallback(self.agent, prompt, deps=None)
             llm_result: GradingResult = result.output
             llm_result.exercise_id = exercise_id
+            llm_result.metadata.update(
+                {
+                    "provider": provider,
+                    "fallback_used": provider.startswith("ollama:"),
+                    "notice": (
+                        "The primary model was unavailable; the configured fallback model was used."
+                        if provider.startswith("ollama:")
+                        else None
+                    ),
+                }
+            )
 
             # Deterministic gating guardrails:
             # If critical errors are detected, passed_gates must be False
@@ -136,59 +143,40 @@ class GraderComponent:
                 llm_result.passed_gates = False
 
             return llm_result
-        except Exception as exc:
-            logger.warning(
-                "GraderComponent LLM execution failed (%s); running heuristic evaluation.", exc
+        except LLMUnavailableError as exc:
+            return self._deterministic_fallback(
+                exercise_id,
+                notice=f"LLM unavailable; conservative deterministic grading fallback used: {exc}",
             )
-
-        return self._heuristic_fallback(exercise, clean_student_ans, exercise_id)
-
-    def _heuristic_fallback(
-        self,
-        exercise: Exercise,
-        answer: str,
-        exercise_id: Any,
-    ) -> GradingResult:
-        """Deterministic heuristic evaluator when offline or when LLM fails."""
-        # Simple substring matching or particle checks
-        passed = False
-        detected_errors: list[str] = []
-        feedback = "Good try, but please review the sentence structure."
-
-        # Concept specific heuristic checks
-        if "question_ma" in exercise.concept_id or "ma" in exercise.concept_id:
-            if "吗" not in answer and "ma" not in answer.lower():
-                detected_errors.append("ERR_QUESTION_MA")
-                feedback = (
-                    "Remember to add the question particle 吗 at the end of a yes/no question!"
-                )
-            else:
-                passed = True
-                feedback = "Good job using the question particle 吗!"
-        elif any(ref in answer for ref in exercise.reference_answers):
-            passed = True
-            feedback = "Well done! Your response conveys the intended meaning."
-        elif len(answer) >= 2:
-            # Partial credit
-            passed = False
-            detected_errors.append(f"ERR_{exercise.concept_id.upper()}")
-            feedback = f"Check your grammar for concept {exercise.concept_id}."
-
-        score = 0.85 if passed else 0.40
-        return GradingResult(
-            exercise_id=exercise_id,
-            scores=RubricScores(
-                grammatical_correctness=score,
-                semantic_precision=score,
-                pragmatic_appropriateness=score,
-            ),
-            passed_gates=passed,
-            confidence=0.80,
-            feedback=feedback,
-            detected_errors=detected_errors,
-            grader_version="deterministic-heuristic-fallback",
+        return self._deterministic_fallback(
+            exercise_id,
+            notice="Grader returned an invalid rubric result; deterministic fallback used.",
         )
 
+    @staticmethod
+    def _deterministic_fallback(exercise_id: object, *, notice: str) -> GradingResult:
+        """Fail closed when a non-exact answer cannot be evaluated by an LLM."""
+        return GradingResult(
+            exercise_id=str(exercise_id),
+            scores=RubricScores(
+                grammatical_correctness=0.0,
+                semantic_precision=0.0,
+                pragmatic_appropriateness=0.0,
+            ),
+            passed_gates=False,
+            confidence=0.0,
+            feedback=(
+                "This answer could not be evaluated by the language model. "
+                "It was not counted as correct; please retry when model service is available."
+            ),
+            detected_errors=["ERR_GRADING_LLM_UNAVAILABLE"],
+            grader_version="deterministic-fail-closed-fallback",
+            metadata={
+                "provider": "deterministic",
+                "fallback_used": True,
+                "notice": notice,
+            },
+        )
 
 __all__ = [
     "GRADER_SYSTEM_PROMPT",

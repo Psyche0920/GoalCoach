@@ -1,12 +1,8 @@
 import React from 'react';
 import { 
   Compass, 
-  RotateCcw, 
   TrendingUp,
-  BookOpen, 
-  MessageSquare, 
-  Target,
-  Settings
+  BookOpen,
 } from 'lucide-react';
 import { PandaMascot } from './PandaMascot.tsx';
 import { GoalCoachLogo } from './GoalCoachLogo.tsx';
@@ -15,7 +11,6 @@ import { LearnerState, NextAction } from '../types.ts';
 interface SidebarProps {
   activeTab: 'plan' | 'curriculum' | 'retention';
   setActiveTab: (tab: 'plan' | 'curriculum' | 'retention') => void;
-  onOpenChat: () => void;
   onOpenProfile?: () => void;
   learnerState: LearnerState | null;
   overallProgress: number;
@@ -25,7 +20,6 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
-  onOpenChat,
   onOpenProfile,
   learnerState,
   overallProgress,
@@ -69,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }`}
         >
           <BookOpen className="w-5 h-5" />
-          <span>Curriculum</span>
+          <span>Roadmap</span>
         </button>
 
         <button
@@ -85,14 +79,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span>Progress</span>
         </button>
 
-        <button
-          id="sidebar-btn-coach"
-          onClick={onOpenChat}
-          className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs font-black uppercase tracking-wider text-zinc-900 hover:bg-zinc-100 border-2 border-zinc-200 transition-all shadow-[0_3px_0_#e4e4e7] active:translate-y-0.5 active:shadow-none cursor-pointer"
-        >
-          <MessageSquare className="w-5 h-5 text-emerald-600" />
-          <span>Coach Bǎobao</span>
-        </button>
       </nav>
 
       {/* Mini Mascot Card at Sidebar Bottom (Click to open profile) */}

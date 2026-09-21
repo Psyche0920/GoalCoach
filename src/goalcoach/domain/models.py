@@ -11,14 +11,12 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
-    model_validator,
 )
 from pydantic.alias_generators import to_camel
 
 from goalcoach.domain.enums import (
     PlanItemKind,
     PlanStatus,
-    RetrievalMode,
     TeachingActionKind,
 )
 from goalcoach.domain.retention import calculate_retention
@@ -150,6 +148,8 @@ class ProgressSummary(DomainBaseModel):
     goal_scope_mastered_percent: float = 0.0
     communication_outcome_percent: float = 0.0
     daily_effective_minutes: float = 0.0
+    total_effective_minutes: float = 0.0
+    active_days: int = 0
 
 
 class LearningEvent(DomainBaseModel):
@@ -203,6 +203,8 @@ class PlanUpdate(DomainBaseModel):
     ordered_items: list[PlanItem] = Field(min_length=1)
     adaptation_rationale: str = Field(min_length=1)
     roadmap_adjustments: list[str] = Field(default_factory=list)
+    roadmap_concept_ids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # --- 4. Interactive Tutoring & Structured Grading ---
@@ -215,6 +217,14 @@ class TeachingAction(DomainBaseModel):
     concept_id: str = Field(min_length=1, max_length=128)
     content: str = Field(
         description="Instructional explanation written in English with Chinese examples and Pinyin"
+    )
+    history_summary: str = Field(
+        min_length=1,
+        max_length=240,
+        description=(
+            "Self-contained semantic summary of what was taught and which strategy was used; "
+            "stored as cross-session agent context"
+        ),
     )
     pinyin: str | None = Field(default=None, description="Disambiguated tone readings for Hanzi")
     exercise_payload: dict[str, Any] | None = Field(
@@ -233,15 +243,6 @@ class Exercise(DomainBaseModel):
     hsk_level: int = Field(default=3, ge=1, le=6)
     reference_answers: list[str] = Field(default_factory=list)
     metadata: dict[str, str] = Field(default_factory=dict)
-
-
-class AnswerSubmission(DomainBaseModel):
-    """A learner's response submission to a specific practice exercise."""
-
-    learner_id: UUID | str
-    exercise_id: UUID | str
-    answer: str = Field(min_length=1)
-    submitted_at: datetime = Field(default_factory=utc_now)
 
 
 class RubricScores(DomainBaseModel):
@@ -263,9 +264,25 @@ class GradingResult(DomainBaseModel):
     detected_errors: list[str] = Field(default_factory=list)
     evidence: str | None = None
     grader_version: str = Field(default="v1.0.0")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # --- 5. Session & State Aggregate ---
+
+
+class ActiveLearningSession(DomainBaseModel):
+    """Mutable state for the learner's currently open study session."""
+
+    session_id: UUID = Field(default_factory=uuid4)
+    started_at: datetime = Field(default_factory=utc_now)
+    last_activity_at: datetime = Field(default_factory=utc_now)
+    planned_minutes: int = Field(default=20, gt=0, le=240)
+    focus: str | None = Field(default=None, max_length=255)
+    concepts_covered: list[str] = Field(default_factory=list)
+    teaching_turn_count: int = Field(default=0, ge=0)
+    answer_count: int = Field(default=0, ge=0)
+    passed_answer_count: int = Field(default=0, ge=0)
+    active_seconds: int = Field(default=0, ge=0)
 
 
 class SessionSummary(DomainBaseModel):
@@ -276,6 +293,33 @@ class SessionSummary(DomainBaseModel):
     ended_at: datetime
     concepts_covered: list[str] = Field(default_factory=list)
     summary: str = Field(min_length=1)
+    planned_minutes: int = Field(default=20, gt=0, le=240)
+    active_seconds: int = Field(default=0, ge=0)
+    teaching_turn_count: int = Field(default=0, ge=0)
+    answer_count: int = Field(default=0, ge=0)
+    passed_answer_count: int = Field(default=0, ge=0)
+
+
+class TeachingHistoryTurn(DomainBaseModel):
+    """Compact, persisted evidence from one Teaching Agent turn."""
+
+    concept_id: str = Field(min_length=1, max_length=128)
+    session_id: UUID | None = None
+    action_kind: TeachingActionKind
+    exercise_id: str | None = Field(default=None, max_length=128)
+    content_summary: str = Field(min_length=1, max_length=240)
+    learner_query: str | None = Field(default=None, max_length=240)
+    passed: bool | None = None
+    error_codes: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AgentHistorySummary(DomainBaseModel):
+    """Bounded cross-session context shared by the Planning and Teaching Agents."""
+
+    session_count: int = Field(default=0, ge=0)
+    teaching_turn_count: int = Field(default=0, ge=0)
+    recent_teaching_turns: list[TeachingHistoryTurn] = Field(default_factory=list)
 
 
 class LearnerState(DomainBaseModel):
@@ -295,19 +339,18 @@ class LearnerState(DomainBaseModel):
 
     display_name: str | None = None
     goal: LearningGoal | None = None
-    goal_changed: bool = False
     needs_replanning: bool = False
-    context_interests: list[str] = Field(default_factory=list)
+    roadmap_concept_ids: list[str] = Field(default_factory=list)
+    roadmap_adjustments: list[str] = Field(default_factory=list)
     mastery: dict[str, ConceptMastery] = Field(default_factory=dict)
     concept_progress: dict[str, ConceptProgress] = Field(default_factory=dict)
     error_profile: list[ErrorRecord] = Field(default_factory=list)
     active_plan: DailyPlan | None = None
+    active_session: ActiveLearningSession | None = None
     sessions: list[SessionSummary] = Field(default_factory=list)
-    passed_blueprint_ids: list[str] = Field(default_factory=list)
+    agent_history: AgentHistorySummary = Field(default_factory=AgentHistorySummary)
     state_version: int = 1
-    today_checked_in: bool = False
-    last_check_in_date: str | None = None
-    estimated_days_remaining: int | None = None
+    daily_activity_date: str | None = None
     today_mistake_exercise_ids: list[str] = Field(default_factory=list)
     today_completed_exercise_ids: list[str] = Field(default_factory=list)
     today_studied_concept_ids: list[str] = Field(default_factory=list)
@@ -321,63 +364,3 @@ class LearnerState(DomainBaseModel):
     def review_due(self, at: datetime | None = None) -> bool:
         """Checks if any concept in the learner's mastery profile is due for review."""
         return any(concept.is_review_due(at) for concept in self.mastery.values())
-
-    def overall_progress(self, at: datetime | None = None) -> float:
-        """Calculates normalized overall progress weighted across active mastery and decayed retention."""
-        if not self.mastery:
-            return 0.0
-        total_weight = sum(item.weight for item in self.mastery.values())
-        if total_weight <= 0:
-            return 0.0
-        weighted_sum = sum(
-            item.weight * item.mastery_score * item.current_retention(at)
-            for item in self.mastery.values()
-        )
-        return float(weighted_sum / total_weight)
-
-
-# --- 6. Event Deltas & Retrieval Requests ---
-
-
-class ConceptDelta(DomainBaseModel):
-    """Delta update describing changes to mastery and retention after a grading event."""
-
-    concept_id: str
-    previous_mastery: Score
-    new_mastery: Score
-    previous_retention: Score
-    new_retention: Score
-    next_review_at: datetime
-
-
-class ProgressUpdate(DomainBaseModel):
-    """State transition event recording evidence updates and plan invalidations."""
-
-    learner_id: UUID | str
-    exercise_id: UUID | str
-    concept_delta: ConceptDelta
-    error_codes_added: list[str] = Field(default_factory=list)
-    plan_invalidated: bool = False
-    updated_at: datetime = Field(default_factory=utc_now)
-
-
-class RetrievalRequest(DomainBaseModel):
-    """Structured query for retrieving concepts, cards, and exercises from content storage."""
-
-    mode: RetrievalMode
-    learner_id: UUID | str
-    concept_id: str | None = None
-    hsk_level: int | None = Field(default=None, ge=1, le=6)
-    content_type: str | None = None
-    semantic_need: str | None = None
-    error_codes: list[str] = Field(default_factory=list)
-    top_k: int = Field(default=5, gt=0, le=20)
-
-    @model_validator(mode="after")
-    def validate_keys(self) -> RetrievalRequest:
-        """Validates that required keys are present for exact or semantic retrieval modes."""
-        if self.mode == RetrievalMode.EXACT and not self.concept_id:
-            raise ValueError("Exact retrieval requires a non-empty concept_id")
-        if self.mode == RetrievalMode.SEMANTIC and not self.semantic_need:
-            raise ValueError("Semantic retrieval requires a non-empty semantic_need")
-        return self

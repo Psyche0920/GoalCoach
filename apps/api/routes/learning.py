@@ -7,27 +7,15 @@ from __future__ import annotations
 import re
 from typing import Any
 from urllib.parse import quote
-from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
-from pydantic import Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from apps.api.dependencies import get_content_repo, get_learner_repo
-from goalcoach.agents.goal_planning import DeterministicGoalPlanner
-from goalcoach.agents.grading_agent import grade_submission
-from goalcoach.application.progress_reducer import compute_progress_summary, reduce_concept_progress
+from goalcoach.application.orchestrator import derive_next_action
+from goalcoach.application.progress_reducer import compute_progress_summary
 from goalcoach.domain.models import (
-    AnswerSubmission,
-    ConceptProgress,
-    DomainBaseModel,
-    Exercise,
-    GradingResult,
     LearnerState,
-    LearningEvent,
-    LearningGoal,
-    RubricScores,
-    utc_now,
 )
 from goalcoach.infrastructure.persistence.models import (
     ContentExercise,
@@ -38,7 +26,6 @@ from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
 )
-from goalcoach.ui.orchestrator import PlanningOrchestrator, route
 
 router = APIRouter(tags=["learning"])
 
@@ -66,6 +53,39 @@ def serialize_concept(c: CurriculumConcept) -> dict[str, Any]:
         "difficulty": c.difficulty,
         "estimatedMinutes": c.estimated_minutes,
     }
+
+
+def build_roadmap_projection(
+    state: LearnerState,
+    concepts: list[CurriculumConcept],
+) -> list[dict[str, Any]]:
+    """Project canonical content plus the active plan from one learner state.
+
+    The roadmap never owns a separate completion model: node status is the
+    persisted ``concept_progress`` and today's queue is ``active_plan``.
+    """
+    by_id = {concept.concept_id: concept for concept in concepts}
+    canonical_ids = [concept.concept_id for concept in concepts]
+    ordered_ids = [
+        *[concept_id for concept_id in state.roadmap_concept_ids if concept_id in by_id],
+        *[
+            concept_id
+            for concept_id in canonical_ids
+            if concept_id not in state.roadmap_concept_ids
+        ],
+    ]
+    plan_items = {
+        item.concept_id: item
+        for item in (state.active_plan.items if state.active_plan else [])
+    }
+    return [
+        {
+            **serialize_concept(by_id[concept_id]),
+            "progress": state.concept_progress.get(concept_id),
+            "dailyPlanItem": plan_items.get(concept_id),
+        }
+        for concept_id in ordered_ids
+    ]
 
 
 def serialize_card(card: TeachingCard) -> dict[str, Any]:
@@ -127,51 +147,9 @@ async def get_or_create_learner(
         state = LearnerState(
             learner_id=learner_id,
             display_name=f"Learner {learner_id}",
-            goal=LearningGoal(
-                title="HSK 1 Complete Goal", target_hsk_level=1, daily_available_minutes=20
-            ),
         )
         await repo.save(state)
     return state
-
-
-async def update_state_on_answer(
-    learner_id: str,
-    concept_id: str,
-    result: GradingResult,
-    plan_item_id: str | None,
-    learner_repo: SqliteLearnerRepository,
-) -> None:
-    """Asynchronous post-grading background state mutation."""
-    state = await learner_repo.get(learner_id)
-    if state is None:
-        return
-
-    curr_cp = state.concept_progress.get(
-        concept_id,
-        ConceptProgress(learner_id=learner_id, concept_id=concept_id),
-    )
-    event = LearningEvent(
-        learner_id=learner_id,
-        plan_item_id=plan_item_id or "practice_item",
-        concept_ids=[concept_id],
-        event_type="attempt",
-        engagement_score=result.confidence,
-        grading_result=result.model_dump(mode="json"),
-    )
-    updated_cp = reduce_concept_progress(curr_cp, event)
-    state.concept_progress[concept_id] = updated_cp
-
-    if not result.passed_gates:
-        ex_id_str = str(result.exercise_id)
-        if ex_id_str not in state.today_mistake_exercise_ids:
-            state.today_mistake_exercise_ids.append(ex_id_str)
-    if concept_id not in state.today_studied_concept_ids:
-        state.today_studied_concept_ids.append(concept_id)
-
-    state.updated_at = utc_now()
-    await learner_repo.save(state)
-    await learner_repo.record_learning_event(event)
 
 
 # --- 1. Text to Speech ---
@@ -207,167 +185,7 @@ async def text_to_speech(text: str = Query(..., min_length=1)) -> Response:
         raise HTTPException(status_code=502, detail=f"TTS network error: {exc}") from exc
 
 
-# --- 2. Answer Submission & Grading ---
-
-
-@router.post("/api/v1/answers")
-async def submit_answer(
-    submission: AnswerSubmission,
-    background_tasks: BackgroundTasks,
-    content_repo: ContentRepository = Depends(get_content_repo),
-    learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
-) -> dict[str, Any]:
-    """Grade exercise submissions via fast-path or PydanticAI within 800ms."""
-    ex_id_str = str(submission.exercise_id)
-    content_ex = content_repo.get_exercise(ex_id_str)
-    if content_ex:
-        ref_answers: list[str] = []
-        if isinstance(content_ex.accepted_answers, list):
-            ref_answers.extend([str(a) for a in content_ex.accepted_answers])
-        elif content_ex.accepted_answers:
-            ref_answers.append(str(content_ex.accepted_answers))
-
-        if isinstance(content_ex.answer, dict):
-            val = (
-                content_ex.answer.get("value")
-                or content_ex.answer.get("text")
-                or content_ex.answer.get("answer")
-            )
-            if val and str(val) not in ref_answers:
-                ref_answers.append(str(val))
-        elif content_ex.answer and str(content_ex.answer) not in ref_answers:
-            ref_answers.append(str(content_ex.answer))
-
-        exercise = Exercise(
-            id=content_ex.exercise_id,
-            concept_id=content_ex.concept_id,
-            prompt=content_ex.prompt,
-            target_instruction=content_ex.instruction or "",
-            reference_answers=ref_answers,
-            hsk_level=1,
-        )
-    else:
-        # Graceful fallback for synthetic or test exercise IDs
-        exercise = Exercise(
-            id=submission.exercise_id,
-            concept_id="c_hsk1_general",
-            prompt="Practice sentence",
-            target_instruction="Translate or construct",
-            reference_answers=[submission.answer],
-            hsk_level=1,
-        )
-
-    result, provider = await grade_submission(exercise, submission)
-
-    background_tasks.add_task(
-        update_state_on_answer,
-        learner_id=str(submission.learner_id),
-        concept_id=exercise.concept_id,
-        result=result,
-        plan_item_id=None,
-        learner_repo=learner_repo,
-    )
-
-    return {
-        "gradingResult": result,
-        "provider": provider,
-    }
-
-
-# --- 3. Freeform Scenario Grading ---
-
-
-class FreeformRequest(DomainBaseModel):
-    user_input: str
-    blueprint_id: str | None = None
-
-
-@router.post("/api/v1/grade-freeform")
-async def grade_freeform(
-    req: FreeformRequest,
-    content_repo: ContentRepository = Depends(get_content_repo),
-) -> dict[str, Any]:
-    """Evaluate freeform communicative scenario writing against rubric specs."""
-    user_str = req.user_input.strip()
-    passed = len(user_str) >= 2
-
-    # Deterministic scoring for freeform input
-    score = 0.95 if passed else 0.40
-    scores = RubricScores(
-        grammatical_correctness=score,
-        semantic_precision=score,
-        pragmatic_appropriateness=score,
-    )
-
-    target_concepts = ["c_hsk1_qing", "c_hsk1_he", "c_hsk1_cha"]
-
-    grading_result = GradingResult(
-        exercise_id=uuid4(),
-        scores=scores,
-        passed_gates=passed,
-        confidence=0.95,
-        feedback=(
-            "Excellent communicative expression! Fluent and pragmatically accurate."
-            if passed
-            else "Please provide a complete Chinese sentence using the target vocabulary."
-        ),
-        detected_errors=[],
-        grader_version="deterministic-fast-freeform",
-    )
-
-    return {
-        "score": score,
-        "passed": passed,
-        "feedback": grading_result.feedback,
-        "scores": scores.model_dump(by_alias=True),
-        "detectedErrors": grading_result.detected_errors,
-        "targetConceptIds": target_concepts,
-        "gradingResult": grading_result.model_dump(by_alias=True),
-    }
-
-
-# --- 4. Learning Events ---
-
-
-@router.post("/api/v1/learning-events")
-async def record_learning_event_endpoint(
-    event: LearningEvent,
-    learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
-    content_repo: ContentRepository = Depends(get_content_repo),
-) -> dict[str, Any]:
-    """Persist an idempotent learning evidence event and update concept progress."""
-    await learner_repo.record_learning_event(event)
-
-    state = await get_or_create_learner(event.learner_id, learner_repo)
-
-    for cid in event.concept_ids:
-        curr = state.concept_progress.get(
-            cid,
-            ConceptProgress(learner_id=event.learner_id, concept_id=cid),
-        )
-        updated = reduce_concept_progress(
-            curr,
-            event,
-            completes_atomic_unit=False,
-            is_spaced_review=(event.event_type == "review"),
-        )
-        state.concept_progress[cid] = updated
-
-    state.updated_at = utc_now()
-    await learner_repo.save(state)
-
-    concepts = content_repo.list_concepts()
-    summary = compute_progress_summary(state, concepts)
-
-    return {
-        "state": state,
-        "overallProgress": state.overall_progress(),
-        "progressSummary": summary,
-        "nextAction": route(state),
-    }
-
-
-# --- 5. Learner Aggregate & Routing ---
+# --- 2. Learner State Projections ---
 
 
 @router.get("/api/v1/learners/{learner_id}")
@@ -376,16 +194,13 @@ async def get_learner_aggregate(
     learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
     content_repo: ContentRepository = Depends(get_content_repo),
 ) -> dict[str, Any]:
-    """Fetch complete learner state, deterministic route, and progress summary."""
+    """Fetch the authoritative learner state and its progress projection."""
     state = await get_or_create_learner(learner_id, learner_repo)
     concepts = content_repo.list_concepts()
     summary = compute_progress_summary(state, concepts)
-    next_action = route(state)
-
     return {
         "state": state,
-        "nextAction": next_action,
-        "overallProgress": state.overall_progress(),
+        "nextAction": derive_next_action(state),
         "progressSummary": summary,
     }
 
@@ -394,132 +209,36 @@ async def get_learner_aggregate(
 async def get_today_plan(
     learner_id: str,
     learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
-    content_repo: ContentRepository = Depends(get_content_repo),
 ) -> Any:
-    """Return the active daily curriculum plan for the learner."""
+    """Return the persisted Agent-generated daily plan without mutating state."""
     state = await get_or_create_learner(learner_id, learner_repo)
-    if state.active_plan and not state.active_plan.items[0].completed:
-        return state.active_plan
-
-    prereqs = content_repo.get_prerequisites()
-    planner = DeterministicGoalPlanner(item_minutes=5, prerequisites=prereqs)
-    plan = await planner.create_plan(state)
-
-    state.active_plan = plan
-    state.updated_at = utc_now()
-    await learner_repo.save(state)
-    return plan
+    if state.active_plan is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No daily plan exists. Create a goal through POST /api/v1/events first.",
+        )
+    return state.active_plan
 
 
-@router.post("/api/v1/learners/{learner_id}/plan")
-async def regenerate_plan(
+@router.get("/api/v1/learners/{learner_id}/roadmap")
+async def get_learner_roadmap(
     learner_id: str,
     learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
     content_repo: ContentRepository = Depends(get_content_repo),
 ) -> dict[str, Any]:
-    """Regenerate a daily plan via PlanningOrchestrator."""
-    prereqs = content_repo.get_prerequisites()
-    planner = DeterministicGoalPlanner(item_minutes=5, prerequisites=prereqs)
-    orchestrator = PlanningOrchestrator(planner, learner_repo)
-    plan = await orchestrator.generate_daily_plan(learner_id)
-
-    updated_state = await get_or_create_learner(learner_id, learner_repo)
-    return {
-        "state": updated_state,
-        "nextAction": route(updated_state),
-        "plan": plan,
-    }
-
-
-class GoalUpdateRequest(DomainBaseModel):
-    title: str | None = None
-    target_hsk_level: int | None = Field(default=None, ge=1, le=6)
-    daily_available_minutes: int | None = Field(default=None, gt=0, le=240)
-    target_domain: str | None = None
-
-
-@router.post("/api/v1/learners/{learner_id}/goal")
-async def update_learner_goal(
-    learner_id: str,
-    req: GoalUpdateRequest,
-    learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
-) -> dict[str, Any]:
-    """Update learner goal configuration."""
+    """Return the learner-specific roadmap and today's plan from one state snapshot."""
     state = await get_or_create_learner(learner_id, learner_repo)
-    current_goal = state.goal or LearningGoal(title="HSK 1 Complete Goal", target_hsk_level=1)
-
-    updated_goal = current_goal.model_copy(
-        update={
-            k: v
-            for k, v in {
-                "title": req.title or current_goal.title,
-                "target_hsk_level": req.target_hsk_level or current_goal.target_hsk_level,
-                "daily_available_minutes": req.daily_available_minutes
-                or current_goal.daily_available_minutes,
-            }.items()
-            if v is not None
-        }
-    )
-
-    state.goal = updated_goal
-    state.goal_changed = False
-    state.updated_at = utc_now()
-    await learner_repo.save(state)
-
-    return {
-        "state": state,
-        "nextAction": route(state),
-    }
-
-
-class CompleteConceptRequest(DomainBaseModel):
-    concept_id: str
-    score: float = 100.0
-    mode: str = "card"
-
-
-@router.post("/api/v1/learners/{learner_id}/complete-concept")
-async def complete_concept_endpoint(
-    learner_id: str,
-    req: CompleteConceptRequest,
-    learner_repo: SqliteLearnerRepository = Depends(get_learner_repo),
-    content_repo: ContentRepository = Depends(get_content_repo),
-) -> dict[str, Any]:
-    """Mark concept study as complete and reduce honest state metrics."""
-    state = await get_or_create_learner(learner_id, learner_repo)
-
-    curr_cp = state.concept_progress.get(
-        req.concept_id,
-        ConceptProgress(learner_id=learner_id, concept_id=req.concept_id),
-    )
-    event = LearningEvent(
-        learner_id=learner_id,
-        plan_item_id="study_modal",
-        concept_ids=[req.concept_id],
-        event_type="card" if req.mode == "card" else "attempt",
-        engagement_score=req.score / 100.0,
-    )
-    updated_cp = reduce_concept_progress(curr_cp, event, completes_atomic_unit=True)
-    state.concept_progress[req.concept_id] = updated_cp
-
-    if req.concept_id not in state.today_studied_concept_ids:
-        state.today_studied_concept_ids.append(req.concept_id)
-
-    state.updated_at = utc_now()
-    await learner_repo.save(state)
-
     concepts = content_repo.list_concepts()
-    summary = compute_progress_summary(state, concepts)
-
     return {
-        "state": state,
-        "overallProgress": state.overall_progress(),
-        "progressSummary": summary,
-        "nextAction": route(state),
+        "stateVersion": state.state_version,
+        "nextAction": derive_next_action(state),
+        "dailyPlan": state.active_plan,
+        "roadmap": build_roadmap_projection(state, concepts),
+        "progressSummary": compute_progress_summary(state, concepts),
     }
 
 
-# --- 6. Curriculum Content Queries ---
+# --- 3. Curriculum Content Queries ---
 
 
 @router.get("/api/v1/curriculum/concepts")

@@ -5,7 +5,14 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from apps.api.main import app
+from apps.api.dependencies import (
+    get_grader_component,
+    get_planning_worker,
+    get_teaching_worker,
+)
+from apps.api.main import create_app
+from goalcoach.infrastructure.config import Settings
+from tests.fakes import FakeGraderComponent, FakePlanningWorker, FakeTeachingWorker
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -24,7 +31,7 @@ def ensure_curriculum_db_initialized() -> None:
                 cursor.execute("SELECT count(*) FROM curriculum_concepts")
                 if cursor.fetchone()[0] > 0:
                     need_init = False
-        except Exception:
+        except sqlite3.DatabaseError:
             need_init = True
 
     if need_init and sql_path.exists():
@@ -36,7 +43,18 @@ def ensure_curriculum_db_initialized() -> None:
 
 
 @pytest_asyncio.fixture
-async def client() -> AsyncClient:
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
-        yield ac
+async def client(tmp_path: Path) -> AsyncClient:
+    application = create_app(
+        Settings(
+            _env_file=None,
+            database_url=f"sqlite:///{tmp_path / 'api-test.db'}",
+            content_database_url="sqlite:///./data/database1/goalcoach_hsk1_learning.db",
+        )
+    )
+    application.dependency_overrides[get_planning_worker] = FakePlanningWorker
+    application.dependency_overrides[get_teaching_worker] = FakeTeachingWorker
+    application.dependency_overrides[get_grader_component] = FakeGraderComponent
+    async with application.router.lifespan_context(application):
+        transport = ASGITransport(app=application)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            yield ac

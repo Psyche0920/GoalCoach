@@ -141,7 +141,33 @@ def compute_progress_summary(
 ) -> ProgressSummary:
     """Computes aggregate progress metrics across the learner's state."""
     tracked = state.concept_progress
-    total_curriculum_count = len(all_concepts) if all_concepts else max(len(tracked), 1)
+    curriculum_ids = [
+        str(getattr(concept, "concept_id", None) or concept.get("id") or concept.get("conceptId"))
+        for concept in (all_concepts or [])
+    ]
+    scope_ids = [
+        concept_id
+        for concept_id in state.roadmap_concept_ids
+        if not curriculum_ids or concept_id in curriculum_ids
+    ] or curriculum_ids or list(tracked)
+    scoped_progress = [tracked[concept_id] for concept_id in scope_ids if concept_id in tracked]
+    total_scope_count = max(len(scope_ids), 1)
+
+    today = datetime.now(UTC).date()
+    completed_seconds = sum(
+        session.active_seconds for session in state.sessions if session.ended_at.date() == today
+    )
+    active_seconds = state.active_session.active_seconds if state.active_session else 0
+    daily_effective_minutes = round((completed_seconds + active_seconds) / 60.0, 1)
+    total_effective_minutes = round(
+        (sum(session.active_seconds for session in state.sessions) + active_seconds) / 60.0,
+        1,
+    )
+    active_dates = {
+        session.ended_at.date() for session in state.sessions if session.active_seconds > 0
+    }
+    if state.active_session and state.active_session.active_seconds > 0:
+        active_dates.add(state.active_session.started_at.date())
 
     if not tracked:
         return ProgressSummary(
@@ -153,31 +179,41 @@ def compute_progress_summary(
             goal_scope_learned_percent=0.0,
             goal_scope_mastered_percent=0.0,
             communication_outcome_percent=0.0,
-            daily_effective_minutes=0.0,
+            daily_effective_minutes=daily_effective_minutes,
+            total_effective_minutes=total_effective_minutes,
+            active_days=len(active_dates),
         )
 
     # 1. Course Coverage & Progress
-    concepts_started = sum(1 for p in tracked.values() if p.learned_percent > 0)
-    course_coverage = min(100.0, round(100.0 * (concepts_started / total_curriculum_count), 1))
+    concepts_started = sum(1 for p in scoped_progress if p.learned_percent > 0)
+    course_coverage = min(100.0, round(100.0 * (concepts_started / total_scope_count), 1))
 
-    total_learned = sum(p.learned_percent for p in tracked.values())
-    learned_progress = min(100.0, round(total_learned / max(len(tracked), 1), 1))
+    total_learned = sum(p.learned_percent for p in scoped_progress)
+    learned_progress = min(100.0, round(total_learned / total_scope_count, 1))
 
-    concepts_mastered = sum(1 for p in tracked.values() if p.is_mastered)
-    mastered_progress = min(100.0, round(100.0 * (concepts_mastered / max(len(tracked), 1)), 1))
+    concepts_mastered = sum(1 for p in scoped_progress if p.is_mastered)
+    mastered_progress = min(
+        100.0, round(100.0 * (concepts_mastered / total_scope_count), 1)
+    )
 
     # 2. Goal Scope Progress
     goal_scope_learned_percent = learned_progress
-    total_mastery = sum(p.mastery_score for p in tracked.values())
+    total_mastery = sum(p.mastery_score for p in scoped_progress)
     goal_scope_mastered_percent = min(
-        100.0, round(100.0 * (total_mastery / max(len(tracked), 1)), 1)
+        100.0, round(100.0 * (total_mastery / total_scope_count), 1)
     )
 
-    # 3. Communication Outcome
-    passed_blueprints = len(state.passed_blueprint_ids)
-    communication_outcome_percent = min(100.0, round(100.0 * (passed_blueprints / 5.0), 1))
+    # Communication outcomes are represented by successful assessed output evidence.
+    communication_outcome_percent = min(
+        100.0,
+        round(
+            sum(p.learning_evidence.output_completion * 100.0 for p in scoped_progress)
+            / total_scope_count,
+            1,
+        ),
+    )
 
-    # Composite Goal Progress: 0.45 * Learned + 0.35 * Mastered + 0.20 * Communication
+    # Goal completion combines coverage, durable mastery, and communicative output.
     goal_completion = round(
         0.45 * goal_scope_learned_percent
         + 0.35 * goal_scope_mastered_percent
@@ -193,5 +229,7 @@ def compute_progress_summary(
         goal_scope_learned_percent=goal_scope_learned_percent,
         goal_scope_mastered_percent=goal_scope_mastered_percent,
         communication_outcome_percent=communication_outcome_percent,
-        daily_effective_minutes=0.0,
+        daily_effective_minutes=daily_effective_minutes,
+        total_effective_minutes=total_effective_minutes,
+        active_days=len(active_dates),
     )

@@ -1,7 +1,4 @@
-"""
-apps/api/dependencies.py
-FastAPI dependency injectors for persistence repositories and ChromaDB service.
-"""
+"""FastAPI dependency injectors for the two SQLite repositories."""
 
 from __future__ import annotations
 
@@ -9,14 +6,30 @@ from typing import cast
 
 from fastapi import Request
 
+from goalcoach.agents.grader_component import GraderComponent
+from goalcoach.agents.planning_agent import PlanningWorker
+from goalcoach.agents.teaching_agent import TeachingWorker
 from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
 )
-from goalcoach.infrastructure.retrieval.chroma_service import ChromaService
 
 _default_content_repo: ContentRepository | None = None
-_default_chroma_service: ChromaService | None = None
+
+
+def get_planning_worker() -> PlanningWorker:
+    """Create the configured Planning Agent application adapter."""
+    return PlanningWorker()
+
+
+def get_teaching_worker() -> TeachingWorker:
+    """Create the configured Teaching Agent application adapter."""
+    return TeachingWorker()
+
+
+def get_grader_component() -> GraderComponent:
+    """Create the isolated grading component."""
+    return GraderComponent()
 
 
 def get_learner_repo(request: Request) -> SqliteLearnerRepository:
@@ -50,14 +63,3 @@ def get_content_repo(request: Request) -> ContentRepository:
         factory = create_session_factory(settings.content_database_url)
         _default_content_repo = ContentRepository(factory)
     return _default_content_repo
-
-
-def get_chroma_service(request: Request) -> ChromaService:
-    """Resolve ChromaService singleton from application state or initialize."""
-    global _default_chroma_service
-    if hasattr(request.app.state, "chroma_service"):
-        return cast(ChromaService, request.app.state.chroma_service)
-
-    if _default_chroma_service is None:
-        _default_chroma_service = ChromaService()
-    return _default_chroma_service

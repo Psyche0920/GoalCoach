@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -231,7 +232,9 @@ class SqlAlchemyLearnerRepository:
                         concept_ids=r.concept_ids,
                         event_type=r.event_type,  # type: ignore[arg-type]
                         started_at=r.started_at,
+                        last_active_at=r.started_at + timedelta(seconds=r.active_seconds),
                         active_seconds=r.active_seconds,
+                        estimated_minutes=r.active_seconds / 60.0,
                         engagement_score=r.engagement_score,
                         grading_result=r.grading_result,
                         created_at=r.created_at,
