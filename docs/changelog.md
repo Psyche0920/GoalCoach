@@ -68,3 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Empathetic "Coach Baobao" Teaching Persona**: Upgraded system prompt in `src/goalcoach/agents/teaching_agent.py` to eliminate "naked exercises" on repeated learner errors (`failed_attempts >= 2`), ensuring patient scaffolding, emotional validation, and structural grammar breakdowns prior to retries.
 - **Pedagogical Preservation of Open-Input Modalities**: Maintained authentic active-recall input for `fill_blank` and `translate_to_zh` exercises (supporting Hanzi and Pinyin responses) without artificial or synthetic distractors.
+- **Sequential Curriculum Prerequisites Alignment**:
+  - Realigned all `concept_prerequisites` in `data/database1/GoalCoach_HSK1_Learning_DB_Package/data/goalcoach_hsk1_learning_db_sqlite.sql` so that every concept strictly depends on its immediate predecessor in chronological curriculum sequence (from `hsk1_c02` -> `hsk1_c01` through `hsk6_c22` -> `hsk6_c21`), forming a clean linear progression across all 121 concepts (120 total edges).
+
+### Fixed
+- **Content Repository Prerequisite Assertions**: Updated `test_loads_all_prerequisite_relationships` in `tests/integration/test_content_repository.py` to assert the 120 total sequential prerequisite relationships, 19 HSK 1 rules, and `hsk1_c20` -> `hsk1_c19`.
