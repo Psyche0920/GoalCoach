@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { ArrowRight, Check, Clock3, RefreshCw, Target } from 'lucide-react';
+import { ArrowRight, Check, Clock3, Target } from 'lucide-react';
 import { CurriculumConcept, DailyPlan, LearnerState, LearningGoal, StudyEntrySource } from '../types.ts';
 
 interface LessonSelection {
@@ -73,10 +73,6 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
           {allocation.map((part) => <span key={part.kind} className={ITEM_STYLE[part.kind].accent} style={{ width: `${part.percent}%` }} />)}
         </div>
       </section>
-
-      <div className="flex justify-end px-1">
-        <button type="button" onClick={onRegeneratePlan} className="secondary-action" title="Regenerate today’s plan from your latest learning state"><RefreshCw className="h-4 w-4" />Update plan</button>
-      </div>
 
       <ol className="space-y-3">
         {plan.items.map((item, index) => {
