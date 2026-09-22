@@ -28,5 +28,3 @@ class Settings(BaseSettings):
     fallback_llm_base_url: str = "http://localhost:11434/v1"
     fallback_llm_model: str | None = None
     enable_ollama_fallback: bool = False
-    enable_background_updates: bool = True
-    enable_langgraph: bool = False

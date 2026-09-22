@@ -3,8 +3,6 @@
 import pytest
 from pydantic import ValidationError
 
-from apps.api.main import create_goal_planner
-from goalcoach.domain.models import LearnerState, LearningGoal
 from goalcoach.infrastructure.config import Settings
 
 
@@ -27,20 +25,3 @@ def test_planning_item_minutes_loads_from_environment(monkeypatch: pytest.Monkey
 def test_planning_item_minutes_rejects_invalid_values(invalid_minutes: int) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, planning_item_minutes=invalid_minutes)
-
-
-@pytest.mark.asyncio
-async def test_configured_item_minutes_are_injected_into_planner() -> None:
-    settings = Settings(_env_file=None, planning_item_minutes=8)
-    planner = create_goal_planner(settings, prerequisites={})
-    state = LearnerState(
-        goal=LearningGoal(
-            title="Complete HSK 1",
-            target_hsk_level=1,
-            daily_available_minutes=25,
-        )
-    )
-
-    plan = await planner.create_plan(state)
-
-    assert [item.estimated_minutes for item in plan.items] == [8, 8, 8, 1]

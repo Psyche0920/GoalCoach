@@ -266,12 +266,12 @@ class DeterministicOrchestrator:
     ) -> OrchestratorResponse:
         """Process ANSWER_SUBMITTED: grade submission, update state, and re-plan if needs_replanning."""
         exercise_id = payload["exercise_id"]
-        concept_id = payload["concept_id"]
         answer = payload["answer"]
 
         # 1. Fetch exercise definition from content service
         content_ex = self.content_service.get_exercise(exercise_id)
         if content_ex:
+            concept_id = payload.get("concept_id") or content_ex.concept_id
             ref_answers = list(content_ex.accepted_answers) if content_ex.accepted_answers else []
             ans_val = (
                 content_ex.answer.get("value")

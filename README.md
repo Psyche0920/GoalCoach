@@ -63,7 +63,6 @@ flowchart TD
     subgraph Clients ["Client Interfaces"]
         Web["React 18 / Vite Web App"]
         CLI["Interactive Terminal Harness"]
-        Streamlit["Streamlit Prototype"]
     end
 
     subgraph Gateway ["FastAPI Application Gateway (apps/api)"]
@@ -271,7 +270,7 @@ All 100 tests pass out-of-the-box in offline and CI environments.
 ├── .github/workflows/ci.yml       # GitHub Actions CI pipeline (lint, format, test, DB bootstrap)
 ├── apps/
 │   ├── api/                       # FastAPI backend (routes, dependencies, event gateway)
-│   └── web/                       # React 18 + Vite SPA and Streamlit prototype
+│   └── web/                       # React 18 + Vite SPA modern learning interface
 ├── data/
 │   └── database1/                 # Grounded HSK 1 curriculum SQLite database
 ├── docs/

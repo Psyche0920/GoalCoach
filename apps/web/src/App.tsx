@@ -89,24 +89,29 @@ export function App() {
     }
   };
 
-  // Handle goal update
+  // Handle goal update via canonical closed-loop event dispatcher
   const handleUpdateGoal = async (updatedGoal: Partial<LearningGoal>) => {
     try {
-      const res = await fetch(`/api/v1/learners/${learnerId}/goal`, {
+      const res = await fetch('/api/v1/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedGoal),
+        body: JSON.stringify({
+          event_type: 'GOAL_CREATED',
+          learner_id: learnerId,
+          payload: {
+            title: updatedGoal.title,
+            target_hsk_level: updatedGoal.targetHskLevel,
+            daily_available_minutes: updatedGoal.dailyAvailableMinutes,
+          },
+        }),
       });
       if (res.ok) {
         const data = await res.json();
-        acceptLearnerState(data.state);
-        setNextAction(data.nextAction);
-        // Immediately regenerate plan to adapt to new target domain / interests
-        const planRes = await fetch(`/api/v1/learners/${learnerId}/plan`, { method: 'POST' });
-        if (planRes.ok) {
-          const planData = await planRes.json();
-          acceptLearnerState(planData.state);
-          setNextAction(planData.nextAction);
+        if (data.state) {
+          acceptLearnerState(data.state);
+        }
+        if (data.dailyPlan) {
+          setLearnerState((curr) => curr ? { ...curr, activePlan: data.dailyPlan } : curr);
         }
       }
     } catch (err) {
@@ -114,26 +119,30 @@ export function App() {
     }
   };
 
-  // Handle submitting answer to structured rubric grader
+  // Handle submitting answer to structured rubric grader via closed-loop event dispatcher
   const handleSubmitAnswer = async (exerciseId: string, answer: string): Promise<GradingResult | null> => {
     try {
-      const res = await fetch('/api/v1/answers', {
+      const res = await fetch('/api/v1/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          event_type: 'ANSWER_SUBMITTED',
           learner_id: learnerId,
-          exercise_id: exerciseId,
-          answer,
+          payload: {
+            exercise_id: exerciseId,
+            answer,
+          },
         }),
       });
       if (res.ok) {
         const data = await res.json();
-        acceptLearnerState(data.state);
-        setOverallProgress(data.overallProgress);
-        setLearnedProgress(data.progressSummary?.learnedProgress ?? 0);
-        setMasteredProgress(data.progressSummary?.masteredProgress ?? 0);
-        setNextAction(data.nextAction);
-        return data.gradingResult;
+        if (data.state) {
+          acceptLearnerState(data.state);
+          if (data.dailyPlan) {
+            setLearnerState((curr) => curr ? { ...curr, activePlan: data.dailyPlan } : curr);
+          }
+        }
+        return data.gradingResult ?? data.grading_result ?? null;
       }
     } catch (err) {
       console.error('Failed to submit answer:', err);

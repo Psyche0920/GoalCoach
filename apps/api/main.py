@@ -1,15 +1,18 @@
-from collections.abc import AsyncIterator, Collection, Mapping
+"""apps/api/main.py
+FastAPI entrypoint with lifecycle dependency injection for GoalCoach.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.api.routes.learning import router as learning_router
+from apps.api.routes.learning_loop import handle_tts
 from apps.api.routes.learning_loop import router as learning_loop_router
-from apps.api.routes.tutoring import router as tutoring_router
-from goalcoach.agents.goal_planning import DeterministicGoalPlanner
-from goalcoach.agents.interfaces import GoalPlanner, LearnerRepository
 from goalcoach.infrastructure.config import Settings
 from goalcoach.infrastructure.persistence.database import (
     create_learner_schema,
@@ -20,17 +23,6 @@ from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqlAlchemyLearnerRepository,
 )
-
-
-def create_goal_planner(
-    settings: Settings,
-    prerequisites: Mapping[str, Collection[str]],
-) -> GoalPlanner:
-    """Create the deterministic planner from validated application settings."""
-    return DeterministicGoalPlanner(
-        item_minutes=settings.planning_item_minutes,
-        prerequisites=prerequisites,
-    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -44,13 +36,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             create_learner_schema(session_factory)
             application.state.learner_repository = SqlAlchemyLearnerRepository(session_factory)
-            content_repo = ContentRepository(content_session_factory)
-            application.state.content_repository = content_repo
-            prerequisites = content_repo.get_prerequisites()
-            application.state.goal_planner = create_goal_planner(
-                resolved_settings,
-                prerequisites,
-            )
+            application.state.content_repository = ContentRepository(content_session_factory)
             yield
         finally:
             get_engine(session_factory).dispose()
@@ -67,27 +53,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Routers
-    application.include_router(learning_router)
+    # Consolidated Closed-Loop Router
     application.include_router(learning_loop_router)
-    application.include_router(tutoring_router, prefix="/api/v1")
 
     # Health check
     @application.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    # Direct /api/tts endpoint for frontend audio utilities
+    @application.get("/api/tts")
+    async def tts_endpoint(text: str = Query(..., min_length=1)) -> Response:
+        return await handle_tts(text)
+
     return application
 
 
-def get_learner_repository(request: Request) -> LearnerRepository:
+def get_learner_repository(request: Request) -> SqlAlchemyLearnerRepository:
     """Resolve the request-scoped learner persistence boundary."""
-    return cast(LearnerRepository, request.app.state.learner_repository)
-
-
-def get_goal_planner(request: Request) -> GoalPlanner:
-    """Resolve the prerequisite-aware planner configured at startup."""
-    return cast(GoalPlanner, request.app.state.goal_planner)
+    return cast(SqlAlchemyLearnerRepository, request.app.state.learner_repository)
 
 
 app = create_app()

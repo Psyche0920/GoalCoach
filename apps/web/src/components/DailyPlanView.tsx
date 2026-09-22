@@ -99,45 +99,31 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
     if (!answer.trim() || !freeformItem || !learnerState) return;
     setSubmitting(true);
     try {
-      const gradeResponse = await fetch('/api/v1/grade-freeform', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userInput: answer.trim(), blueprintId: plan?.blueprintId }),
-      });
-      if (!gradeResponse.ok) throw new Error('Freeform grading failed.');
-      const grade = await gradeResponse.json() as {
-        score: number;
-        passed: boolean;
-        feedback: string;
-        scores: GradingResult['scores'];
-        detectedErrors: string[];
-        targetConceptIds: string[];
-        gradingResult: GradingResult;
-      };
-      setFeedback({ passed: grade.passed, message: grade.feedback, scores: grade.scores, detectedErrors: grade.detectedErrors });
-
-      const now = new Date().toISOString();
-      const startedAt = freeformStartedAt ?? now;
-      const elapsedSeconds = Math.max(1, Math.round((Date.parse(now) - Date.parse(startedAt)) / 1000));
-      const itemConceptIds = new Set(freeformItem.conceptIds ?? []);
-      const targetConceptIds = grade.targetConceptIds.filter((conceptId) => itemConceptIds.has(conceptId));
-      const evidenceResponse = await fetch('/api/v1/learning-events', {
+      const targetConceptId = freeformItem.conceptId ?? (freeformItem.conceptIds && freeformItem.conceptIds[0]) ?? 'hsk1_c01';
+      const res = await fetch('/api/v1/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          learnerId: learnerState.learnerId,
-          planItemId: freeformItem.id,
-          conceptIds: targetConceptIds,
-          eventType: 'output',
-          startedAt,
-          lastActiveAt: now,
-          activeSeconds: elapsedSeconds,
-          engagementScore: grade.passed ? 1 : 0.75,
-          gradingResult: { ...grade.gradingResult, exerciseId: freeformItem.id },
+          event_type: 'ANSWER_SUBMITTED',
+          learner_id: learnerState.learnerId,
+          payload: {
+            exercise_id: freeformItem.id,
+            concept_id: targetConceptId,
+            answer: answer.trim(),
+          },
         }),
       });
-      if (!evidenceResponse.ok) throw new Error('Learning evidence could not be saved.');
-      onLearningUpdate?.(await evidenceResponse.json() as LearningUpdateResponse);
+      if (!res.ok) throw new Error('Submission evaluation failed.');
+      const data = await res.json();
+      const grading = data.gradingResult ?? data.grading_result;
+      if (grading) {
+        setFeedback({
+          passed: grading.passedGates ?? grading.passed_gates ?? false,
+          message: grading.feedback ?? '',
+          scores: grading.scores,
+          detectedErrors: grading.detectedErrors ?? grading.detected_errors ?? [],
+        });
+      }
     } catch (error) {
       setFeedback({ passed: false, message: error instanceof Error ? error.message : 'Please try again.' });
     } finally {

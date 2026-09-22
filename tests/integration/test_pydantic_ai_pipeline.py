@@ -15,7 +15,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 
 from apps.api.main import app
-from goalcoach.agents.grading_agent import grade_submission
+from goalcoach.agents.grader_component import GraderComponent
 from goalcoach.agents.teaching_agent import TutorResponse, chat_with_tutor, tutor_agent
 from goalcoach.agents.tools.retrieval_tools import AgentDeps, search_hsk_curriculum
 from goalcoach.domain.models import AnswerSubmission, Exercise, LearnerState, LearningGoal
@@ -148,11 +148,11 @@ async def test_grading_agent_deterministic_fast_path():
         answer="你好",
     )
 
-    result, provider = await grade_submission(exercise, submission)
+    result = await GraderComponent().grade(exercise, submission)
     assert result.passed_gates is True
     assert result.confidence == 1.0
     assert result.scores.grammatical_correctness == 1.0
-    assert provider == "deterministic:rule_match"
+    assert result.grader_version == "deterministic-fast-path"
 
 
 def test_api_tutoring_chat_endpoint(mock_content_repo):

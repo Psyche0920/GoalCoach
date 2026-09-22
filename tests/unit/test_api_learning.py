@@ -73,7 +73,17 @@ async def test_learner_aggregate_and_routing(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_submit_answer_deterministic_fast_path(client: AsyncClient):
+async def test_today_plan_generation(client: AsyncClient):
+    learner_id = "test_learner_plan_001"
+    res = await client.get(f"/api/v1/learners/{learner_id}/today-plan")
+    assert res.status_code == 200
+    data = res.json()
+    assert "items" in data
+    assert len(data["items"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_submit_answer_via_events(client: AsyncClient):
     # Look up an exercise from the database
     list_res = await client.get("/api/v1/curriculum/concepts")
     concept_id = list_res.json()[0]["conceptId"]
@@ -84,68 +94,19 @@ async def test_submit_answer_deterministic_fast_path(client: AsyncClient):
         ex = exercises[0]
         accepted = ex["acceptedAnswers"][0] if ex["acceptedAnswers"] else "你好"
         submission_payload = {
-            "learnerId": "test_learner_001",
-            "exerciseId": ex["id"],
-            "answer": accepted,
+            "event_type": "ANSWER_SUBMITTED",
+            "learner_id": "test_learner_001",
+            "payload": {
+                "exercise_id": ex["id"],
+                "concept_id": concept_id,
+                "answer": accepted,
+            },
         }
-    else:
-        submission_payload = {
-            "learnerId": "test_learner_001",
-            "exerciseId": "ex_dummy",
-            "answer": "你好",
-        }
-
-    res = await client.post("/api/v1/answers", json=submission_payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert "gradingResult" in data
-    assert data["gradingResult"]["passedGates"] is True
-    assert data["provider"] == "deterministic:rule_match"
-
-
-@pytest.mark.asyncio
-async def test_grade_freeform(client: AsyncClient):
-    res = await client.post(
-        "/api/v1/grade-freeform",
-        json={"userInput": "我想喝茶", "blueprintId": "bp_test"},
-    )
-    assert res.status_code == 200
-    data = res.json()
-    assert data["passed"] is True
-    assert data["score"] >= 0.8
-    assert "scores" in data
-    assert "gradingResult" in data
-
-
-@pytest.mark.asyncio
-async def test_learning_events(client: AsyncClient):
-    payload = {
-        "learnerId": "test_learner_001",
-        "planItemId": "item_test",
-        "conceptIds": ["c_test"],
-        "eventType": "output",
-        "activeSeconds": 45,
-        "engagementScore": 1.0,
-    }
-    res = await client.post("/api/v1/learning-events", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert "state" in data
-    assert "overallProgress" in data
-    assert "progressSummary" in data
-
-
-@pytest.mark.asyncio
-async def test_complete_concept(client: AsyncClient):
-    res = await client.post(
-        "/api/v1/learners/test_learner_001/complete-concept",
-        json={"conceptId": "c_test_complete", "score": 100, "mode": "card"},
-    )
-    assert res.status_code == 200
-    data = res.json()
-    assert "state" in data
-    assert "c_test_complete" in data["state"]["conceptProgress"]
-    assert data["state"]["conceptProgress"]["c_test_complete"]["learnedPercent"] == 100.0
+        res = await client.post("/api/v1/events", json=submission_payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["gradingResult"] is not None
+        assert data["gradingResult"]["passedGates"] is True
 
 
 @pytest.mark.asyncio
