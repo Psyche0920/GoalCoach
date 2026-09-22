@@ -42,9 +42,18 @@ class PlanStatus(StrEnum):
     INVALID = "invalid"
 
 
+class StudyEntrySource(StrEnum):
+    """Authoritative origin of a teaching turn and its progress eligibility."""
+
+    PLANNED = "planned"
+    DAILY_REVIEW = "daily_review"
+    ROADMAP = "roadmap"
+
+
 __all__ = [
     "EventType",
     "PlanItemKind",
     "PlanStatus",
+    "StudyEntrySource",
     "TeachingActionKind",
 ]

@@ -32,6 +32,7 @@ from goalcoach.domain.models import (
     LearnerState,
     LearningGoal,
     RubricScores,
+    TeachingAction,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
 from goalcoach.infrastructure.persistence.database import (
@@ -69,7 +70,7 @@ def orchestrator(
     content_service: ContentService,
 ) -> DeterministicOrchestrator:
     progress_service = ProgressService(learner_repo=temp_learner_repo)
-    planning_worker = PlanningWorker()
+    planning_worker = PlanningWorker(enable_prerequisites=False)
     teaching_worker = TeachingWorker()
     grader_worker = GraderComponent()
 
@@ -119,6 +120,28 @@ def _canonical_answer(content_service: ContentService, exercise_id: str) -> str:
     if isinstance(exercise.answer, dict):
         return str(exercise.answer["value"])
     return str(exercise.answer)
+
+
+def test_help_replacement_explicitly_excludes_current_exercise(
+    content_service: ContentService,
+) -> None:
+    action = TeachingAction(
+        action_kind=TeachingActionKind.CONTRAST_EXAMPLE,
+        concept_id="hsk1_c01",
+        content="Alternative explanation",
+        history_summary="Explained the concept with a contrasting example.",
+    )
+
+    replaced = TeachingWorker._attach_curriculum_exercise(
+        action,
+        content_service,
+        state=LearnerState(),
+        is_remedial=True,
+        excluded_exercise_id="hsk1_c01_e01",
+    )
+
+    assert replaced.exercise_payload is not None
+    assert replaced.exercise_payload["exercise_id"] != "hsk1_c01_e01"
 
 
 @pytest.mark.asyncio
@@ -491,3 +514,78 @@ async def test_edge_case_state_persistence_and_reload_with_new_fields(
     assert reloaded.today_completed_exercise_ids == ["hsk1_c01_e01", "hsk1_c01_e02"]
     assert reloaded.today_remediated_concept_ids == ["hsk1_c01"]
     assert reloaded.all_attempted_exercise_ids() == {"hsk1_c01_e01", "hsk1_c01_e02"}
+
+
+@pytest.mark.asyncio
+async def test_repeated_replan_rebuild_preserves_daily_plan_and_roadmap(
+    orchestrator: DeterministicOrchestrator,
+    temp_learner_repo: SqliteLearnerRepository,
+) -> None:
+    """Ordinary replanning preserves the frozen roadmap and does not loop on rebuild."""
+    learner_id = f"learner_frozen_{uuid4().hex[:8]}"
+    await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "HSK 1", "daily_available_minutes": 20},
+    )
+    before = await temp_learner_repo.get(learner_id)
+    assert before is not None and before.active_plan is not None
+
+    before.active_plan.items = list(reversed(before.active_plan.items))
+    before.roadmap_concept_ids = list(reversed(before.roadmap_concept_ids))
+    before.needs_replanning = True
+    await temp_learner_repo.save(before)
+
+    after_replan = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert after_replan.replanned is True
+    assert after_replan.state is not None
+    assert after_replan.state.roadmap_concept_ids == before.roadmap_concept_ids
+
+    before_version = after_replan.state.state_version
+    repeat = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert repeat.replanned is False
+    assert repeat.state is not None
+    assert str(repeat.state.active_plan.id) == str(after_replan.state.active_plan.id)
+    assert [str(item.id) for item in repeat.state.active_plan.items] == [
+        str(item.id) for item in after_replan.state.active_plan.items
+    ]
+    assert repeat.state.state_version == before_version + 1
+
+
+@pytest.mark.asyncio
+async def test_timezone_update_only_changes_daily_boundary(
+    orchestrator: DeterministicOrchestrator,
+    temp_learner_repo: SqliteLearnerRepository,
+) -> None:
+    """Changing the calendar timezone is configuration, not a new learning goal."""
+    learner_id = f"learner_timezone_{uuid4().hex[:8]}"
+    created = await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "Travel in China", "daily_available_minutes": 20, "timezone": "UTC"},
+    )
+    before = created.state
+    assert before is not None and before.goal is not None and before.active_plan is not None
+
+    updated = await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "Travel in China", "daily_available_minutes": 20, "timezone": "Asia/Shanghai"},
+    )
+
+    assert updated.state is not None
+    assert updated.state.goal is not None
+    assert updated.state.goal.timezone == "Asia/Shanghai"
+    assert updated.state.goal_fingerprint == before.goal_fingerprint
+    assert updated.state.mastery == before.mastery
+    assert updated.state.concept_progress == before.concept_progress
+    assert updated.state.sessions == before.sessions
+    assert updated.state.roadmap_concept_ids == before.roadmap_concept_ids

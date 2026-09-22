@@ -34,6 +34,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
   const learnedPercent = Math.round(Math.max(0, Math.min(100, learnedProgress)));
   const [goalText, setGoalText] = useState(goal?.title || 'Learn practical HSK 1 Chinese');
   const [minutes, setMinutes] = useState<number>(goal?.dailyAvailableMinutes || 15);
+  const [timezone, setTimezone] = useState(goal?.timezone || 'UTC');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -41,6 +42,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
     if (!isOpen) return;
     setGoalText(goal?.title || 'Learn practical HSK 1 Chinese');
     setMinutes(goal?.dailyAvailableMinutes || 20);
+    setTimezone(goal?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     setFormError(null);
   }, [goal, isOpen]);
 
@@ -63,6 +65,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
         title: normalizedGoal,
         targetHskLevel: 1,
         dailyAvailableMinutes: minutes,
+        timezone,
       });
       onClose();
     } catch (error) {
@@ -93,9 +96,8 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* Custom goal */}
           <div>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2">
               <label htmlFor="learning-goal" className="text-xs font-black uppercase tracking-wider text-zinc-500">Your goal</label>
-              <span className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-black text-white">HSK 1</span>
             </div>
             <textarea
               id="learning-goal"
@@ -106,6 +108,29 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
               className="min-h-24 w-full resize-none rounded-2xl border-2 border-zinc-200 bg-zinc-50 p-4 text-sm font-bold outline-none focus:border-emerald-500"
             />
             <p className="mt-1 text-right text-[10px] font-bold text-zinc-400">{goalText.length}/255</p>
+          </div>
+
+          {/* Learner-local calendar */}
+          <div>
+            <label htmlFor="learner-timezone" className="mb-2 block text-xs font-black uppercase tracking-wider text-zinc-500">
+              Calendar timezone
+            </label>
+            <select
+              id="learner-timezone"
+              value={timezone}
+              onChange={(event) => { setTimezone(event.currentTarget.value); setFormError(null); }}
+              className="w-full rounded-2xl border-2 border-zinc-200 bg-zinc-50 p-4 text-sm font-bold outline-none focus:border-emerald-500"
+            >
+              {[
+                'UTC',
+                'Europe/Berlin',
+                'Asia/Shanghai',
+                'Asia/Tokyo',
+                'America/New_York',
+                'America/Los_Angeles',
+              ].map((zone) => <option key={zone} value={zone}>{zone}</option>)}
+            </select>
+            <p className="mt-1 text-[10px] font-bold text-zinc-400">Daily plans, streaks, and check-ins use this zone.</p>
           </div>
 
           {/* Daily study time */}

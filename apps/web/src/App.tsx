@@ -7,17 +7,24 @@ import { RoadmapView } from './components/RoadmapView.tsx';
 import { RetentionVisualizer } from './components/RetentionVisualizer.tsx';
 import { LearnerProfileDrawer } from './components/LearnerProfileDrawer.tsx';
 import { TeachingAgentModal } from './components/TeachingAgentModal.tsx';
-import { LearnerState, NextAction, CurriculumConcept, GradingResult, LearningGoal, LearningLoopResponse, TeachingAction, ProgressSummary } from './types.ts';
+import { LearnerState, NextAction, CurriculumConcept, GradingResult, LearningGoal, LearningLoopResponse, TeachingAction, ProgressSummary, StudyEntrySource } from './types.ts';
+
+interface LessonSelection {
+  entrySource: StudyEntrySource;
+  conceptId?: string;
+  planItemId?: string;
+}
 
 export function App() {
   const [learnerId] = useState('learner_001');
   const [learnerState, setLearnerState] = useState<LearnerState | null>(null);
-  const [overallProgress, setOverallProgress] = useState(0.0);
+  const [goalCompletion, setGoalCompletion] = useState(0.0);
   const [learnedProgress, setLearnedProgress] = useState(0.0);
   const [masteredProgress, setMasteredProgress] = useState(0.0);
   const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
   const [nextAction, setNextAction] = useState<NextAction>('teach');
   const [concepts, setConcepts] = useState<CurriculumConcept[]>([]);
+  const [roadmapCoverageRationale, setRoadmapCoverageRationale] = useState('');
   const [activeTab, setActiveTab] = useState<'plan' | 'curriculum' | 'retention'>('plan');
 
   const [isProfileDrawerOpen, setIsProfileDrawerOpen] = useState(false);
@@ -30,6 +37,7 @@ export function App() {
   const [agentReplanned, setAgentReplanned] = useState(false);
   const [appError, setAppError] = useState<string | null>(null);
   const activityStartedAt = useRef<number | null>(null);
+  const roadmapRequestId = useRef(0);
 
   const acceptLearnerState = (incoming: LearnerState) => {
     setLearnerState((current) => {
@@ -57,28 +65,93 @@ export function App() {
   const dispatchLearningEvent = async (
     eventType: LearningLoopResponse['eventType'],
     payload: Record<string, unknown>,
+    attempt = 0,
   ): Promise<LearningLoopResponse> => {
     const response = await fetch('/api/v1/events', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ event_type: eventType, learner_id: learnerId, payload }),
     });
-    if (!response.ok) throw new Error(await parseApiError(response, 'GoalCoach could not complete this request.'));
+    if (response.status === 409) {
+      const detail = await parseApiError(response, 'Your learning state changed in another request.');
+      const staleStateDetail = 'Your learning state changed in another request. Reload and try again.';
+      if (detail === staleStateDetail && attempt === 0) {
+        await refreshAuthoritativeState();
+        return dispatchLearningEvent(eventType, payload, attempt + 1);
+      }
+      await refreshAuthoritativeState();
+      throw new Error(`${detail} The latest state has been reloaded; try again.`);
+    }
+    if (!response.ok) {
+      throw new Error(await parseApiError(response, 'GoalCoach could not complete this request.'));
+    }
     return response.json() as Promise<LearningLoopResponse>;
   };
 
+  const refreshAuthoritativeState = async (): Promise<void> => {
+    const response = await fetch(`/api/v1/learners/${learnerId}`);
+    if (!response.ok) return;
+    const body = await response.json() as {
+      state?: LearnerState;
+      progressSummary?: ProgressSummary;
+    };
+    if (body.state) acceptLearnerState(body.state);
+    if (body.progressSummary) acceptProgress(body.progressSummary);
+  };
+
   const refreshRoadmap = async (): Promise<void> => {
+    const requestId = ++roadmapRequestId.current;
+    const learnerResponse = await fetch(`/api/v1/learners/${learnerId}`);
+    if (!learnerResponse.ok) {
+      throw new Error(await parseApiError(learnerResponse, 'The roadmap could not be loaded.'));
+    }
+    const learnerBody = await learnerResponse.json() as {
+      state?: LearnerState;
+      progressSummary?: ProgressSummary;
+    };
+    if (!learnerBody.state) {
+      throw new Error('The roadmap could not be loaded.');
+    }
     const response = await fetch(`/api/v1/learners/${learnerId}/roadmap`);
     if (!response.ok) throw new Error(await parseApiError(response, 'The roadmap could not be loaded.'));
-    const body = await response.json() as { roadmap?: CurriculumConcept[] };
+    const body = await response.json() as {
+      roadmap?: CurriculumConcept[];
+      roadmapCoverageRationale?: string;
+      stateVersion?: number;
+    };
+    if (
+      requestId !== roadmapRequestId.current ||
+      (body.stateVersion ?? 0) !== learnerBody.state.stateVersion
+    ) {
+      return;
+    }
+    acceptLearnerState(learnerBody.state);
+    if (learnerBody.progressSummary) acceptProgress(learnerBody.progressSummary);
     setConcepts(Array.isArray(body.roadmap) ? body.roadmap : []);
+      setRoadmapCoverageRationale(body.roadmapCoverageRationale ?? '');
   };
 
   const acceptProgress = (summary: ProgressSummary): void => {
     setProgressSummary(summary);
-    setOverallProgress(summary.goalCompletion);
+    setGoalCompletion(summary.goalCompletion);
     setLearnedProgress(summary.learnedProgress);
     setMasteredProgress(summary.masteredProgress);
+  };
+
+  const acceptRoadmapProjection = async (
+    data: LearningLoopResponse,
+  ): Promise<void> => {
+    if (!data.state) return;
+    const response = await fetch(`/api/v1/learners/${learnerId}/roadmap`);
+    if (!response.ok) return;
+    const body = await response.json() as {
+      roadmap?: CurriculumConcept[];
+      roadmapCoverageRationale?: string;
+      stateVersion?: number;
+    };
+    if ((body.stateVersion ?? 0) !== data.state.stateVersion) return;
+    setConcepts(Array.isArray(body.roadmap) ? body.roadmap : []);
+    setRoadmapCoverageRationale(body.roadmapCoverageRationale ?? '');
   };
 
   const acceptResponse = async (
@@ -88,7 +161,11 @@ export function App() {
     if (data.state) acceptLearnerState(data.state);
     if (data.progressSummary) acceptProgress(data.progressSummary);
     setNextAction(data.nextAction);
-    if (refreshRoadmapProjection) await refreshRoadmap();
+    const planningNotice = data.planUpdate?.metadata?.notice;
+    if (data.planUpdate?.metadata?.fallback_used && typeof planningNotice === 'string') {
+      setAppError(planningNotice);
+    }
+    if (refreshRoadmapProjection) await acceptRoadmapProjection(data);
   };
 
   const currentActivitySeconds = (): number => {
@@ -135,8 +212,12 @@ export function App() {
 
   // Handle goal update
   const handleUpdateGoal = async (updatedGoal: Partial<LearningGoal>) => {
+    setAppError(null);
+    setIsProfileDrawerOpen(false);
     const title = updatedGoal.title?.trim() || goalForDisplay?.title?.trim();
     const dailyMinutes = updatedGoal.dailyAvailableMinutes ?? goalForDisplay?.dailyAvailableMinutes;
+    const timezone = updatedGoal.timezone ?? learnerState?.goal?.timezone
+      ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
     if (!title) throw new Error('Please describe your learning goal.');
     if (!Number.isInteger(dailyMinutes) || dailyMinutes! < 5 || dailyMinutes! > 120) {
       throw new Error('Daily study time must be a whole number between 5 and 120 minutes.');
@@ -146,25 +227,36 @@ export function App() {
       title,
       target_hsk_level: 1,
       daily_available_minutes: dailyMinutes,
+      timezone,
     });
     if (!data.state) throw new Error('The updated learner state was missing from the server response.');
-    await acceptResponse(data, true);
+    try {
+      await acceptResponse(data, true);
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Your goal was saved, but the roadmap could not be refreshed.');
+    }
   };
 
-  const handleStartAgentSession = async (): Promise<void> => {
+  const handleStartAgentSession = async (
+    selection: LessonSelection = { entrySource: 'planned' },
+  ): Promise<void> => {
     setIsTeachingOpen(true);
     setTeachingLoading(true);
     setTeachingError(null);
     setAgentGradingResult(null);
     setAgentReplanned(false);
     try {
-      let data = await dispatchLearningEvent('SESSION_STARTED', {});
+      let data = await dispatchLearningEvent('SESSION_STARTED', {
+        entry_source: selection.entrySource,
+        concept_id: selection.conceptId,
+        plan_item_id: selection.planItemId,
+      });
       const replanned = data.replanned;
       await acceptResponse(data, replanned);
       // Planning and teaching remain separate backend events. If this turn
       // regenerated the plan, request the teaching turn only after it finishes.
       if (!data.teachingAction && data.nextAction === 'teach') {
-        data = await dispatchLearningEvent('SESSION_STARTED', {});
+        data = await dispatchLearningEvent('SESSION_STARTED', { entry_source: 'planned' });
         await acceptResponse(data);
       }
       if (!data.teachingAction) {
@@ -242,7 +334,9 @@ export function App() {
     setTeachingError(null);
     try {
       const data = await dispatchLearningEvent('SESSION_ENDED', {
-        additional_active_seconds: currentActivitySeconds(),
+        additional_active_seconds: teachingAction?.metadata?.progress_eligible === false
+          ? 0
+          : currentActivitySeconds(),
       });
       await acceptResponse(data, true);
       activityStartedAt.current = null;
@@ -267,14 +361,14 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-950 flex select-none">
+    <div className="min-h-screen text-slate-950 flex select-none">
       {/* Desktop Sidebar (Duolingo Style) */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenProfile={() => setIsProfileDrawerOpen(true)}
         learnerState={learnerState}
-        overallProgress={overallProgress}
+        goalCompletion={goalCompletion}
         nextAction={nextAction}
       />
 
@@ -282,15 +376,12 @@ export function App() {
       <div className="flex-1 flex flex-col min-w-0 pb-20 lg:pb-0">
         {/* Top Status Bar (Duolingo Streak / Energy / Daily Quota) */}
         <TopStatusBar
-          learnerState={learnerState}
-          overallProgress={overallProgress}
-          nextAction={nextAction}
-          onRegeneratePlan={handleRegeneratePlan}
+          goalCompletion={goalCompletion}
           onOpenProfile={() => setIsProfileDrawerOpen(true)}
         />
 
         {/* Main Content View */}
-        <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-8 py-6">
+        <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-8 py-7 sm:py-10">
           {appError && (
             <p role="alert" className="mb-5 rounded-2xl bg-rose-50 p-4 text-sm font-bold text-rose-800">
               {appError}
@@ -302,10 +393,7 @@ export function App() {
               goal={goalForDisplay}
               concepts={concepts}
               learnerState={learnerState}
-              overallProgress={overallProgress}
-              onStartStudy={() => {
-                void handleStartAgentSession();
-              }}
+              onStartStudy={(selection) => void handleStartAgentSession(selection)}
               onUpdateGoal={handleUpdateGoal}
               onRegeneratePlan={handleRegeneratePlan}
             />
@@ -315,9 +403,11 @@ export function App() {
             <RoadmapView
               concepts={concepts}
               learnerState={learnerState}
-              onStartStudy={() => {
-                void handleStartAgentSession();
-              }}
+              coverageRationale={roadmapCoverageRationale || learnerState?.roadmapCoverageRationale || ''}
+              onStartConcept={(conceptId) => void handleStartAgentSession({
+                entrySource: 'roadmap',
+                conceptId,
+              })}
             />
           )}
 
@@ -325,7 +415,7 @@ export function App() {
             <RetentionVisualizer
               learnerState={learnerState}
               concepts={concepts}
-              overallProgress={overallProgress}
+              goalCompletion={goalCompletion}
               progressSummary={progressSummary}
             />
           )}
@@ -357,7 +447,7 @@ export function App() {
         gradingResult={agentGradingResult}
         replanned={agentReplanned}
         onClose={handleCloseAgentSession}
-        onContinue={handleStartAgentSession}
+        onContinue={() => handleStartAgentSession()}
         onRequestHelp={handleTeachingHelp}
         onSubmitAnswer={handleAgentAnswer}
       />

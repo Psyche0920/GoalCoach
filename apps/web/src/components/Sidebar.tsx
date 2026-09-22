@@ -13,7 +13,7 @@ interface SidebarProps {
   setActiveTab: (tab: 'plan' | 'curriculum' | 'retention') => void;
   onOpenProfile?: () => void;
   learnerState: LearnerState | null;
-  overallProgress: number;
+  goalCompletion: number;
   nextAction: NextAction;
 }
 
@@ -22,12 +22,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveTab,
   onOpenProfile,
   learnerState,
-  overallProgress,
+  goalCompletion,
   nextAction,
 }) => {
-  const overallPercent = Math.round(Math.max(0, Math.min(100, overallProgress)));
+  const overallPercent = Math.round(Math.max(0, Math.min(100, goalCompletion)));
   return (
-    <aside className="w-68 shrink-0 hidden lg:flex flex-col border-r-2 border-zinc-200 bg-white min-h-screen px-5 py-6 select-none">
+    <aside className="w-68 shrink-0 hidden lg:flex flex-col border-r border-slate-200/80 bg-white/85 backdrop-blur-xl min-h-screen px-5 py-6 select-none shadow-[10px_0_35px_rgba(15,23,42,0.03)]">
       {/* Brand Header with Bamboo Panda Logo (Clickable to open profile) */}
       <div className="px-2 mb-8">
         <GoalCoachLogo 
@@ -50,7 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }`}
         >
           <Compass className="w-5 h-5" />
-          <span>Daily Plan</span>
+          <span>Today</span>
         </button>
 
         <button

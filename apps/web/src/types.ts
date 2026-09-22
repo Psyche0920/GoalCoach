@@ -4,6 +4,7 @@ export type PlanItemKind = 'review' | 'remedial' | 'new';
 export type PlanStatus = 'active' | 'exhausted' | 'invalid';
 export type NextAction = 'set_goal' | 'plan' | 'teach' | 'retry' | 'complete';
 export type TeachingActionKind = 'EXPLANATION' | 'HINT' | 'CONTRAST_EXAMPLE' | 'EXERCISE' | 'DIALOGUE' | 'RETRY' | 'FREEFORM';
+export type StudyEntrySource = 'planned' | 'daily_review' | 'roadmap';
 
 
 export type ConceptCategory = 'pinyin' | 'grammar' | 'general_knowledge' | 'scenario';
@@ -29,6 +30,7 @@ export interface LearningGoal {
   targetHskLevel: number; // 1 to 6
   targetDate?: string;
   dailyAvailableMinutes: number;
+  timezone: string;
   version: number;
   createdAt: string;
 }
@@ -120,6 +122,21 @@ export interface LearningLoopResponse {
   state?: LearnerState;
   progressSummary?: ProgressSummary;
   nextAction: NextAction;
+  planUpdate?: {
+    metadata?: {
+      fallback_used?: boolean;
+      notice?: string | null;
+      roadmap_concept_count?: number;
+      roadmap_source?: 'planning_agent' | 'existing_agent_roadmap';
+      roadmap_coverage_rationale?: string;
+      [key: string]: unknown;
+    };
+  };
+  metadata?: {
+    progressEligible?: boolean;
+    progressNotice?: string;
+    [key: string]: unknown;
+  };
 }
 
 export type ExerciseType = 
@@ -260,6 +277,7 @@ export interface DailyGoalBlueprint {
 export interface ConceptProgress {
   learnerId: string;
   conceptId: string;
+  exposed?: boolean;
   learnedPercent: number;
   learningEvidence?: {
     cardCompletion: number;
@@ -309,6 +327,12 @@ export interface ProgressSummary {
   dailyEffectiveMinutes: number;
   totalEffectiveMinutes: number;
   activeDays: number;
+  dailyStudyHistory: Array<{
+    date: string;
+    effectiveMinutes: number;
+    checkInCount: number;
+    timezone: string;
+  }>;
 }
 
 export interface LearningUpdateResponse {
@@ -394,6 +418,8 @@ export interface LearnerState {
   goal: LearningGoal | null;
   roadmapConceptIds?: string[];
   roadmapAdjustments?: string[];
+  roadmapCoverageRationale?: string;
+  goalFingerprint?: string;
   mastery: Record<string, ConceptMastery>;
   errorProfile: ErrorRecord[];
   activePlan: DailyPlan | null;

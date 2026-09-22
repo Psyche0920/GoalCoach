@@ -21,6 +21,7 @@ class LearnerStateORM(LearnerBase):
 
     learner_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     state_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    state_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

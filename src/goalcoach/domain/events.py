@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator
 
-from goalcoach.domain.enums import EventType
+from goalcoach.domain.enums import EventType, StudyEntrySource
 from goalcoach.domain.models import DomainBaseModel, utc_now
 
 
@@ -18,6 +19,17 @@ class GoalCreatedPayload(DomainBaseModel):
     title: str = Field(default="HSK 1 Complete Goal", min_length=1, max_length=255)
     target_hsk_level: int = Field(default=1, ge=1, le=6)
     daily_available_minutes: int = Field(default=20, gt=0, le=240)
+    timezone: str = "UTC"
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        """Require an IANA time zone so calendar semantics are explicit."""
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Timezone must be a valid IANA zone") from exc
+        return value
 
     @field_validator("title")
     @classmethod
@@ -34,6 +46,9 @@ class SessionStartedPayload(DomainBaseModel):
 
     preferred_duration_minutes: int | None = Field(default=None, gt=0, le=240)
     session_focus: str | None = Field(default=None, max_length=255)
+    concept_id: str | None = Field(default=None, min_length=1, max_length=128)
+    plan_item_id: str | None = Field(default=None, min_length=1, max_length=128)
+    entry_source: StudyEntrySource = StudyEntrySource.PLANNED
 
 
 class SessionEndedPayload(DomainBaseModel):

@@ -143,7 +143,7 @@ class ProgressService:
                         and item.kind == PlanItemKind.REMEDIAL
                     ):
                         in_remedial_item = True
-                    break
+                        break
             if not in_remedial_item:
                 current_counter = state.remediation_counters.get(concept_id, 0) + 1
                 state.remediation_counters[concept_id] = current_counter
@@ -221,10 +221,11 @@ class ProgressService:
             concept_id,
             ConceptProgress(learner_id=str(state.learner_id), concept_id=concept_id),
         )
+        current.exposed = True
         state.concept_progress[concept_id] = reduce_concept_progress(
             current,
             event,
-            completes_atomic_unit=result.passed_gates and not is_spaced_review,
+            completes_atomic_unit=not is_spaced_review,
             is_spaced_review=is_spaced_review,
         )
         # ``ConceptMastery`` is the scheduling authority; ``ConceptProgress`` is

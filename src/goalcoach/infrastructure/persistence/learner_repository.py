@@ -10,6 +10,7 @@ from goalcoach.infrastructure.persistence.repositories import (
     LearnerRepositoryError,
     SqlAlchemyLearnerRepository,
     SqliteLearnerRepository,
+    StaleLearnerStateError,
 )
 
 
@@ -24,5 +25,6 @@ __all__ = [
     "LearnerRepositoryError",
     "SqlAlchemyLearnerRepository",
     "SqliteLearnerRepository",
+    "StaleLearnerStateError",
     "create_learner_repository",
 ]

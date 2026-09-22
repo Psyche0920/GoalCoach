@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_timeout_seconds: float = Field(default=30, gt=0)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
+    offline_llm_fallback: bool = True
     fallback_llm_base_url: str = "http://localhost:11434/v1"
     fallback_llm_model: str | None = None
     enable_ollama_fallback: bool = False

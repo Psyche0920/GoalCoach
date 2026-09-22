@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from pydantic import Field
 
@@ -17,9 +19,11 @@ from goalcoach.application.agent_history import (
 )
 from goalcoach.application.progress_reducer import compute_progress_summary
 from goalcoach.application.progress_service import ProgressService
-from goalcoach.domain.enums import EventType, PlanItemKind, PlanStatus
+from goalcoach.domain.enums import EventType, PlanItemKind, PlanStatus, StudyEntrySource
 from goalcoach.domain.events import InboundEvent
 from goalcoach.domain.models import (
+    CURRENT_ROADMAP_SCHEMA_VERSION,
+    ActiveLearningSession,
     DailyPlan,
     DomainBaseModel,
     Exercise,
@@ -51,7 +55,13 @@ def derive_next_action(state: LearnerState) -> str:
 class PlanningWorkerPort(Protocol):
     """Application-facing contract for the Planning Agent."""
 
-    async def create_plan(self, state: LearnerState, content_service: ContentService) -> PlanUpdate: ...
+    async def create_plan(
+        self,
+        state: LearnerState,
+        content_service: ContentService,
+        *,
+        allow_roadmap_changes: bool = False,
+    ) -> PlanUpdate: ...
 
 
 class TeachingWorkerPort(Protocol):
@@ -64,6 +74,7 @@ class TeachingWorkerPort(Protocol):
         content_service: ContentService,
         failed_attempts: int = 0,
         learner_query: str | None = None,
+        excluded_exercise_id: str | None = None,
     ) -> TeachingAction: ...
 
 
@@ -110,11 +121,14 @@ class DeterministicOrchestrator:
 
     def _progress_summary(self, state: LearnerState) -> ProgressSummary:
         """Return the one backend-owned progress projection for every event response."""
-        return compute_progress_summary(state, self.content_service.list_all_concepts())
+        return compute_progress_summary(
+            state,
+            self.content_service.list_all_concepts(),
+        )
 
     async def _persist_state(self, state: LearnerState) -> None:
-        """Persist one authoritative mutation and advance its monotonic version."""
-        state.state_version += 1
+        """Persist one authoritative mutation after refreshing its goal identity."""
+        state.goal_fingerprint = state.goal.fingerprint if state.goal else ""
         state.updated_at = utc_now()
         await self.learner_repo.save(state)
 
@@ -146,6 +160,12 @@ class DeterministicOrchestrator:
                 display_name=f"Learner {learner_id}",
             )
             await self.learner_repo.save(state)
+        elif (
+            state.goal is not None
+            and state.goal_fingerprint
+            and state.goal_fingerprint != state.goal.fingerprint
+        ):
+            state.reset_learning_state()
 
         match event.event_type:
             case EventType.GOAL_CREATED:
@@ -173,20 +193,26 @@ class DeterministicOrchestrator:
         title = payload.get("title", current_goal.title)
         target_hsk_level = payload.get("target_hsk_level", current_goal.target_hsk_level)
         daily_minutes = payload.get("daily_available_minutes", current_goal.daily_available_minutes)
+        timezone = payload.get("timezone", current_goal.timezone)
+        goal_changed = state.goal is None or (
+            title.strip().casefold() != current_goal.title.strip().casefold()
+            or target_hsk_level != current_goal.target_hsk_level
+        )
+        if goal_changed:
+            state.reset_learning_state()
         state.goal = LearningGoal(
             id=current_goal.id,
             title=title,
             target_hsk_level=target_hsk_level,
             daily_available_minutes=daily_minutes,
+            timezone=timezone,
         )
         state.needs_replanning = False
-        # A changed free-form goal owns a newly selected roadmap. Historical
-        # learning evidence remains intact and can still inform the new plan.
-        state.roadmap_concept_ids = []
-
+        state.goal_fingerprint = state.goal.fingerprint
         plan_update = await self.planning_worker.create_plan(
             state=state,
             content_service=self.content_service,
+            allow_roadmap_changes=goal_changed or not state.roadmap_concept_ids,
         )
 
         # Convert PlanUpdate to DailyPlan
@@ -201,6 +227,8 @@ class DeterministicOrchestrator:
         state.active_plan = daily_plan
         state.roadmap_concept_ids = plan_update.roadmap_concept_ids
         state.roadmap_adjustments = plan_update.roadmap_adjustments
+        state.roadmap_coverage_rationale = plan_update.roadmap_coverage_rationale
+        state.roadmap_schema_version = CURRENT_ROADMAP_SCHEMA_VERSION
         await self._persist_state(state)
 
         return OrchestratorResponse(
@@ -221,11 +249,18 @@ class DeterministicOrchestrator:
         """Process SESSION_STARTED: verify active plan and call Teaching Agent for active item."""
         if state.goal is None:
             raise SessionLifecycleError("Create a learning goal before starting a session")
+        entry_source = StudyEntrySource(payload.get("entry_source", StudyEntrySource.PLANNED))
+        requested_concept_id = payload.get("concept_id")
+        requested_plan_item_id = payload.get("plan_item_id")
         plan = state.active_plan
+        learner_timezone = ZoneInfo(state.goal.timezone)
+        learner_today = datetime.now(learner_timezone).date()
         if (
+            entry_source == StudyEntrySource.PLANNED
+            and
             plan is not None
             and plan.status == PlanStatus.EXHAUSTED
-            and plan.date.date() == utc_now().date()
+            and plan.date.astimezone(learner_timezone).date() == learner_today
         ):
             return OrchestratorResponse(
                 event_type=EventType.SESSION_STARTED,
@@ -238,16 +273,31 @@ class DeterministicOrchestrator:
         planned_minutes = payload.get("preferred_duration_minutes") or (
             state.goal.daily_available_minutes
         )
-        record_session_started(
-            state,
-            planned_minutes=planned_minutes,
-            focus=payload.get("session_focus"),
-        )
+        if entry_source == StudyEntrySource.PLANNED:
+            if (
+                state.active_session is not None
+                and not state.active_session.has_progress_eligible_activity
+                and state.active_session.current_entry_source != StudyEntrySource.PLANNED
+            ):
+                close_active_session(state)
+            record_session_started(
+                state,
+                planned_minutes=planned_minutes,
+                focus=payload.get("session_focus"),
+            )
+        elif state.active_session is None:
+            state.active_session = ActiveLearningSession(
+                planned_minutes=planned_minutes,
+                focus=payload.get("session_focus"),
+                has_progress_eligible_activity=False,
+            )
         plan = state.active_plan
-        plan_needs_regen = (
+        if entry_source == StudyEntrySource.PLANNED and state.active_session is not None:
+            planned_minutes = min(planned_minutes, state.active_session.planned_minutes)
+        plan_needs_regen = entry_source == StudyEntrySource.PLANNED and (
             plan is None
             or plan.status == PlanStatus.INVALID
-            or plan.date.date() != utc_now().date()
+            or plan.date.astimezone(learner_timezone).date() != learner_today
             or state.needs_replanning
             or sum(item.estimated_minutes for item in plan.items) > planned_minutes
         )
@@ -258,6 +308,7 @@ class DeterministicOrchestrator:
             plan_update = await self.planning_worker.create_plan(
                 state=state,
                 content_service=self.content_service,
+                allow_roadmap_changes=False,
             )
 
             plan = DailyPlan(
@@ -271,6 +322,8 @@ class DeterministicOrchestrator:
             state.active_plan = plan
             state.roadmap_concept_ids = plan_update.roadmap_concept_ids
             state.roadmap_adjustments = plan_update.roadmap_adjustments
+            state.roadmap_coverage_rationale = plan_update.roadmap_coverage_rationale
+            state.roadmap_schema_version = CURRENT_ROADMAP_SCHEMA_VERSION
             state.needs_replanning = False
             replanned = True
             await self._persist_state(state)
@@ -285,15 +338,43 @@ class DeterministicOrchestrator:
                 next_action=derive_next_action(state),
             )
 
-        # Find first uncompleted item
-        active_item = next((item for item in plan.items if not item.completed), plan.items[0])
-        concept_id = active_item.concept_id
+        active_item = None
+        progress_eligible = False
+        if entry_source == StudyEntrySource.PLANNED:
+            first_uncompleted = next((item for item in plan.items if not item.completed), None)
+            if requested_plan_item_id:
+                active_item = next(
+                    (item for item in plan.items if str(item.id) == str(requested_plan_item_id)),
+                    None,
+                )
+                if active_item is None:
+                    raise SessionLifecycleError("The selected Daily Plan item does not exist")
+            else:
+                active_item = first_uncompleted
+            if active_item is None:
+                raise SessionLifecycleError("Today's planned learning is complete")
+            progress_eligible = (
+                not active_item.completed
+                and first_uncompleted is not None
+                and str(active_item.id) == str(first_uncompleted.id)
+            )
+            concept_id = active_item.concept_id
+        else:
+            if not requested_concept_id:
+                raise SessionLifecycleError("Select a concept for self-directed review")
+            if self.content_service.get_concept(str(requested_concept_id)) is None:
+                raise SessionLifecycleError("The selected roadmap concept does not exist")
+            concept_id = str(requested_concept_id)
 
         # Derive failure history for active item
         failed_attempts = sum(
             err.occurrences for err in state.error_profile if err.concept_id == concept_id
         )
-        if active_item.kind == PlanItemKind.REMEDIAL and failed_attempts == 0:
+        if (
+            active_item is not None
+            and active_item.kind == PlanItemKind.REMEDIAL
+            and failed_attempts == 0
+        ):
             failed_attempts = 1
 
         # Invoke Teaching Agent
@@ -303,6 +384,25 @@ class DeterministicOrchestrator:
             content_service=self.content_service,
             failed_attempts=failed_attempts,
         )
+        teaching_action.metadata.update(
+            {
+                "entry_source": entry_source.value,
+                "progress_eligible": progress_eligible,
+                "progress_notice": (
+                    "This planned lesson counts toward progress."
+                    if progress_eligible
+                    else "Self-directed review does not change progress or study time."
+                ),
+            }
+        )
+        if state.active_session is not None:
+            state.active_session.current_turn_progress_eligible = progress_eligible
+            state.active_session.current_entry_source = entry_source
+            state.active_session.has_progress_eligible_activity |= progress_eligible
+            state.active_session.pending_concept_id = teaching_action.concept_id
+            state.active_session.pending_exercise_id = str(
+                (teaching_action.exercise_payload or {}).get("exercise_id") or ""
+            ) or None
 
         record_teaching_turn(state, teaching_action)
         await self._persist_state(state)
@@ -347,6 +447,14 @@ class DeterministicOrchestrator:
         """Process HELP_REQUESTED: invoke Teaching Agent with failed attempt history to switch strategy."""
         concept_id = payload.get("concept_id") or "hsk1_c01"
         learner_query = payload.get("learner_query")
+        current_exercise_id = payload.get("current_exercise_id")
+        active_session = state.active_session
+        progress_eligible = bool(active_session and active_session.current_turn_progress_eligible)
+        entry_source = (
+            active_session.current_entry_source.value
+            if active_session is not None
+            else StudyEntrySource.ROADMAP.value
+        )
 
         teaching_action = await self.teaching_worker.teach_concept(
             concept_id=concept_id,
@@ -354,9 +462,27 @@ class DeterministicOrchestrator:
             content_service=self.content_service,
             failed_attempts=1,
             learner_query=learner_query,
+            excluded_exercise_id=current_exercise_id,
+        )
+        teaching_action.metadata.update(
+            {
+                "entry_source": entry_source,
+                "progress_eligible": progress_eligible,
+                "progress_notice": (
+                    "This planned lesson counts toward progress."
+                    if progress_eligible
+                    else "Self-directed review does not change progress or study time."
+                ),
+            }
         )
 
-        record_teaching_turn(state, teaching_action, learner_query=learner_query)
+        if state.active_session is not None:
+            state.active_session.pending_concept_id = teaching_action.concept_id
+            state.active_session.pending_exercise_id = str(
+                (teaching_action.exercise_payload or {}).get("exercise_id") or ""
+            ) or None
+        if progress_eligible:
+            record_teaching_turn(state, teaching_action, learner_query=learner_query)
         await self._persist_state(state)
 
         return OrchestratorResponse(
@@ -404,7 +530,7 @@ class DeterministicOrchestrator:
                 "against canonical curriculum exercises"
             )
 
-        require_pending_teaching_turn(
+        pending_turn = require_pending_teaching_turn(
             state,
             concept_id=concept_id,
             exercise_id=str(exercise_id),
@@ -413,33 +539,42 @@ class DeterministicOrchestrator:
         # 2. Grade answer via Grader Component
         grading_result = await self.grader_worker.grade(exercise=exercise, answer=answer)
 
-        # 3. Apply state mutations via Progress Service
+        # 3. Only the first completion of the current Planning Agent item is
+        # authoritative learning evidence. Roadmap and repeat-review attempts
+        # receive feedback but cannot mutate progress, mastery, or study time.
         occurred_at = utc_now()
         time_spent_seconds = payload.get("time_spent_seconds", 0)
-        learning_event = self.progress_service.build_learning_event(
-            state,
-            grading_result,
-            concept_id,
-            at=occurred_at,
-            time_spent_seconds=time_spent_seconds,
-        )
-        state = self.progress_service.apply_grading_result(
-            state=state,
-            result=grading_result,
-            concept_id=concept_id,
-            at=occurred_at,
-            time_spent_seconds=time_spent_seconds,
-        )
-        record_grading_outcome(
-            state,
-            concept_id=concept_id,
-            exercise_id=str(exercise_id),
-            result=grading_result,
-            time_spent_seconds=time_spent_seconds,
-        )
+        progress_eligible = pending_turn.progress_eligible
+        learning_event = None
+        if progress_eligible:
+            learning_event = self.progress_service.build_learning_event(
+                state,
+                grading_result,
+                concept_id,
+                at=occurred_at,
+                time_spent_seconds=time_spent_seconds,
+            )
+            state = self.progress_service.apply_grading_result(
+                state=state,
+                result=grading_result,
+                concept_id=concept_id,
+                at=occurred_at,
+                time_spent_seconds=time_spent_seconds,
+            )
+        if progress_eligible:
+            record_grading_outcome(
+                state,
+                concept_id=concept_id,
+                exercise_id=str(exercise_id),
+                result=grading_result,
+                time_spent_seconds=time_spent_seconds,
+            )
+        elif state.active_session is not None:
+            state.active_session.pending_concept_id = None
+            state.active_session.pending_exercise_id = None
 
         # If answer passed, mark item completed in active plan
-        if grading_result.passed_gates and state.active_plan:
+        if progress_eligible and grading_result.passed_gates and state.active_plan:
             for item in state.active_plan.items:
                 if item.concept_id == concept_id and not item.completed:
                     item.completed = True
@@ -453,8 +588,10 @@ class DeterministicOrchestrator:
         replanned = False
         plan_update: PlanUpdate | None = None
 
-        await self.learner_repo.record_learning_event(learning_event)
-        await self._persist_state(state)
+        if learning_event is not None:
+            await self.learner_repo.save_with_event(state, learning_event)
+        else:
+            await self._persist_state(state)
 
         return OrchestratorResponse(
             event_type=EventType.ANSWER_SUBMITTED,
@@ -466,6 +603,14 @@ class DeterministicOrchestrator:
             state=state,
             progress_summary=self._progress_summary(state),
             next_action=derive_next_action(state),
+            metadata={
+                "progressEligible": progress_eligible,
+                "progressNotice": (
+                    "Progress and study time were updated from this planned lesson."
+                    if progress_eligible
+                    else "Self-directed review feedback was not added to progress or study time."
+                ),
+            },
         )
 
     async def _handle_replan_requested(
@@ -479,6 +624,7 @@ class DeterministicOrchestrator:
         plan_update = await self.planning_worker.create_plan(
             state=state,
             content_service=self.content_service,
+            allow_roadmap_changes=False,
         )
         plan = DailyPlan(
             learner_id=state.learner_id,
@@ -491,6 +637,8 @@ class DeterministicOrchestrator:
         state.active_plan = plan
         state.roadmap_concept_ids = plan_update.roadmap_concept_ids
         state.roadmap_adjustments = plan_update.roadmap_adjustments
+        state.roadmap_coverage_rationale = plan_update.roadmap_coverage_rationale
+        state.roadmap_schema_version = CURRENT_ROADMAP_SCHEMA_VERSION
         state.needs_replanning = False
         remediated_ids = {
             item.concept_id for item in plan.items if item.kind == PlanItemKind.REMEDIAL

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
@@ -17,9 +19,12 @@ from pydantic.alias_generators import to_camel
 from goalcoach.domain.enums import (
     PlanItemKind,
     PlanStatus,
+    StudyEntrySource,
     TeachingActionKind,
 )
 from goalcoach.domain.retention import calculate_retention
+
+CURRENT_ROADMAP_SCHEMA_VERSION = 2
 
 Score = Annotated[float, Field(ge=0.0, le=1.0)]
 
@@ -52,8 +57,23 @@ class LearningGoal(DomainBaseModel):
     target_hsk_level: int = Field(default=3, ge=1, le=6)
     target_date: datetime | None = None
     daily_available_minutes: int = Field(default=20, gt=0, le=240)
+    timezone: str = Field(default="UTC", min_length=1, max_length=64)
     version: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=utc_now)
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a stable identity for all goal attributes that bind learning state."""
+        payload = json.dumps(
+            {
+                "title": self.title,
+                "target_hsk_level": self.target_hsk_level,
+                "daily_available_minutes": self.daily_available_minutes,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 # --- 2. Spaced Repetition & Error Tracking ---
@@ -117,6 +137,7 @@ class ConceptProgress(DomainBaseModel):
 
     learner_id: str
     concept_id: str
+    exposed: bool = False
     learned_percent: float = 0.0
     learning_evidence: LearningEvidence = Field(default_factory=LearningEvidence)
     learning_completion_version: int = 2
@@ -136,6 +157,16 @@ class ConceptProgress(DomainBaseModel):
     next_review_at: datetime | None = None
 
 
+class DailyStudyPoint(DomainBaseModel):
+    """Backend-derived effective study time for one learner-local calendar day."""
+
+    timezone: str
+
+    date: str
+    effective_minutes: float = 0.0
+    check_in_count: int = 0
+
+
 class ProgressSummary(DomainBaseModel):
     """Composite progress metrics across course coverage, learning, and mastery."""
 
@@ -149,6 +180,7 @@ class ProgressSummary(DomainBaseModel):
     daily_effective_minutes: float = 0.0
     total_effective_minutes: float = 0.0
     active_days: int = 0
+    daily_study_history: list[DailyStudyPoint] = Field(default_factory=list)
 
 
 class LearningEvent(DomainBaseModel):
@@ -203,7 +235,20 @@ class PlanUpdate(DomainBaseModel):
     adaptation_rationale: str = Field(min_length=1)
     roadmap_adjustments: list[str] = Field(default_factory=list)
     roadmap_concept_ids: list[str] = Field(default_factory=list)
+    roadmap_coverage_rationale: str = Field(default="")
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def roadmap_fingerprint(self) -> str:
+        """Return a stable content fingerprint for goal-aware roadmap identity."""
+        payload = json.dumps(
+            {
+                "goal_fingerprint": self.goal_fingerprint,
+                "roadmap_concept_ids": self.roadmap_concept_ids,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 # --- 4. Interactive Tutoring & Structured Grading ---
@@ -282,6 +327,11 @@ class ActiveLearningSession(DomainBaseModel):
     answer_count: int = Field(default=0, ge=0)
     passed_answer_count: int = Field(default=0, ge=0)
     active_seconds: int = Field(default=0, ge=0)
+    current_turn_progress_eligible: bool = True
+    has_progress_eligible_activity: bool = True
+    current_entry_source: StudyEntrySource = StudyEntrySource.PLANNED
+    pending_concept_id: str | None = Field(default=None, max_length=128)
+    pending_exercise_id: str | None = Field(default=None, max_length=128)
 
 
 class SessionSummary(DomainBaseModel):
@@ -308,6 +358,8 @@ class TeachingHistoryTurn(DomainBaseModel):
     exercise_id: str | None = Field(default=None, max_length=128)
     content_summary: str = Field(min_length=1, max_length=240)
     learner_query: str | None = Field(default=None, max_length=240)
+    entry_source: StudyEntrySource = StudyEntrySource.PLANNED
+    progress_eligible: bool = True
     passed: bool | None = None
     error_codes: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
@@ -342,6 +394,9 @@ class LearnerState(DomainBaseModel):
     needs_replanning: bool = False
     roadmap_concept_ids: list[str] = Field(default_factory=list)
     roadmap_adjustments: list[str] = Field(default_factory=list)
+    roadmap_coverage_rationale: str = Field(default="")
+    goal_fingerprint: str = Field(default="")
+    roadmap_schema_version: int = Field(default=1, ge=1)
     mastery: dict[str, ConceptMastery] = Field(default_factory=dict)
     concept_progress: dict[str, ConceptProgress] = Field(default_factory=dict)
     error_profile: list[ErrorRecord] = Field(default_factory=list)
@@ -361,6 +416,28 @@ class LearnerState(DomainBaseModel):
     today_studied_concept_ids: list[str] = Field(default_factory=list)
     today_remediated_concept_ids: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    def reset_learning_state(self) -> None:
+        """Clear all goal-bound learning evidence for an MVP goal replacement."""
+        self.goal_changed = True
+        self.needs_replanning = False
+        self.roadmap_concept_ids.clear()
+        self.roadmap_adjustments.clear()
+        self.roadmap_coverage_rationale = ""
+        self.roadmap_schema_version = 1
+        self.mastery.clear()
+        self.concept_progress.clear()
+        self.error_profile.clear()
+        self.remediation_counters.clear()
+        self.active_plan = None
+        self.active_session = None
+        self.sessions.clear()
+        self.agent_history = AgentHistorySummary()
+        self.daily_activity_date = None
+        self.today_mistake_exercise_ids.clear()
+        self.today_completed_exercise_ids.clear()
+        self.today_studied_concept_ids.clear()
+        self.today_remediated_concept_ids.clear()
 
     def all_attempted_exercise_ids(self) -> set[str]:
         """Returns union of completed and mistake exercise IDs attempted today."""

@@ -19,6 +19,14 @@ async def test_health_returns_ok(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    assert response.headers["x-request-id"]
+
+
+@pytest.mark.asyncio
+async def test_request_correlation_id_is_preserved(client: AsyncClient) -> None:
+    response = await client.get("/health", headers={"x-request-id": "goalcoach-test-123"})
+
+    assert response.headers["x-request-id"] == "goalcoach-test-123"
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +279,128 @@ async def test_answer_requires_current_pending_teaching_turn(client: AsyncClient
     )
     assert response.status_code == 409
     assert "Start a learning session" in response.json()["detail"]
+
+
+async def _canonical_c01_answer(client: AsyncClient) -> str:
+    response = await client.get("/api/v1/curriculum/concepts/hsk1_c01")
+    return str(response.json()["exercises"][0]["acceptedAnswers"][0])
+
+
+@pytest.mark.asyncio
+async def test_roadmap_study_returns_feedback_without_recording_progress(
+    client: AsyncClient,
+) -> None:
+    learner_id = f"api-roadmap-review-{uuid4().hex}"
+    await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "GOAL_CREATED",
+            "learner_id": learner_id,
+            "payload": {"title": "Travel in China", "daily_available_minutes": 20},
+        },
+    )
+    lesson = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "SESSION_STARTED",
+            "learner_id": learner_id,
+            "payload": {"entry_source": "roadmap", "concept_id": "hsk1_c01"},
+        },
+    )
+    lesson_body = lesson.json()
+    exercise = lesson_body["teachingAction"]["exercisePayload"]
+    assert lesson_body["teachingAction"]["metadata"]["progress_eligible"] is False
+    assert lesson_body["state"]["agentHistory"]["recentTeachingTurns"] != []
+
+    graded = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "ANSWER_SUBMITTED",
+            "learner_id": learner_id,
+            "payload": {
+                "exercise_id": exercise["exercise_id"],
+                "concept_id": exercise["concept_id"],
+                "answer": await _canonical_c01_answer(client),
+                "time_spent_seconds": 90,
+            },
+        },
+    )
+    body = graded.json()
+    assert body["gradingResult"]["passedGates"] is True
+    assert body["metadata"]["progressEligible"] is False
+    assert body["progressSummary"]["learnedProgress"] == 0
+    assert body["state"]["mastery"] == {}
+    assert body["state"]["activeSession"]["activeSeconds"] == 0
+    assert body["state"]["agentHistory"]["recentTeachingTurns"] != []
+    assert body["state"]["agentHistory"]["sessionCount"] == 0
+    assert body["state"]["sessions"] == []
+
+
+@pytest.mark.asyncio
+async def test_completed_daily_item_can_be_repeated_without_more_progress(
+    client: AsyncClient,
+) -> None:
+    learner_id = f"api-daily-repeat-{uuid4().hex}"
+    goal = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "GOAL_CREATED",
+            "learner_id": learner_id,
+            "payload": {"title": "Travel in China", "daily_available_minutes": 20},
+        },
+    )
+    plan_item = goal.json()["dailyPlan"]["items"][0]
+    lesson = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "SESSION_STARTED",
+            "learner_id": learner_id,
+            "payload": {"entry_source": "planned", "plan_item_id": plan_item["id"]},
+        },
+    )
+    exercise = lesson.json()["teachingAction"]["exercisePayload"]
+    first_grade = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "ANSWER_SUBMITTED",
+            "learner_id": learner_id,
+            "payload": {
+                "exercise_id": exercise["exercise_id"],
+                "concept_id": exercise["concept_id"],
+                "answer": await _canonical_c01_answer(client),
+                "time_spent_seconds": 60,
+            },
+        },
+    )
+    first_summary = first_grade.json()["progressSummary"]
+
+    review = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "SESSION_STARTED",
+            "learner_id": learner_id,
+            "payload": {"entry_source": "daily_review", "concept_id": "hsk1_c01"},
+        },
+    )
+    review_exercise = review.json()["teachingAction"]["exercisePayload"]
+    repeated = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "ANSWER_SUBMITTED",
+            "learner_id": learner_id,
+            "payload": {
+                "exercise_id": review_exercise["exercise_id"],
+                "concept_id": review_exercise["concept_id"],
+                "answer": await _canonical_c01_answer(client),
+                "time_spent_seconds": 120,
+            },
+        },
+    )
+    repeated_body = repeated.json()
+    assert repeated_body["metadata"]["progressEligible"] is False
+    for metric, value in first_summary.items():
+        if metric != "stateVersion":
+            assert repeated_body["progressSummary"][metric] == value
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
 from goalcoach.domain.models import (
     ActiveLearningSession,
     GradingResult,
@@ -21,15 +25,29 @@ class SessionLifecycleError(ValueError):
     """Raised when a session lifecycle event is invalid for the current state."""
 
 
+@dataclass(frozen=True, slots=True)
+class PendingTeachingContext:
+    """Minimal operational context needed to validate one submitted answer."""
+
+    progress_eligible: bool
+
+
 def require_pending_teaching_turn(
     state: LearnerState,
     *,
     concept_id: str,
     exercise_id: str,
-) -> None:
+) -> PendingTeachingContext:
     """Ensure an answer belongs to the latest assessable Teaching Agent turn."""
     if state.active_session is None:
         raise SessionLifecycleError("Start a learning session before submitting an answer")
+    session = state.active_session
+    if (
+        not session.current_turn_progress_eligible
+        and session.pending_concept_id == concept_id
+        and session.pending_exercise_id == exercise_id
+    ):
+        return PendingTeachingContext(progress_eligible=False)
     for turn in reversed(state.agent_history.recent_teaching_turns):
         if turn.session_id != state.active_session.session_id or turn.exercise_id is None:
             continue
@@ -39,7 +57,7 @@ def require_pending_teaching_turn(
             raise SessionLifecycleError(
                 "The submitted answer does not match the current teaching exercise"
             )
-        return
+        return PendingTeachingContext(progress_eligible=turn.progress_eligible)
     raise SessionLifecycleError("No pending teaching exercise is available for this answer")
 
 
@@ -51,6 +69,11 @@ def _compact_text(value: str, limit: int = MAX_SUMMARY_CHARACTERS) -> str:
     return f"{compact[: limit - 1].rstrip()}…"
 
 
+def learner_local_today(state: LearnerState) -> date:
+    """Return the learner's current calendar date."""
+    return datetime.now(ZoneInfo(state.goal.timezone if state.goal else "UTC")).date()
+
+
 def record_session_started(
     state: LearnerState,
     *,
@@ -58,7 +81,7 @@ def record_session_started(
     focus: str | None = None,
 ) -> ActiveLearningSession:
     """Open one session, reusing an already active session idempotently."""
-    today = utc_now().date().isoformat()
+    today = learner_local_today(state).isoformat()
     # Only roll today's mistake/completion tracking when the recorded activity
     # date belongs to a *different prior day*. A fresh learner (None) must not
     # wipe mistakes already recorded today before the first session opens.
@@ -68,8 +91,12 @@ def record_session_started(
         state.today_studied_concept_ids.clear()
         state.today_remediated_concept_ids.clear()
     state.daily_activity_date = today
-    if state.active_session is not None and state.active_session.started_at.date().isoformat() != today:
-        close_active_session(state)
+    if state.active_session is not None:
+        started_day = state.active_session.started_at.astimezone(
+            ZoneInfo(state.goal.timezone if state.goal else "UTC")
+        ).date()
+        if started_day.isoformat() != today:
+            close_active_session(state)
     if state.active_session is not None:
         return state.active_session
 
@@ -101,6 +128,8 @@ def record_teaching_turn(
         exercise_id=exercise_id,
         content_summary=_compact_text(action.history_summary),
         learner_query=_compact_text(learner_query) if learner_query else None,
+        entry_source=action.metadata.get("entry_source", "planned"),
+        progress_eligible=bool(action.metadata.get("progress_eligible", True)),
     )
     history = state.agent_history
     history.teaching_turn_count += 1
@@ -152,7 +181,10 @@ def close_active_session(
         raise SessionLifecycleError("No active learning session to end")
 
     ended_at = utc_now()
-    active_seconds = session.active_seconds + additional_active_seconds
+    counted_additional_seconds = (
+        additional_active_seconds if session.current_turn_progress_eligible else 0
+    )
+    active_seconds = session.active_seconds + counted_additional_seconds
     concepts = ", ".join(session.concepts_covered) or "no concepts"
     summary = SessionSummary(
         session_id=session.session_id,
@@ -169,7 +201,8 @@ def close_active_session(
             f"passed {session.passed_answer_count} of {session.answer_count} answers."
         ),
     )
-    state.sessions = [*state.sessions, summary][-MAX_SESSION_SUMMARIES:]
+    if session.has_progress_eligible_activity:
+        state.sessions = [*state.sessions, summary][-MAX_SESSION_SUMMARIES:]
     state.active_session = None
     state.updated_at = ended_at
     return summary

@@ -106,7 +106,12 @@ class GraderComponent:
         )
 
         try:
-            result, provider = await run_with_fallback(self.agent, prompt, deps=None)
+            result, provider = await run_with_fallback(
+                self.agent,
+                prompt,
+                deps=None,
+                component="grader_component",
+            )
             llm_result: GradingResult = result.output
             llm_result.exercise_id = exercise_id
             llm_result.metadata.update(

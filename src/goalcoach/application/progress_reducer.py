@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from goalcoach.domain.models import ConceptProgress, LearnerState, LearningEvent, ProgressSummary
+from goalcoach.domain.models import (
+    ConceptProgress,
+    DailyStudyPoint,
+    LearnerState,
+    LearningEvent,
+    ProgressSummary,
+)
 from goalcoach.domain.retention import calculate_retention
 
 
@@ -15,25 +22,23 @@ def reduce_concept_progress(
     completes_atomic_unit: bool = False,
     is_spaced_review: bool = False,
 ) -> ConceptProgress:
-    """Deterministically reduce concept progress following 40/40/20 and mastery gating rules.
+    """Reduce durable evidence for the Exposure/Retention/Mastery progress model.
 
-    Rules:
-    1. The 40/40/20 First-Learning Rule:
-       learnedPercent = 100 * (0.40 * card + 0.40 * practice + 0.20 * output)
-    2. Monotonicity: learnedPercent never decreases.
-    3. Mastery Qualification Rule:
-       A concept qualifies for Mastered = 100% iff:
-       - successful_spaced_retrievals >= 4
-       - evidence_days >= 3
-       - average_review_quality >= 0.80
-       (Immediate retries or multiple attempts on the same calendar day count as only 1 retrieval).
+    ``learned_percent`` is retained as an API compatibility projection and now
+    means binary exposure. Scheduling mastery lives in ``ConceptMastery``; this
+    reducer only tracks exposure evidence and the persistent mastery gate.
     """
     evidence_at = event.started_at or datetime.now(UTC)
     event_day = evidence_at.date()
     last_day = current.last_reviewed_at.date() if current.last_reviewed_at else None
     is_distinct_day = (last_day is None) or (last_day != event_day)
 
-    # 1. 40/40/20 First-Learning Flow
+    # Any durable learning event is Exposure. ``learned_percent`` is kept for
+    # existing clients and now reports 0 or 100; only Mastery can lock at true.
+    exposed = True
+    learned_percent = 100.0
+
+    # 1. First-learning evidence remains useful for mastery qualification.
     evidence = current.learning_evidence.model_copy()
     if completes_atomic_unit:
         evidence.card_completion = 1.0
@@ -53,17 +58,6 @@ def reduce_concept_progress(
                 passed = event.grading_result.get("passed_gates", True)
             evidence.output_completion = max(evidence.output_completion, 1.0 if passed else 0.5)
 
-    raw_learned = min(
-        100.0,
-        100.0
-        * (
-            0.40 * evidence.card_completion
-            + 0.40 * evidence.practice_completion
-            + 0.20 * evidence.output_completion
-        ),
-    )
-    # Monotonicity: A learned concept remains learned; scores never decrease learned_percent
-    learned_percent = max(current.learned_percent, raw_learned)
     evidence_days = current.evidence_days + 1 if is_distinct_day else current.evidence_days
 
     # 2. Spaced Retrieval Tracking & Quality
@@ -103,25 +97,21 @@ def reduce_concept_progress(
     interval = max(1.0, float(successful_retrievals * 2.0))
     next_review = evidence_at + timedelta(days=interval)
 
+    # Almost-mastered is retained for persisted clients but is intentionally
+    # never emitted by the current three-dimension model.
     if is_mastered:
         status = "mastered"
-    elif learned_percent >= 100.0:
-        status = "almost_mastered"
-    elif learned_percent > 0.0:
+    else:
         status = "learning"
-    else:
-        status = "not_started"
 
-    if is_mastered:
-        mastery_score = 1.0
-    elif is_review_event:
-        mastery_score = min(1.0, current.mastery_score + 0.25)
-    else:
-        mastery_score = min(0.35, (learned_percent / 100.0) * 0.35)
+    # ConceptMastery is the sole scheduling authority. The projection field is
+    # kept for API compatibility and is overwritten by ProgressService.
+    mastery_score = current.mastery_score
 
     return current.model_copy(
         update={
-            "learned_percent": learned_percent,
+            "learned_percent": max(current.learned_percent, learned_percent),
+            "exposed": exposed,
             "learning_evidence": evidence,
             "evidence_days": evidence_days,
             "successful_spaced_retrievals": successful_retrievals,
@@ -139,6 +129,8 @@ def reduce_concept_progress(
 def compute_progress_summary(
     state: LearnerState,
     all_concepts: list[Any] | None = None,
+    *,
+    at: datetime | None = None,
 ) -> ProgressSummary:
     """Computes aggregate progress metrics across the learner's state."""
     tracked = state.concept_progress
@@ -146,18 +138,26 @@ def compute_progress_summary(
         str(getattr(concept, "concept_id", None) or concept.get("id") or concept.get("conceptId"))
         for concept in (all_concepts or [])
     ]
-    roadmap_ids = [
-        concept_id
-        for concept_id in state.roadmap_concept_ids
-        if not curriculum_ids or concept_id in curriculum_ids
-    ] or curriculum_ids or list(tracked)
+    roadmap_ids = (
+        [
+            concept_id
+            for concept_id in state.roadmap_concept_ids
+            if not curriculum_ids or concept_id in curriculum_ids
+        ]
+        or curriculum_ids
+        or list(tracked)
+    )
     roadmap_progress = [tracked[concept_id] for concept_id in roadmap_ids if concept_id in tracked]
     total_roadmap_count = max(len(roadmap_ids), 1)
-    now = datetime.now(UTC)
+    now = at or datetime.now(UTC)
+    learner_timezone = ZoneInfo(state.goal.timezone if state.goal else "UTC")
+    learner_today = now.astimezone(learner_timezone).date()
 
-    today = now.date()
+    today = learner_today
     completed_seconds = sum(
-        session.active_seconds for session in state.sessions if session.ended_at.date() == today
+        session.active_seconds
+        for session in state.sessions
+        if session.ended_at.astimezone(learner_timezone).date() == today
     )
     active_seconds = state.active_session.active_seconds if state.active_session else 0
     daily_effective_minutes = round((completed_seconds + active_seconds) / 60.0, 1)
@@ -166,10 +166,38 @@ def compute_progress_summary(
         1,
     )
     active_dates = {
-        session.ended_at.date() for session in state.sessions if session.active_seconds > 0
+        session.ended_at.astimezone(learner_timezone).date()
+        for session in state.sessions
+        if session.active_seconds > 0
     }
     if state.active_session and state.active_session.active_seconds > 0:
-        active_dates.add(state.active_session.started_at.date())
+        active_dates.add(state.active_session.started_at.astimezone(learner_timezone).date())
+
+    seconds_by_date: dict[Any, int] = {}
+    check_ins_by_date: dict[Any, int] = {}
+    for session in state.sessions:
+        session_date = session.ended_at.astimezone(learner_timezone).date()
+        seconds_by_date[session_date] = (
+            seconds_by_date.get(session_date, 0) + session.active_seconds
+        )
+        check_ins_by_date[session_date] = check_ins_by_date.get(session_date, 0) + 1
+    if state.active_session:
+        active_date = state.active_session.started_at.astimezone(learner_timezone).date()
+        seconds_by_date[active_date] = (
+            seconds_by_date.get(active_date, 0) + state.active_session.active_seconds
+        )
+        check_ins_by_date.setdefault(active_date, 0)
+    seconds_by_date.setdefault(today, 0)
+    check_ins_by_date.setdefault(today, 0)
+    daily_study_history = [
+        DailyStudyPoint(
+            date=study_date.isoformat(),
+            effective_minutes=round(seconds / 60.0, 1),
+            check_in_count=check_ins_by_date[study_date],
+            timezone=state.goal.timezone if state.goal else "UTC",
+        )
+        for study_date, seconds in sorted(seconds_by_date.items())
+    ]
 
     if not tracked:
         return ProgressSummary(
@@ -183,14 +211,20 @@ def compute_progress_summary(
             daily_effective_minutes=daily_effective_minutes,
             total_effective_minutes=total_effective_minutes,
             active_days=len(active_dates),
+            daily_study_history=daily_study_history,
         )
 
-    # 1. Course Coverage & Progress
-    concepts_started = sum(1 for progress in roadmap_progress if progress.learned_percent > 0)
-    course_coverage = min(100.0, round(100.0 * (concepts_started / total_roadmap_count), 1))
-
-    total_learned = sum(progress.learned_percent for progress in roadmap_progress)
-    learned_progress = min(100.0, round(total_learned / total_roadmap_count, 1))
+    # The established response names remain stable. Backend semantics are the
+    # authoritative three dimensions: exposure, retained mastery, and mastery.
+    exposed_concepts = sum(
+        1 for progress in roadmap_progress if progress.exposed or progress.learned_percent > 0
+    )
+    exposure_rate = min(
+        100.0,
+        round(100.0 * (exposed_concepts / total_roadmap_count), 1),
+    )
+    course_coverage = exposure_rate
+    learned_progress = exposure_rate
 
     # Effective mastery follows the PRD's honest-progress rule: mastery multiplied
     # by current retention. The scheduling projection is authoritative when present.
@@ -210,10 +244,11 @@ def compute_progress_summary(
             decay_lambda=projection.decay_lambda,
         )
         effective_mastery += projection.mastery_score * retention
-    mastered_progress = min(
+    retained_mastery = min(
         100.0,
         round(100.0 * effective_mastery / total_roadmap_count, 1),
     )
+    mastered_progress = retained_mastery
 
     concepts_mastered = sum(1 for progress in roadmap_progress if progress.is_mastered)
     mastered_concept_rate = min(
@@ -221,25 +256,13 @@ def compute_progress_summary(
         round(100.0 * concepts_mastered / total_roadmap_count, 1),
     )
 
-    # Communication outcomes are represented by successful assessed output evidence.
-    communication_outcome_percent = min(
-        100.0,
-        round(
-            sum(
-                progress.learning_evidence.output_completion * 100.0
-                for progress in roadmap_progress
-            )
-            / total_roadmap_count,
-            1,
-        ),
-    )
+    # Communication output lost independent signal when atomic units were
+    # introduced. Preserve the response field as an exposure projection.
+    communication_outcome_percent = exposure_rate
 
-    # Goal completion combines coverage, durable mastery, and communicative output.
-    goal_completion = round(
-        0.45 * learned_progress
-        + 0.35 * mastered_progress
-        + 0.20 * communication_outcome_percent
-    )
+    # Goal completion intentionally excludes the locked mastery gate: it reports
+    # current knowledge (exposure) weighted against what is still retained.
+    goal_completion = round(0.40 * exposure_rate + 0.60 * retained_mastery)
 
     return ProgressSummary(
         state_version=state.state_version,
@@ -252,4 +275,5 @@ def compute_progress_summary(
         daily_effective_minutes=daily_effective_minutes,
         total_effective_minutes=total_effective_minutes,
         active_days=len(active_dates),
+        daily_study_history=daily_study_history,
     )

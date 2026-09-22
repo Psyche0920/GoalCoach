@@ -1,5 +1,7 @@
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,7 @@ from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqlAlchemyLearnerRepository,
 )
+from goalcoach.infrastructure.telemetry import bind_request_id, reset_request_id
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -39,6 +42,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             get_engine(content_session_factory).dispose()
 
     application = FastAPI(title="GoalCoach API", version="0.1.0", lifespan=lifespan)
+
+    @application.middleware("http")
+    async def correlation_id(request: Request, call_next):  # type: ignore[no-untyped-def]
+        supplied = request.headers.get("x-request-id", "")
+        request_id = supplied if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", supplied) else str(uuid4())
+        token = bind_request_id(request_id)
+        try:
+            response = await call_next(request)
+            response.headers["x-request-id"] = request_id
+            return response
+        finally:
+            reset_request_id(token)
 
     @application.exception_handler(LLMUnavailableError)
     async def handle_llm_unavailable(

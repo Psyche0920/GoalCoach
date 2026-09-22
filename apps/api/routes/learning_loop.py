@@ -40,6 +40,7 @@ from goalcoach.infrastructure.persistence.content_service import ContentService
 from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
+    StaleLearnerStateError,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,3 +132,8 @@ async def dispatch_learning_event(
         )
     except SessionLifecycleError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except StaleLearnerStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Your learning state changed in another request. Reload and try again.",
+        ) from exc

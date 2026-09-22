@@ -229,6 +229,7 @@ async def get_learner_roadmap(
         "nextAction": derive_next_action(state),
         "dailyPlan": state.active_plan,
         "roadmap": build_roadmap_projection(state, concepts),
+        "roadmapCoverageRationale": state.roadmap_coverage_rationale,
         "progressSummary": compute_progress_summary(state, concepts),
     }
 

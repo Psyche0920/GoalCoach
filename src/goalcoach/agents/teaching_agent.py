@@ -34,10 +34,11 @@ class TeachingDeps:
     concept_id: str
     failed_attempts: int = 0
     learner_query: str | None = None
+    excluded_exercise_id: str | None = None
 
 
-TEACHING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Chinese Tutor for HSK1 learners.
-You teach strictly within the verified HSK1 curriculum boundaries.
+TEACHING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Chinese Tutor for Chinese learning beginners.
+You teach strictly within the verified HSK curriculum boundaries.
 
 Core Pedagogical Invariant:
 Same concept + different error history -> different instructional action.
@@ -77,7 +78,7 @@ Emit a structured `TeachingAction` containing:
 - `pinyin`: Tone-marked Pinyin for any Chinese characters.
 
 Language Requirements (STRICT):
-- Instructional Medium: English ONLY. All grammar explanations, instructions, guidelines, hints, structural breakdowns, and feedback MUST be written in English.
+- Instructional Medium: English ONLY unless the learners ask you to teach in other languages. All grammar explanations, instructions, guidelines, hints, structural breakdowns, and feedback MUST be written in English.
 - Target Language: Mandarin Chinese. Chinese characters (Hanzi) and Pinyin are ONLY permitted as specific vocabulary examples, patterns, or target exercise items—NEVER as the explanatory language.
 
 Explanation and exercises should be strongly relevant.
@@ -141,6 +142,7 @@ class TeachingWorker:
         content_service: ContentService,
         failed_attempts: int = 0,
         learner_query: str | None = None,
+        excluded_exercise_id: str | None = None,
     ) -> TeachingAction:
         """Adapts pedagogical strategy based on concept cards, student errors, and failed attempts."""
         deps = TeachingDeps(
@@ -149,6 +151,7 @@ class TeachingWorker:
             concept_id=concept_id,
             failed_attempts=failed_attempts,
             learner_query=learner_query,
+            excluded_exercise_id=excluded_exercise_id,
         )
 
         relevant_errors = [err.code for err in state.error_profile if err.concept_id == concept_id]
@@ -159,12 +162,18 @@ class TeachingWorker:
             f"Failed Attempts on this concept: {failed_attempts}\n"
             f"Recurring Error Codes: {relevant_errors}\n"
             f"Learner Query / Context: {learner_query or 'Normal lesson progression'}\n"
+            f"Exercise to replace: {excluded_exercise_id or 'None'}\n"
             f"Recent Cross-Session Learning History:\n{history_summary}\n"
             "Emit the optimal TeachingAction for this turn."
         )
 
         try:
-            result, provider = await run_with_fallback(self.agent, prompt, deps=deps)
+            result, provider = await run_with_fallback(
+                self.agent,
+                prompt,
+                deps=deps,
+                component="teaching_agent",
+            )
             action: TeachingAction = result.output
             action.metadata.update(
                 {
@@ -179,7 +188,11 @@ class TeachingWorker:
             )
             if action.concept_id == concept_id and action.content:
                 return self._attach_curriculum_exercise(
-                    action, content_service, state=state, is_remedial=(failed_attempts > 0)
+                    action,
+                    content_service,
+                    state=state,
+                    is_remedial=(failed_attempts > 0),
+                    excluded_exercise_id=excluded_exercise_id,
                 )
         except LLMUnavailableError as exc:
             action = self._deterministic_fallback(
@@ -194,6 +207,7 @@ class TeachingWorker:
                 content_service,
                 state=state,
                 is_remedial=failed_attempts > 0,
+                excluded_exercise_id=excluded_exercise_id,
             )
         action = self._deterministic_fallback(
             concept_id,
@@ -207,6 +221,7 @@ class TeachingWorker:
             content_service,
             state=state,
             is_remedial=failed_attempts > 0,
+            excluded_exercise_id=excluded_exercise_id,
         )
 
     @staticmethod
@@ -215,6 +230,7 @@ class TeachingWorker:
         content_service: ContentService,
         state: LearnerState | None = None,
         is_remedial: bool = False,
+        excluded_exercise_id: str | None = None,
     ) -> TeachingAction:
         """Attach a canonical exercise without exposing its accepted answers, rotating on completion or failure."""
         all_exercises = content_service.get_exercises_for_concept(
@@ -236,6 +252,7 @@ class TeachingWorker:
             if state
             else set()
         )
+        excluded = {excluded_exercise_id} if excluded_exercise_id else set()
 
         if is_remedial:
             # In remediation: prioritize unattempted exercises (neither completed nor failed today)
@@ -245,24 +262,37 @@ class TeachingWorker:
                 if e.exercise_id not in completed
                 and e.exercise_id not in mistakes
                 and e.exercise_id not in recent
+                and e.exercise_id not in excluded
             ]
             if not candidates:
                 candidates = [
                     e
                     for e in all_exercises
-                    if e.exercise_id not in completed and e.exercise_id not in recent
+                    if e.exercise_id not in completed
+                    and e.exercise_id not in recent
+                    and e.exercise_id not in excluded
                 ]
             if not candidates:
-                candidates = [e for e in all_exercises if e.exercise_id not in completed]
+                candidates = [
+                    e
+                    for e in all_exercises
+                    if e.exercise_id not in completed and e.exercise_id not in excluded
+                ]
             selected = candidates[0] if candidates else all_exercises[0]
         else:
             uncompleted = [
                 e
                 for e in all_exercises
-                if e.exercise_id not in completed and e.exercise_id not in recent
+                if e.exercise_id not in completed
+                and e.exercise_id not in recent
+                and e.exercise_id not in excluded
             ]
             if not uncompleted:
-                uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
+                uncompleted = [
+                    e
+                    for e in all_exercises
+                    if e.exercise_id not in completed and e.exercise_id not in excluded
+                ]
             selected = uncompleted[0] if uncompleted else all_exercises[0]
 
         payload = dict(action.exercise_payload or {})

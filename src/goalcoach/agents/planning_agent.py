@@ -6,10 +6,13 @@ Produces a validated PlanUpdate schema strictly bounded by the learner's time bu
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.messages import ModelMessage, RetryPromptPart
 
 from goalcoach.application.agent_history import format_agent_history
 from goalcoach.domain.enums import PlanItemKind
@@ -23,6 +26,20 @@ from goalcoach.infrastructure.llm.pydantic_ai_models import (
     run_with_fallback,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
+
+MINIMUM_ROADMAP_CONCEPTS = 8
+
+logger = logging.getLogger(__name__)
+
+
+def log_validation_retries(messages: list[ModelMessage]) -> None:
+    """Expose bounded retry causes without logging learner content or prompts."""
+    for message in messages:
+        for part in getattr(message, "parts", []):
+            if not isinstance(part, RetryPromptPart):
+                continue
+            reason = part.content if isinstance(part.content, str) else "schema validation"
+            logger.warning("Planning output retry: %s", reason)
 
 
 def validate_agent_roadmap(
@@ -41,9 +58,35 @@ class PlanningDeps:
     state: LearnerState
     content_service: ContentService
     enable_prerequisites: bool
+    allow_roadmap_changes: bool
 
 
-PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for HSK1 Chinese.
+class AgentPlanUpdate(BaseModel):
+    """Strict model-facing output contract; persisted state retains safe defaults."""
+
+    daily_allocation_minutes: int = Field(gt=0, le=240)
+    ordered_items: list[PlanItem] = Field(min_length=1)
+    adaptation_rationale: str = Field(min_length=1)
+    roadmap_adjustments: list[str] = Field(default_factory=list)
+    roadmap_concept_ids: list[str] = Field(
+        min_length=1,
+        description=(
+            "Ordered goal-relevant curriculum concept IDs. Include at least 8 when the catalog "
+            "supports them; add more whenever complete goal coverage requires it. Eight is a "
+            "minimum, not a fixed target."
+        ),
+    )
+    roadmap_coverage_rationale: str = Field(
+        min_length=1,
+        description=(
+            "Name the capabilities required by the goal and explain why the selected roadmap "
+            "covers them without material gaps."
+        ),
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for Chinese learning.
 Your responsibility is to decide what the learner should study next based on their goal, time budget, mastery history, and prerequisite graph.
 
 Key Pedagogical Rules:
@@ -61,11 +104,21 @@ Key Pedagogical Rules:
 5. Adaptation Rationale:
    - Provide a clear, transparent explanation in `adaptation_rationale` explaining why this plan was chosen.
 6. Dynamic Roadmap:
-   - Produce a non-empty `roadmap_concept_ids` subset containing only concepts relevant to the
-     learner's free-form goal, evidence, and errors. Do not include the full catalog by default.
-   - Order the selected concepts by relevance and learning sequence.
+   - `roadmap_concept_ids` is the learner's multi-session curriculum path. It is NOT today's plan.
+   - Produce a goal-complete, multi-stage roadmap containing at least 8 concepts when the catalog
+     has 8 or more relevant concepts. Do not limit roadmap length to today's time budget or copy
+     only `ordered_items`. Do not include the full catalog by default.
+   - Cover the major knowledge and communication capabilities required to finish the free-form goal.
+   - Decide the final roadmap size yourself from goal coverage. Eight is a minimum, not a target or cap;
+     include every additional concept that is genuinely needed for the learner's stated goal.
+   - Before returning, verify that omitting any unselected concept would not leave a material gap in
+     the learner's ability to accomplish the goal.
+   - Provide a specific `roadmap_coverage_rationale` naming the capabilities required by the goal
+     and explaining why the selected concepts cover them without material gaps.
+   - Order the selected concepts by learning sequence and keep prerequisites before dependents.
    - Reason directly from the goal and each concept's communicative purpose; do not use fixed goal categories.
-   - Keep prerequisites before concepts that depend on them.
+   - `ordered_items` is only today's budget-bounded subset of this roadmap. Every daily item must
+     also appear in `roadmap_concept_ids`.
 7. Cross-Session Continuity:
    - Use the compact learning history as evidence when choosing review, remediation, and new work.
    - Avoid needless immediate repetition, but repeat a concept when its outcome or error evidence justifies it.
@@ -74,16 +127,65 @@ Key Pedagogical Rules:
 planning_agent = Agent(
     model=get_openrouter_model(),
     deps_type=PlanningDeps,
-    output_type=PlanUpdate,
+    output_type=AgentPlanUpdate,
     output_retries=get_output_retries(),
     system_prompt=PLANNING_SYSTEM_PROMPT,
 )
 
 
+@planning_agent.output_validator
+def validate_planning_output(
+    ctx: RunContext[PlanningDeps], output: AgentPlanUpdate
+) -> AgentPlanUpdate:
+    """Require an agent-authored, valid, multi-session roadmap before persistence."""
+    curriculum_ids = [
+        concept.concept_id for concept in ctx.deps.content_service.list_all_concepts()
+    ]
+    valid_roadmap = validate_agent_roadmap(output.roadmap_concept_ids, curriculum_ids)
+    minimum = min(MINIMUM_ROADMAP_CONCEPTS, len(curriculum_ids))
+    if len(valid_roadmap) != len(output.roadmap_concept_ids):
+        raise ModelRetry(
+            "Roadmap contains unknown or duplicate concept IDs. Return valid unique IDs."
+        )
+    if len(valid_roadmap) < minimum:
+        raise ModelRetry(
+            f"Roadmap is incomplete: return at least {minimum} goal-relevant concepts, "
+            "and include more whenever complete goal coverage requires them."
+        )
+    if not ctx.deps.allow_roadmap_changes and valid_roadmap != ctx.deps.state.roadmap_concept_ids:
+        raise ModelRetry(
+            "This is a Daily Plan replan. Preserve roadmap_concept_ids exactly; only change ordered_items."
+        )
+    if not output.roadmap_coverage_rationale.strip():
+        raise ModelRetry(
+            "roadmap_coverage_rationale is required. Explain goal capabilities and roadmap coverage."
+        )
+    daily_ids = {item.concept_id for item in output.ordered_items}
+    if not daily_ids.issubset(set(valid_roadmap)):
+        raise ModelRetry("Every ordered_items concept must also appear in roadmap_concept_ids.")
+    required_remedial = sorted(
+        (
+            (concept_id, count)
+            for concept_id, count in ctx.deps.state.remediation_counters.items()
+            if count >= 2 and concept_id in valid_roadmap
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if required_remedial:
+        first = output.ordered_items[0]
+        if first.kind != PlanItemKind.REMEDIAL or first.concept_id != required_remedial[0][0]:
+            raise ModelRetry(
+                "The first Daily Plan item must remediate the highest-priority unresolved concept."
+            )
+    return output
+
+
 @planning_agent.tool
 def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]]:
     """List available HSK1 curriculum concepts with difficulty and sequencing."""
-    concepts = ctx.deps.content_service.list_all_concepts(hsk_level=1)
+    hsk_level = ctx.deps.state.goal.target_hsk_level if ctx.deps.state.goal else 1
+    concepts = ctx.deps.content_service.list_all_concepts(hsk_level=hsk_level)
     return [
         {
             "concept_id": c.concept_id,
@@ -129,12 +231,15 @@ class PlanningWorker:
         self,
         state: LearnerState,
         content_service: ContentService,
+        *,
+        allow_roadmap_changes: bool = False,
     ) -> PlanUpdate:
         """Invokes the Planning Agent with fallback to deterministic heuristic rules."""
         deps = PlanningDeps(
             state=state,
             content_service=content_service,
             enable_prerequisites=self.enable_prerequisites,
+            allow_roadmap_changes=allow_roadmap_changes,
         )
         available_minutes = (
             state.active_session.planned_minutes
@@ -165,18 +270,26 @@ class PlanningWorker:
             f"Daily Time Budget: {available_minutes} minutes\n"
             f"Needs Replanning: {state.needs_replanning}\n"
             f"Prerequisite Enforcement Enabled: {self.enable_prerequisites}\n"
+            f"Roadmap Changes Allowed: {allow_roadmap_changes}\n"
             f"Remediated Today: {remediated_summary}\n"
             f"Studied Today: {studied_summary}\n"
             f"Current Mastery: {mastery_summary}\n"
             f"Active Errors: {error_summary}\n"
             f"Recent Cross-Session Learning History:\n{history_summary}\n"
             "Generate today's optimal PlanUpdate and a complete personalized roadmap "
-            "conforming to the schema."
+            "conforming to the schema. The roadmap must cover multiple future sessions; only "
+            "ordered_items is constrained by today's time budget."
         )
 
         try:
-            result, provider = await run_with_fallback(self.agent, prompt, deps=deps)
-            plan_update: PlanUpdate = result.output
+            result, provider = await run_with_fallback(
+                self.agent,
+                prompt,
+                deps=deps,
+                component="planning_agent",
+            )
+            log_validation_retries(result.all_messages() if hasattr(result, "all_messages") else [])
+            plan_update = PlanUpdate.model_validate(result.output.model_dump(), strict=False)
             plan_update.metadata.update(
                 {
                     "provider": provider,
@@ -192,16 +305,56 @@ class PlanningWorker:
             # Guardrail: Validate all concept IDs against Database #1
             curriculum_ids = [c.concept_id for c in content_service.list_all_concepts()]
             all_valid_ids = set(curriculum_ids)
-            plan_update.roadmap_concept_ids = validate_agent_roadmap(
-                plan_update.roadmap_concept_ids,
-                curriculum_ids,
+            proposed_roadmap_ids = validate_agent_roadmap(
+                plan_update.roadmap_concept_ids, curriculum_ids
             )
             validated_items = [
                 item for item in plan_update.ordered_items if item.concept_id in all_valid_ids
             ]
             daily_ids = list(dict.fromkeys(item.concept_id for item in validated_items))
-            plan_update.roadmap_concept_ids = list(
-                dict.fromkeys([*plan_update.roadmap_concept_ids, *daily_ids])
+            minimum = min(MINIMUM_ROADMAP_CONCEPTS, len(curriculum_ids))
+            if len(proposed_roadmap_ids) < minimum or not set(daily_ids).issubset(
+                set(proposed_roadmap_ids)
+            ):
+                raise AgentOutputError(
+                    "Planning Agent did not return a complete valid roadmap; existing roadmap was preserved."
+                )
+            if not allow_roadmap_changes:
+                if not state.roadmap_concept_ids:
+                    plan_update.roadmap_concept_ids = proposed_roadmap_ids
+                elif proposed_roadmap_ids != state.roadmap_concept_ids:
+                    raise AgentOutputError(
+                        "Daily replanning attempted to change the long-term roadmap; existing roadmap was preserved."
+                    )
+            if not plan_update.roadmap_coverage_rationale.strip():
+                raise AgentOutputError(
+                    "Planning Agent omitted the required roadmap coverage rationale."
+                )
+            required_remedial = sorted(
+                (
+                    (concept_id, count)
+                    for concept_id, count in state.remediation_counters.items()
+                    if count >= 2 and concept_id in proposed_roadmap_ids
+                ),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            if required_remedial:
+                first = validated_items[0] if validated_items else None
+                if (
+                    first is None
+                    or first.kind != PlanItemKind.REMEDIAL
+                    or first.concept_id != required_remedial[0][0]
+                ):
+                    raise AgentOutputError(
+                        "Planning Agent did not prioritize the required remediation item."
+                    )
+            plan_update.roadmap_concept_ids = proposed_roadmap_ids
+            plan_update.metadata.update(
+                {
+                    "roadmap_concept_count": len(plan_update.roadmap_concept_ids),
+                    "roadmap_source": "planning_agent",
+                }
             )
 
             if validated_items:
@@ -221,9 +374,7 @@ class PlanningWorker:
                 if budgeted_items:
                     # Guardrail: Validate DAG prerequisites for scheduled NEW concepts
                     prereq_graph = (
-                        content_service.get_all_prerequisites()
-                        if self.enable_prerequisites
-                        else {}
+                        content_service.get_all_prerequisites() if self.enable_prerequisites else {}
                     )
                     validated_budgeted: list[PlanItem] = []
                     for item in budgeted_items:
@@ -280,9 +431,14 @@ class PlanningWorker:
         """Create a conservative, curriculum-grounded plan when model reasoning is unavailable."""
         concepts = content_service.list_all_concepts()
         if not concepts:
-            raise AgentOutputError("No curriculum concepts are available for deterministic planning")
+            raise AgentOutputError(
+                "No curriculum concepts are available for deterministic planning"
+            )
         concept_by_id = {concept.concept_id: concept for concept in concepts}
         catalog_ids = [concept.concept_id for concept in concepts]
+        roadmap_ids = state.roadmap_concept_ids or catalog_ids
+        roadmap_ids = validate_agent_roadmap(roadmap_ids, catalog_ids)
+        roadmap_id_set = set(roadmap_ids)
         prerequisite_graph = (
             content_service.get_all_prerequisites() if self.enable_prerequisites else {}
         )
@@ -297,20 +453,19 @@ class PlanningWorker:
                     key=lambda item: item.occurrences,
                     reverse=True,
                 )
-                if error.concept_id in concept_by_id
+                if error.concept_id in roadmap_id_set
                 and error.concept_id not in state.today_remediated_concept_ids
             )
         )
         due_ids = [
             concept_id
             for concept_id, mastery in state.mastery.items()
-            if concept_id in concept_by_id and mastery.is_review_due()
+            if concept_id in roadmap_id_set and mastery.is_review_due()
         ]
         new_ids = [
             concept_id
-            for concept_id in catalog_ids
-            if concept_id not in state.mastery
-            and concept_id not in state.today_studied_concept_ids
+            for concept_id in roadmap_ids
+            if concept_id not in state.mastery and concept_id not in state.today_studied_concept_ids
         ]
 
         candidates = [
@@ -348,7 +503,7 @@ class PlanningWorker:
             allocated += minutes
 
         if not selected:
-            concept = concepts[0]
+            concept = concept_by_id[roadmap_ids[0]]
             minutes = min(5, available_minutes)
             selected.append(
                 PlanItem(
@@ -364,18 +519,20 @@ class PlanningWorker:
             daily_allocation_minutes=allocated,
             ordered_items=selected,
             adaptation_rationale="Deterministic curriculum and learner-state allocation.",
-            roadmap_adjustments=["Deterministic fallback retained the canonical roadmap."],
-            roadmap_concept_ids=list(
-                dict.fromkeys(
-                    [*state.roadmap_concept_ids, *(item.concept_id for item in selected)]
-                )
+            roadmap_adjustments=["Deterministic fallback retained the existing Agent roadmap."],
+            roadmap_concept_ids=roadmap_ids,
+            roadmap_coverage_rationale=(
+                "Fallback reuses the previously validated roadmap selected for this goal."
             ),
             metadata={
                 "provider": "deterministic",
                 "fallback_used": True,
                 "notice": notice,
+                "roadmap_concept_count": len(roadmap_ids),
+                "roadmap_source": "existing_agent_roadmap",
             },
         )
+
 
 __all__ = [
     "PLANNING_SYSTEM_PROMPT",
@@ -383,4 +540,5 @@ __all__ = [
     "PlanningWorker",
     "planning_agent",
     "validate_agent_roadmap",
+    "validate_planning_output",
 ]

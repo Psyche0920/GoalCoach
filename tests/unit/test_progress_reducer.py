@@ -8,11 +8,10 @@ from goalcoach.application.progress_reducer import compute_progress_summary, red
 from goalcoach.domain.models import ConceptProgress, LearnerState, LearningEvent, LearningEvidence
 
 
-def test_40_40_20_first_learning_rule() -> None:
+def test_any_durable_evidence_marks_binary_exposure() -> None:
     now = datetime(2026, 9, 1, 10, 0, 0, tzinfo=UTC)
     cp = ConceptProgress(learner_id="learner_001", concept_id="c_hsk1_ma")
 
-    # Step 1: Card completion gives 40%
     event_card = LearningEvent(
         learner_id="learner_001",
         plan_item_id="item_1",
@@ -21,37 +20,12 @@ def test_40_40_20_first_learning_rule() -> None:
         started_at=now,
     )
     cp = reduce_concept_progress(cp, event_card)
-    assert cp.learned_percent == pytest.approx(40.0)
-    assert cp.status == "learning"
-
-    # Step 2: Practice attempt gives +40% (total 80%)
-    event_practice = LearningEvent(
-        learner_id="learner_001",
-        plan_item_id="item_1",
-        concept_ids=["c_hsk1_ma"],
-        event_type="attempt",
-        started_at=now,
-        grading_result={"passed_gates": True},
-    )
-    cp = reduce_concept_progress(cp, event_practice)
-    assert cp.learned_percent == pytest.approx(80.0)
-    assert cp.status == "learning"
-
-    # Step 3: Output submission gives +20% (total 100%)
-    event_output = LearningEvent(
-        learner_id="learner_001",
-        plan_item_id="item_1",
-        concept_ids=["c_hsk1_ma"],
-        event_type="output",
-        started_at=now,
-        grading_result={"passed_gates": True},
-    )
-    cp = reduce_concept_progress(cp, event_output)
+    assert cp.exposed is True
     assert cp.learned_percent == pytest.approx(100.0)
-    assert cp.status == "almost_mastered"
+    assert cp.status == "learning"
 
 
-def test_monotonicity_guarantee() -> None:
+def test_exposure_monotonicity_guarantee() -> None:
     now = datetime(2026, 9, 1, 10, 0, 0, tzinfo=UTC)
     cp = ConceptProgress(
         learner_id="learner_001",
@@ -60,7 +34,7 @@ def test_monotonicity_guarantee() -> None:
         learning_evidence=LearningEvidence(card_completion=1.0, practice_completion=1.0),
     )
 
-    # An unsuccessful attempt or low-score review event must NEVER reduce learned_percent
+    # An unsuccessful attempt or low-score review event must never unmark exposure.
     event_fail = LearningEvent(
         learner_id="learner_001",
         plan_item_id="item_1",
@@ -71,7 +45,8 @@ def test_monotonicity_guarantee() -> None:
         engagement_score=0.2,
     )
     reduced = reduce_concept_progress(cp, event_fail)
-    assert reduced.learned_percent == 80.0
+    assert reduced.exposed is True
+    assert reduced.learned_percent == 100.0
 
 
 def test_atomic_unit_completion() -> None:
@@ -90,7 +65,7 @@ def test_atomic_unit_completion() -> None:
     assert reduced.learning_evidence.card_completion == 1.0
     assert reduced.learning_evidence.practice_completion == 1.0
     assert reduced.learning_evidence.output_completion == 1.0
-    assert reduced.status == "almost_mastered"
+    assert reduced.status == "learning"
 
 
 def test_mastery_qualification_rule() -> None:
@@ -103,10 +78,11 @@ def test_mastery_qualification_rule() -> None:
         learner_id="learner_001",
         concept_id="c_hsk1_ma",
         learned_percent=100.0,
+        exposed=True,
         learning_evidence=LearningEvidence(
             card_completion=1.0, practice_completion=1.0, output_completion=1.0
         ),
-        status="almost_mastered",
+        status="learning",
     )
 
     # Retrieval 1 (Day 1)
@@ -180,14 +156,15 @@ def test_mastery_qualification_rule() -> None:
     assert cp.average_review_quality >= 0.80
     assert cp.is_mastered is True
     assert cp.status == "mastered"
-    assert cp.mastery_score == 1.0
+    assert cp.mastery_score == 0.0
 
 
-def test_composite_goal_progress_formulation() -> None:
-    # 0.45 * Learned + 0.35 * Mastered + 0.20 * Communication
+def test_exposure_retention_goal_progress_formulation() -> None:
+    # Goal completion = 0.4 * exposure + 0.6 * retained mastery.
     cp1 = ConceptProgress(
         learner_id="learner_001",
         concept_id="c1",
+        exposed=True,
         learned_percent=100.0,
         mastery_score=1.0,
         is_mastered=True,
@@ -196,7 +173,8 @@ def test_composite_goal_progress_formulation() -> None:
     cp2 = ConceptProgress(
         learner_id="learner_001",
         concept_id="c2",
-        learned_percent=60.0,
+        exposed=True,
+        learned_percent=100.0,
         mastery_score=0.2,
         is_mastered=False,
     )
@@ -207,15 +185,15 @@ def test_composite_goal_progress_formulation() -> None:
 
     summary = compute_progress_summary(state, all_concepts=[{"id": "c1"}, {"id": "c2"}])
     assert summary.course_coverage == 100.0
-    assert summary.learned_progress == 80.0
+    assert summary.learned_progress == 100.0
     assert summary.mastered_progress == 60.0
     assert summary.mastered_concept_rate == 50.0
 
-    # One of two roadmap concepts has assessed output evidence.
-    assert summary.communication_outcome_percent == 50.0
+    # The communication field is a compatibility projection of exposure.
+    assert summary.communication_outcome_percent == 100.0
 
-    # 0.45 * 80 + 0.35 * 60 + 0.20 * 50 = 36 + 21 + 10 = 67
-    assert summary.goal_completion == 67.0
+    # 0.4 * 100 + 0.6 * 60 = 76
+    assert summary.goal_completion == 76.0
 
 
 def test_progress_summary_counts_untracked_curriculum_as_not_learned() -> None:
@@ -225,6 +203,7 @@ def test_progress_summary_counts_untracked_curriculum_as_not_learned() -> None:
             "c1": ConceptProgress(
                 learner_id="learner_001",
                 concept_id="c1",
+                exposed=True,
                 learned_percent=100.0,
                 mastery_score=1.0,
                 is_mastered=True,

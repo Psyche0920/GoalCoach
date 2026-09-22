@@ -27,7 +27,12 @@ async def test_planning_prompt_uses_current_decayed_retention(
 ) -> None:
     captured_prompt = ""
 
-    async def fake_run(_agent: object, prompt: str, deps: object = None) -> tuple[object, str]:
+    async def fake_run(
+        _agent: object,
+        prompt: str,
+        deps: object = None,
+        **_kwargs: object,
+    ) -> tuple[object, str]:
         nonlocal captured_prompt
         captured_prompt = prompt
         return (
@@ -44,6 +49,7 @@ async def test_planning_prompt_uses_current_decayed_retention(
                     ],
                     adaptation_rationale="Retention is low.",
                     roadmap_concept_ids=["c1"],
+                    roadmap_coverage_rationale="c1 covers the requested travel capability.",
                 )
             ),
             "test-provider",

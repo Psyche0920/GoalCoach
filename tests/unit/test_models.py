@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from goalcoach.domain.enums import PlanItemKind, PlanStatus
 from goalcoach.domain.models import (
     ConceptMastery,
+    ConceptProgress,
     DailyPlan,
     ErrorRecord,
     Exercise,
@@ -73,6 +74,41 @@ def test_learning_goal_validation() -> None:
         LearningGoal(title="HSK 3", daily_available_minutes=0)
     with pytest.raises(ValidationError):
         LearningGoal(title="HSK 3", daily_available_minutes=241)
+
+
+def test_timezone_change_does_not_change_goal_identity() -> None:
+    goal = LearningGoal(title="Travel in China", daily_available_minutes=20)
+    fingerprint = goal.fingerprint
+
+    goal.timezone = "Asia/Shanghai"
+
+    assert goal.fingerprint == fingerprint
+
+
+def test_goal_replacement_clears_all_bound_learning_state() -> None:
+    state = LearnerState(
+        goal=LearningGoal(title="Travel Chinese"),
+        roadmap_concept_ids=["c1", "c2"],
+        roadmap_coverage_rationale="Travel coverage",
+        mastery={"c1": ConceptMastery(concept_id="c1", mastery_score=0.9)},
+        concept_progress={"c1": ConceptProgress(learner_id="learner", concept_id="c1")},
+        error_profile=[ErrorRecord(code="ERR_TEST", concept_id="c1")],
+        remediation_counters={"c1": 3},
+        sessions=[SessionSummary(started_at=utc_now(), ended_at=utc_now(), summary="Session")],
+        today_studied_concept_ids=["c1"],
+    )
+
+    state.reset_learning_state()
+
+    assert not state.roadmap_concept_ids
+    assert not state.roadmap_coverage_rationale
+    assert not state.mastery
+    assert not state.concept_progress
+    assert not state.error_profile
+    assert not state.remediation_counters
+    assert not state.sessions
+    assert not state.today_studied_concept_ids
+    assert state.goal_fingerprint == ""
 
 
 # --- ConceptMastery & Spaced Repetition Tests ---
