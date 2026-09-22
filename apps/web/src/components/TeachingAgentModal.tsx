@@ -95,14 +95,18 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
             {exercise?.prompt && (
               <form
                 className="space-y-4 rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-lime-50 p-5 sm:p-6"
-                onSubmit={(event) => { event.preventDefault(); void onSubmitAnswer(answer.trim()); }}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (gradingResult) return;
+                  void onSubmitAnswer(answer.trim());
+                }}
               >
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-800">Try it yourself</p>
                 {exercise.instruction && <p className="text-sm text-zinc-600">{exercise.instruction}</p>}
                 <p className="text-xl font-black leading-8 text-slate-950">{exercise.prompt}</p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <input value={answer} onChange={(event) => setAnswer(event.currentTarget.value)} className="min-w-0 flex-1 rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 outline-none focus:border-emerald-500" placeholder="Type your answer…" />
-                  <button disabled={!answer.trim() || loading || gradingResult?.passedGates} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-emerald-950 shadow-[0_4px_0_#15803d] active:translate-y-0.5 active:shadow-none disabled:opacity-50"><Send className="h-4 w-4" />Check</button>
+                  <button disabled={!answer.trim() || loading || gradingResult !== null} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-emerald-950 shadow-[0_4px_0_#15803d] active:translate-y-0.5 active:shadow-none disabled:opacity-50"><Send className="h-4 w-4" />Check</button>
                 </div>
               </form>
             )}

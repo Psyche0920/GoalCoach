@@ -207,10 +207,8 @@ def compute_progress_summary(
             mastered_progress=0.0,
             mastered_concept_rate=0.0,
             goal_completion=0.0,
-            communication_outcome_percent=0.0,
             daily_effective_minutes=daily_effective_minutes,
             total_effective_minutes=total_effective_minutes,
-            active_days=len(active_dates),
             daily_study_history=daily_study_history,
         )
 
@@ -256,10 +254,6 @@ def compute_progress_summary(
         round(100.0 * concepts_mastered / total_roadmap_count, 1),
     )
 
-    # Communication output lost independent signal when atomic units were
-    # introduced. Preserve the response field as an exposure projection.
-    communication_outcome_percent = exposure_rate
-
     # Goal completion intentionally excludes the locked mastery gate: it reports
     # current knowledge (exposure) weighted against what is still retained.
     goal_completion = round(0.40 * exposure_rate + 0.60 * retained_mastery)
@@ -271,9 +265,7 @@ def compute_progress_summary(
         mastered_progress=mastered_progress,
         mastered_concept_rate=mastered_concept_rate,
         goal_completion=float(goal_completion),
-        communication_outcome_percent=communication_outcome_percent,
         daily_effective_minutes=daily_effective_minutes,
         total_effective_minutes=total_effective_minutes,
-        active_days=len(active_dates),
         daily_study_history=daily_study_history,
     )

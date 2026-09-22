@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { BookOpen, CalendarDays, CheckCircle2, Clock3, MessagesSquare, Target } from 'lucide-react';
+import { BookOpen, CheckCircle2, Target } from 'lucide-react';
 import { CurriculumConcept, LearnerState, ProgressSummary } from '../types.ts';
 
 interface RetentionVisualizerProps {
@@ -22,8 +22,6 @@ export const RetentionVisualizer: React.FC<RetentionVisualizerProps> = ({
   const learned = toPercent(progressSummary?.learnedProgress ?? 0);
   const mastered = toPercent(progressSummary?.masteredProgress ?? 0);
   const courseCoverage = toPercent(progressSummary?.courseCoverage ?? 0);
-  const communicationOutcome = toPercent(progressSummary?.communicationOutcomePercent ?? 0);
-  const activeDays = progressSummary?.activeDays ?? 0;
 
   return (
     <div className="space-y-6 pb-12">
@@ -38,17 +36,7 @@ export const RetentionVisualizer: React.FC<RetentionVisualizerProps> = ({
       <section className="grid gap-3 sm:grid-cols-3">
         <Metric icon={<BookOpen className="h-5 w-5" />} label="Learned" value={`${learned}%`} />
         <Metric icon={<CheckCircle2 className="h-5 w-5" />} label="Effective mastery" value={`${mastered}%`} />
-        <Metric
-          icon={<Clock3 className="h-5 w-5" />}
-          label="Today"
-          value={`${progressSummary?.dailyEffectiveMinutes ?? 0} min`}
-        />
-      </section>
-
-      <section className="grid gap-3 sm:grid-cols-3">
         <Metric icon={<Target className="h-5 w-5" />} label="Course coverage" value={`${courseCoverage}%`} />
-        <Metric icon={<MessagesSquare className="h-5 w-5" />} label="Communication" value={`${communicationOutcome}%`} />
-        <Metric icon={<CalendarDays className="h-5 w-5" />} label="Active days" value={String(activeDays)} />
       </section>
 
       <StudyCurve

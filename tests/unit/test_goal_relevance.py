@@ -61,12 +61,10 @@ def test_agent_may_choose_more_than_the_minimum_roadmap_size() -> None:
     assert validate_planning_output(_planning_context(), output) is output  # type: ignore[arg-type]
 
 
-def test_agent_output_retries_when_roadmap_has_fewer_than_eight_concepts() -> None:
-    with pytest.raises(ModelRetry, match="at least 8"):
-        validate_planning_output(  # type: ignore[arg-type]
-            _planning_context(),
-            _plan([f"c{index}" for index in range(1, 8)]),
-        )
+def test_agent_may_choose_a_short_goal_complete_roadmap() -> None:
+    output = _plan(["c1", "c2", "c3"])
+
+    assert validate_planning_output(_planning_context(), output) is output  # type: ignore[arg-type]
 
 
 def test_agent_output_retries_when_daily_item_is_outside_roadmap() -> None:

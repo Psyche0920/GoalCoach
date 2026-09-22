@@ -176,10 +176,8 @@ class ProgressSummary(DomainBaseModel):
     mastered_progress: float = 0.0
     mastered_concept_rate: float = 0.0
     goal_completion: float = 0.0
-    communication_outcome_percent: float = 0.0
     daily_effective_minutes: float = 0.0
     total_effective_minutes: float = 0.0
-    active_days: int = 0
     daily_study_history: list[DailyStudyPoint] = Field(default_factory=list)
 
 

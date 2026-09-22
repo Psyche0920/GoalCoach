@@ -159,7 +159,6 @@ async def test_ac1_ac7_closed_loop_state_mutation_and_durability(
     assert ended.progress_summary is not None
     assert ended.progress_summary.daily_effective_minutes == 1.5
     assert ended.progress_summary.total_effective_minutes == 1.5
-    assert ended.progress_summary.active_days == 1
     assert ended.state is not None
     assert ended.state.active_session is None
     assert len(ended.state.sessions) == 1

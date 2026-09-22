@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.messages import ModelMessage, RetryPromptPart
 
 from goalcoach.application.agent_history import format_agent_history
@@ -26,8 +26,6 @@ from goalcoach.infrastructure.llm.pydantic_ai_models import (
     run_with_fallback,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
-
-MINIMUM_ROADMAP_CONCEPTS = 8
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +69,8 @@ class AgentPlanUpdate(BaseModel):
     roadmap_concept_ids: list[str] = Field(
         min_length=1,
         description=(
-            "Ordered goal-relevant curriculum concept IDs. Include at least 8 when the catalog "
-            "supports them; add more whenever complete goal coverage requires it. Eight is a "
-            "minimum, not a fixed target."
+            "Ordered goal-relevant curriculum concept IDs selected by the Agent for complete "
+            "goal coverage. Add more concepts whenever coverage requires them."
         ),
     )
     roadmap_coverage_rationale: str = Field(
@@ -105,12 +102,11 @@ Key Pedagogical Rules:
    - Provide a clear, transparent explanation in `adaptation_rationale` explaining why this plan was chosen.
 6. Dynamic Roadmap:
    - `roadmap_concept_ids` is the learner's multi-session curriculum path. It is NOT today's plan.
-   - Produce a goal-complete, multi-stage roadmap containing at least 8 concepts when the catalog
-     has 8 or more relevant concepts. Do not limit roadmap length to today's time budget or copy
-     only `ordered_items`. Do not include the full catalog by default.
+   - Produce a goal-complete, multi-stage roadmap. Do not limit roadmap length to today's time
+     budget or copy only `ordered_items`. Do not include the full catalog by default.
    - Cover the major knowledge and communication capabilities required to finish the free-form goal.
-   - Decide the final roadmap size yourself from goal coverage. Eight is a minimum, not a target or cap;
-     include every additional concept that is genuinely needed for the learner's stated goal.
+   - Decide the final roadmap size yourself from goal coverage; include every concept that is
+     genuinely needed for the learner's stated goal.
    - Before returning, verify that omitting any unselected concept would not leave a material gap in
      the learner's ability to accomplish the goal.
    - Provide a specific `roadmap_coverage_rationale` naming the capabilities required by the goal
@@ -127,7 +123,15 @@ Key Pedagogical Rules:
 planning_agent = Agent(
     model=get_openrouter_model(),
     deps_type=PlanningDeps,
-    output_type=AgentPlanUpdate,
+    output_type=ToolOutput(
+        AgentPlanUpdate,
+        name="goalcoach_plan_update",
+        description=(
+            "Return one GoalCoach PlanUpdate as strict JSON. roadmap_concept_ids must be a "
+            "goal-complete ordered list of unique curriculum concept IDs, and "
+            "roadmap_coverage_rationale must explain complete goal coverage."
+        ),
+    ),
     output_retries=get_output_retries(),
     system_prompt=PLANNING_SYSTEM_PROMPT,
 )
@@ -142,20 +146,15 @@ def validate_planning_output(
         concept.concept_id for concept in ctx.deps.content_service.list_all_concepts()
     ]
     valid_roadmap = validate_agent_roadmap(output.roadmap_concept_ids, curriculum_ids)
-    minimum = min(MINIMUM_ROADMAP_CONCEPTS, len(curriculum_ids))
     if len(valid_roadmap) != len(output.roadmap_concept_ids):
         raise ModelRetry(
             "Roadmap contains unknown or duplicate concept IDs. Return valid unique IDs."
         )
-    if len(valid_roadmap) < minimum:
-        raise ModelRetry(
-            f"Roadmap is incomplete: return at least {minimum} goal-relevant concepts, "
-            "and include more whenever complete goal coverage requires them."
-        )
     if not ctx.deps.allow_roadmap_changes and valid_roadmap != ctx.deps.state.roadmap_concept_ids:
-        raise ModelRetry(
-            "This is a Daily Plan replan. Preserve roadmap_concept_ids exactly; only change ordered_items."
-        )
+        # The long-term roadmap is persisted learner state. Requiring the model
+        # to echo it byte-for-byte wastes output retries and makes the daily
+        # plan needlessly brittle.
+        output.roadmap_concept_ids = list(ctx.deps.state.roadmap_concept_ids)
     if not output.roadmap_coverage_rationale.strip():
         raise ModelRetry(
             "roadmap_coverage_rationale is required. Explain goal capabilities and roadmap coverage."
@@ -308,14 +307,14 @@ class PlanningWorker:
             proposed_roadmap_ids = validate_agent_roadmap(
                 plan_update.roadmap_concept_ids, curriculum_ids
             )
+            if not allow_roadmap_changes and state.roadmap_concept_ids:
+                proposed_roadmap_ids = list(state.roadmap_concept_ids)
+                plan_update.roadmap_concept_ids = proposed_roadmap_ids
             validated_items = [
                 item for item in plan_update.ordered_items if item.concept_id in all_valid_ids
             ]
             daily_ids = list(dict.fromkeys(item.concept_id for item in validated_items))
-            minimum = min(MINIMUM_ROADMAP_CONCEPTS, len(curriculum_ids))
-            if len(proposed_roadmap_ids) < minimum or not set(daily_ids).issubset(
-                set(proposed_roadmap_ids)
-            ):
+            if not proposed_roadmap_ids or not set(daily_ids).issubset(set(proposed_roadmap_ids)):
                 raise AgentOutputError(
                     "Planning Agent did not return a complete valid roadmap; existing roadmap was preserved."
                 )

@@ -189,9 +189,6 @@ def test_exposure_retention_goal_progress_formulation() -> None:
     assert summary.mastered_progress == 60.0
     assert summary.mastered_concept_rate == 50.0
 
-    # The communication field is a compatibility projection of exposure.
-    assert summary.communication_outcome_percent == 100.0
-
     # 0.4 * 100 + 0.6 * 60 = 76
     assert summary.goal_completion == 76.0
 

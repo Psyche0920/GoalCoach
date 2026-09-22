@@ -323,10 +323,8 @@ export interface ProgressSummary {
   masteredProgress: number;
   masteredConceptRate: number;
   goalCompletion: number;
-  communicationOutcomePercent: number;
   dailyEffectiveMinutes: number;
   totalEffectiveMinutes: number;
-  activeDays: number;
   dailyStudyHistory: Array<{
     date: string;
     effectiveMinutes: number;
