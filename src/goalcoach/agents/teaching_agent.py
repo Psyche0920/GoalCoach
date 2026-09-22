@@ -84,25 +84,10 @@ Explanation and exercises should be strongly relevant.
 
 teaching_agent = Agent(
     model=get_openrouter_model(),
-<<<<<<< HEAD
-    deps_type=TutorDeps,
-    result_type=TurnResponse,
-    system_prompt=(
-        "You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor. ",
-        "Always interact with the student in English, but provide Chinese examples with Pinyin. ",
-        "Lead the student through their targeted daily concepts. ",
-        "Do not lecture at length: present a concept, provide an example with Pinyin, ",
-        "and immediately ask the student to formulate a sentence. ",
-        "If they make an error, supply an intuitive hint rather than giving the solution.",
-        "Always response in English because the student cannot read Chinese feedback.",
-        "It's ok without tone marks, but always provide Pinyin for Chinese examples.",
-    ),
-=======
     deps_type=TeachingDeps,
     output_type=TeachingAction,
     output_retries=get_output_retries(),
     system_prompt=TEACHING_SYSTEM_PROMPT,
->>>>>>> main
 )
 
 
