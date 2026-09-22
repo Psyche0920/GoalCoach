@@ -166,11 +166,33 @@ async def main() -> None:
 
         options = exercise_payload.get("options")
         options_text = ""
+        is_matching = exercise_payload.get("exercise_type") == "matching" or (
+            isinstance(options, dict) and "left" in options and "right" in options
+        )
         if options and isinstance(options, list):
             options_lines = [
                 f"  [bold cyan]({i+1})[/bold cyan] {opt}" for i, opt in enumerate(options)
             ]
             options_text = "\n\n" + "\n".join(options_lines)
+        elif is_matching and isinstance(options, dict):
+            left_items = options.get("left", [])
+            right_items = options.get("right", [])
+            header = f"  {'[bold yellow]Chinese Words[/bold yellow]':<35} {'[bold green]Meanings[/bold green]'}"
+            lines = [header, "  " + "-" * 55]
+            max_len = max(len(left_items), len(right_items))
+            for i in range(max_len):
+                l_str = (
+                    f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']} ({left_items[i].get('pinyin', '')})"
+                    if i < len(left_items)
+                    else ""
+                )
+                r_str = (
+                    f"[bold cyan]({right_items[i]['id']})[/bold cyan] {right_items[i]['meaning']}"
+                    if i < len(right_items)
+                    else ""
+                )
+                lines.append(f"  {l_str:<35} {r_str}")
+            options_text = "\n\n" + "\n".join(lines)
 
         console.print(
             Panel(
@@ -182,7 +204,11 @@ async def main() -> None:
             )
         )
 
-        if options:
+        if is_matching:
+            console.print(
+                "[dim]Commands: Enter your pairs (e.g. 1C 2A 3E 4B 5D), 'help' for guidance, or 'exit' to quit.[/dim]"
+            )
+        elif options:
             console.print(
                 "[dim]Commands: Choose a number (e.g. 1), type your answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
             )

@@ -484,6 +484,17 @@ class DeterministicOrchestrator:
         from goalcoach.domain.models import RubricScores
 
         clean_answer = answer.strip()
+        if getattr(exercise, "exercise_type", "") == "matching" or (
+            isinstance(exercise.options, dict)
+            and "left" in exercise.options
+            and "right" in exercise.options
+        ):
+            from goalcoach.agents.grader_component import GraderComponent
+
+            return GraderComponent._grade_matching_exercise(
+                exercise, clean_answer, exercise.id or uuid4()
+            )
+
         accepted = [a.strip() for a in exercise.reference_answers]
         resolved = clean_answer
         if exercise.options and isinstance(exercise.options, list):

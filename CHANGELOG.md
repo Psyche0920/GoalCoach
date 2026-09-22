@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added query parameter `level: int | None = Query(default=None, ge=1, le=6)` to `GET /api/v1/curriculum/concepts` in `apps/api/routes/learning_loop.py`.
   - Added automated multi-level test cases in `tests/integration/test_content_repository.py` and `tests/unit/test_api_learning.py`.
 
+- **Mix-and-Match (Matching) Exercise Engine**:
+  - Added `'matching'` exercise type to domain `Exercise` model ([`src/goalcoach/domain/models.py`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/domain/models.py)) and web frontend types ([`apps/web/src/types.ts`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/apps/web/src/types.ts)).
+  - Implemented dynamic synthesis (`synthesize_matching_exercise` and `get_or_synthesize_matching_exercise`) in [`ContentService`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/infrastructure/persistence/content_service.py) creating 5-pair matching exercises from concept teaching cards with level-matched backfill.
+  - Implemented deterministic `<1ms` fast-path evaluation in [`GraderComponent`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/agents/grader_component.py) supporting flexible input formats (`1C 2A 3D...`, `1-C, 2-A...`, `C, A, D...`, JSON) with 80% passing threshold and `ERR_VOCAB_MATCH` tagging.
+  - Enhanced [`terminal_harness.py`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/agents/terminal_harness.py) to format matching exercises with clear, aligned two-column panels.
+  - Added comprehensive test suite [`tests/unit/test_matching_exercise.py`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/tests/unit/test_matching_exercise.py).
+
 ### Changed
 - **Content Persistence & Service Layer Generalization**:
   - Generalized `ContentRepository.list_concepts(hsk_level: int | None = None)` in `src/goalcoach/infrastructure/persistence/repositories.py` to retrieve all concepts stably ordered by `(hsk_level, sequence_no)` or filter by any level.

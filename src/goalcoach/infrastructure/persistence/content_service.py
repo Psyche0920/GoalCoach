@@ -78,5 +78,116 @@ class ContentService:
         """Query targeted remedial exercises cataloged under a specific error taxonomy tag."""
         return self._repo.get_remedial_exercises(error_tag, limit=limit)
 
+    def get_or_synthesize_matching_exercise(
+        self,
+        concept_id: str,
+        count: int = 5,
+    ) -> ContentExercise | None:
+        """Retrieve an existing matching exercise from the database or dynamically synthesize one."""
+        exercises = self._repo.get_exercises(concept_id, limit=10, randomize=False)
+        for ex in exercises:
+            if getattr(ex, "exercise_type", "") == "matching":
+                return ex
+        return self.synthesize_matching_exercise(concept_id, count=count)
+
+    def synthesize_matching_exercise(
+        self,
+        concept_id: str,
+        count: int = 5,
+    ) -> ContentExercise | None:
+        """Dynamically synthesizes a mix-and-match exercise from concept cards and vocabulary."""
+        import random
+        from goalcoach.infrastructure.persistence.models import ContentExercise
+
+        concept = self.get_concept(concept_id)
+        if not concept:
+            return None
+
+        cards = self.get_teaching_cards(concept_id)
+        vocab_items: list[tuple[str, str, str]] = []
+        seen_words: set[str] = set()
+
+        for c in cards:
+            word = c.prompt_zh or c.example_zh
+            meaning = c.meaning_en or c.explanation_en or c.example_en
+            pinyin = c.pinyin or c.example_pinyin or ""
+            if word and meaning and word not in seen_words:
+                vocab_items.append((word, pinyin, meaning))
+                seen_words.add(word)
+
+        for word in (concept.vocabulary_focus or []):
+            if word not in seen_words:
+                vocab_items.append((word, "", word))
+                seen_words.add(word)
+
+        if len(vocab_items) < count:
+            level_concepts = self.list_all_concepts(hsk_level=concept.hsk_level)
+            for other_c in level_concepts:
+                if other_c.concept_id == concept_id:
+                    continue
+                other_cards = self.get_teaching_cards(other_c.concept_id)
+                for oc in other_cards:
+                    w = oc.prompt_zh or oc.example_zh
+                    m = oc.meaning_en or oc.explanation_en or oc.example_en
+                    p = oc.pinyin or oc.example_pinyin or ""
+                    if w and m and w not in seen_words:
+                        vocab_items.append((w, p, m))
+                        seen_words.add(w)
+                    if len(vocab_items) >= count:
+                        break
+                if len(vocab_items) >= count:
+                    break
+
+        if len(vocab_items) < 2:
+            return None
+
+        selected = vocab_items[:count]
+        actual_count = len(selected)
+
+        left_items = [
+            {"id": str(i + 1), "word": word, "pinyin": pinyin}
+            for i, (word, pinyin, _) in enumerate(selected)
+        ]
+
+        meanings = [(i + 1, meaning) for i, (_, _, meaning) in enumerate(selected)]
+        rng = random.Random(concept_id)
+        shuffled_meanings = list(meanings)
+        rng.shuffle(shuffled_meanings)
+
+        letters = ["A", "B", "C", "D", "E", "F", "G", "H"][:actual_count]
+        right_items = [
+            {"id": letters[idx], "meaning": meaning, "orig_index": str(orig_i)}
+            for idx, (orig_i, meaning) in enumerate(shuffled_meanings)
+        ]
+
+        pairs: dict[str, str] = {}
+        for r_item in right_items:
+            pairs[r_item["orig_index"]] = r_item["id"]
+
+        shorthand_answer = " ".join(f"{num}{pairs[num]}" for num in sorted(pairs.keys(), key=int))
+        comma_answer = ", ".join(f"{num}-{pairs[num]}" for num in sorted(pairs.keys(), key=int))
+
+        return ContentExercise(
+            exercise_id=f"{concept_id}_match_auto",
+            concept_id=concept_id,
+            exercise_order=99,
+            exercise_type="matching",
+            prompt="Match each Chinese word with its English meaning.",
+            prompt_pinyin=None,
+            instruction=f"Match words 1-{actual_count} with meanings A-{letters[-1]} (e.g., {shorthand_answer}).",
+            answer={"pairs": pairs},
+            options={
+                "left": left_items,
+                "right": [{"id": r["id"], "meaning": r["meaning"]} for r in right_items],
+            },
+            accepted_answers=[shorthand_answer, comma_answer],
+            explanation=f"Correct vocabulary pairs: {shorthand_answer}",
+            target_tokens=[w for w, _, _ in selected],
+            error_tags=["vocab_meaning", "matching"],
+            difficulty=concept.difficulty,
+            points=10,
+            metadata_json={"pairs": pairs},
+        )
+
 
 __all__ = ["ContentService"]

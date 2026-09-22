@@ -99,7 +99,8 @@ export type ExerciseType =
   | 'fill_blank'
   | 'reorder'
   | 'translate_to_zh'
-  | 'dialogue_choice';
+  | 'dialogue_choice'
+  | 'matching';
 
 export interface Exercise {
   id: string;
@@ -112,7 +113,7 @@ export interface Exercise {
   promptPinyin?: string;
   instruction: string;
   answer: string; // JSON string or plain text
-  options?: string[];
+  options?: string[] | { left: Array<{ id: string; word: string; pinyin?: string }>; right: Array<{ id: string; meaning: string }> };
   acceptedAnswers: string[];
   explanation: string;
   targetTokens: string[];

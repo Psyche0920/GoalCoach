@@ -149,7 +149,7 @@ def serialize_exercise(ex: ContentExercise) -> dict[str, Any]:
         "promptPinyin": ex.prompt_pinyin,
         "instruction": ex.instruction,
         "answer": ans_str,
-        "options": ex.options if ex.options is not None else [],
+        "options": ex.options if ex.options is not None else ([] if ex.exercise_type != "matching" else {}),
         "acceptedAnswers": accepted,
         "explanation": ex.explanation or "",
         "targetTokens": ex.target_tokens or [],
@@ -381,6 +381,11 @@ async def get_curriculum_concept_details(
 
     cards = content_repo.get_teaching_cards(concept.concept_id)
     exercises = content_repo.get_exercises(concept.concept_id, limit=5, randomize=False)
+
+    content_svc = ContentService(content_repo)
+    matching_ex = content_svc.get_or_synthesize_matching_exercise(concept.concept_id)
+    if matching_ex and not any(getattr(e, "exercise_type", "") == "matching" for e in exercises):
+        exercises.append(matching_ex)
 
     return {
         "concept": serialize_concept(concept),
