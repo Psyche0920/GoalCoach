@@ -31,8 +31,8 @@ class ContentService:
         """Fetch a single curriculum concept by ID, slug, or title."""
         return self._repo.get_concept(concept_id)
 
-    def list_all_concepts(self, hsk_level: int = 1) -> list[CurriculumConcept]:
-        """List all active curriculum concepts in sequence order for a given HSK level."""
+    def list_all_concepts(self, hsk_level: int | None = None) -> list[CurriculumConcept]:
+        """List all active curriculum concepts in sequence order, optionally filtered by HSK level."""
         return self._repo.list_concepts(hsk_level=hsk_level)
 
     def get_teaching_cards(self, concept_id: str) -> list[TeachingCard]:

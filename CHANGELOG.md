@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.3] - 2026-09-22
+
+### Added
+- **Multi-Level Curriculum Access Across HSK 1–6**:
+  - Unlocked all 126 active curriculum concepts in Database #1 spanning HSK levels 1 through 6.
+  - Added query parameter `level: int | None = Query(default=None, ge=1, le=6)` to `GET /api/v1/curriculum/concepts` in `apps/api/routes/learning_loop.py`.
+  - Added automated multi-level test cases in `tests/integration/test_content_repository.py` and `tests/unit/test_api_learning.py`.
+
+### Changed
+- **Content Persistence & Service Layer Generalization**:
+  - Generalized `ContentRepository.list_concepts(hsk_level: int | None = None)` in `src/goalcoach/infrastructure/persistence/repositories.py` to retrieve all concepts stably ordered by `(hsk_level, sequence_no)` or filter by any level.
+  - Generalized `ContentService.list_all_concepts(hsk_level: int | None = None)` in `src/goalcoach/infrastructure/persistence/content_service.py`.
+- **Target-Aware Adaptive Planning & Grading**:
+  - Parameterized `planning_agent.py` (`PLANNING_SYSTEM_PROMPT`, `get_curriculum_catalog` tool, and `_heuristic_fallback`) to dynamically load concepts matching the learner's target HSK level (`state.goal.target_hsk_level`).
+  - Updated `orchestrator.py` to dynamically resolve `exercise.hsk_level` from the parent curriculum concept rather than forcing level 1.
+  - Synchronized progress summary calculations in learner aggregate and completion endpoints with the learner's target level.
+
+---
+
 ## [0.1.2] - 2026-09-21
 
 ### Removed

@@ -32,7 +32,7 @@ class PlanningDeps:
     content_service: ContentService
 
 
-PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for HSK1 Chinese.
+PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for Mandarin Chinese learners.
 Your responsibility is to decide what the learner should study next based on their goal, time budget, mastery history, and prerequisite graph.
 
 Key Pedagogical Rules:
@@ -61,8 +61,9 @@ planning_agent = Agent(
 
 @planning_agent.tool
 def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]]:
-    """List available HSK1 curriculum concepts with difficulty and sequencing."""
-    concepts = ctx.deps.content_service.list_all_concepts(hsk_level=1)
+    """List available curriculum concepts for the learner's target HSK level with difficulty and sequencing."""
+    target_level = ctx.deps.state.goal.target_hsk_level if ctx.deps.state.goal else 1
+    concepts = ctx.deps.content_service.list_all_concepts(hsk_level=target_level)
     return [
         {
             "concept_id": c.concept_id,
@@ -70,6 +71,7 @@ def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]
             "title_en": c.title_en,
             "sequence_no": c.sequence_no,
             "difficulty": c.difficulty,
+            "hsk_level": c.hsk_level,
         }
         for c in concepts
     ]
@@ -187,7 +189,10 @@ class PlanningWorker:
         available_minutes: int,
     ) -> PlanUpdate:
         """Deterministic algorithm guaranteeing valid PlanUpdate execution."""
-        all_concepts = content_service.list_all_concepts()
+        target_level = state.goal.target_hsk_level if state.goal else None
+        all_concepts = content_service.list_all_concepts(hsk_level=target_level)
+        if not all_concepts:
+            all_concepts = content_service.list_all_concepts()
         all_ids = [c.concept_id for c in all_concepts] or ["hsk1_c01", "hsk1_c02"]
         prereq_graph = content_service.get_all_prerequisites()
 
@@ -280,11 +285,12 @@ class PlanningWorker:
         # If nothing allocated, add first curriculum concept
         if not items:
             default_id = all_ids[0]
+            level_tag = f"HSK {target_level}" if target_level else "Mandarin"
             items.append(
                 PlanItem(
                     concept_id=default_id,
                     kind=PlanItemKind.NEW,
-                    objective=f"Introduction to HSK1: {default_id}",
+                    objective=f"Introduction to {level_tag}: {default_id}",
                     estimated_minutes=min(10, available_minutes),
                 )
             )

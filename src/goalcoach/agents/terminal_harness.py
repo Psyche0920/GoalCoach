@@ -212,12 +212,30 @@ async def main() -> None:
             if help_action.exercise_payload:
                 exercise_payload = help_action.exercise_payload
             help_options = exercise_payload.get("options")
-            help_prompt_note = ""
             if help_options and isinstance(help_options, list):
                 help_lines = [
                     f"  [bold cyan]({i+1})[/bold cyan] {opt}" for i, opt in enumerate(help_options)
                 ]
                 help_prompt_note = "\n\n[bold green]Options:[/bold green]\n" + "\n".join(help_lines)
+            elif help_options and isinstance(help_options, dict) and "left" in help_options:
+                left_items = help_options.get("left", [])
+                right_items = help_options.get("right", [])
+                header = f"  {'[bold yellow]Chinese Words[/bold yellow]':<35} {'[bold green]Meanings[/bold green]'}"
+                lines = [header, "  " + "-" * 55]
+                max_len = max(len(left_items), len(right_items))
+                for i in range(max_len):
+                    l_str = (
+                        f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']} ({left_items[i].get('pinyin', '')})"
+                        if i < len(left_items)
+                        else ""
+                    )
+                    r_str = (
+                        f"[bold cyan]({right_items[i]['id']})[/bold cyan] {right_items[i]['meaning']}"
+                        if i < len(right_items)
+                        else ""
+                    )
+                    lines.append(f"  {l_str:<35} {r_str}")
+                help_prompt_note = "\n\n[bold green]Pairs to Match:[/bold green]\n" + "\n".join(lines)
 
             console.print(
                 Panel(

@@ -9,7 +9,9 @@ Implements PRD Section 10:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -84,10 +86,10 @@ class GraderComponent:
 
         # 1. Fast Path: Exact reference answer match (bypasses LLM, <5ms)
         accepted = [ans.strip() for ans in exercise.reference_answers if ans]
-        
+
         # If exercise has options (MCQ), check if user selected by index or letter (e.g. 1, 2, A, B)
         resolved_answer = clean_student_ans
-        if exercise.options and len(exercise.options) > 0:
+        if exercise.options and isinstance(exercise.options, list) and len(exercise.options) > 0:
             if clean_student_ans.isdigit():
                 idx = int(clean_student_ans) - 1
                 if 0 <= idx < len(exercise.options):

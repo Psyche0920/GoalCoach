@@ -281,14 +281,18 @@ class DeterministicOrchestrator:
             if ans_val and ans_val not in ref_answers:
                 ref_answers.append(ans_val)
 
+            concept = self.content_service.get_concept(content_ex.concept_id)
+            exercise_level = concept.hsk_level if concept else (state.goal.target_hsk_level if state.goal else 1)
             exercise = Exercise(
                 id=content_ex.exercise_id,
                 concept_id=content_ex.concept_id,
+                exercise_type=getattr(content_ex, "exercise_type", "meaning_mcq"),
                 prompt=content_ex.prompt,
                 target_instruction=content_ex.instruction or "",
                 reference_answers=ref_answers,
                 options=content_ex.options,
-                hsk_level=1,
+                hsk_level=exercise_level,
+                metadata=content_ex.metadata_json or {},
             )
         else:
             raise ValueError(
@@ -482,7 +486,7 @@ class DeterministicOrchestrator:
         clean_answer = answer.strip()
         accepted = [a.strip() for a in exercise.reference_answers]
         resolved = clean_answer
-        if exercise.options:
+        if exercise.options and isinstance(exercise.options, list):
             if clean_answer.isdigit():
                 idx = int(clean_answer) - 1
                 if 0 <= idx < len(exercise.options):
