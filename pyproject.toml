@@ -39,7 +39,7 @@ where = ["src"]
 pythonpath = [".", "src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-adopts = "-p no:logfire"
+addopts = "-p no:logfire"
 
 [tool.ruff]
 line-length = 100
