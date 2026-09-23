@@ -149,7 +149,9 @@ def serialize_exercise(ex: ContentExercise) -> dict[str, Any]:
         "promptPinyin": ex.prompt_pinyin,
         "instruction": ex.instruction,
         "answer": ans_str,
-        "options": ex.options if ex.options is not None else ([] if ex.exercise_type != "matching" else {}),
+        "options": ex.options
+        if ex.options is not None
+        else ([] if ex.exercise_type != "matching" else {}),
         "acceptedAnswers": accepted,
         "explanation": ex.explanation or "",
         "targetTokens": ex.target_tokens or [],
@@ -361,7 +363,9 @@ async def complete_concept_endpoint(
 
 @router.get("/curriculum/concepts")
 async def list_curriculum_concepts(
-    level: int | None = Query(default=None, ge=1, le=6, description="Optional HSK level filter (1-6)"),
+    level: int | None = Query(
+        default=None, ge=1, le=6, description="Optional HSK level filter (1-6)"
+    ),
     content_repo: ContentRepository = Depends(get_content_repo),
 ) -> list[dict[str, Any]]:
     """List all active curriculum concepts, optionally filtered by HSK level."""

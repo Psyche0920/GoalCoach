@@ -8,7 +8,7 @@ import pytest
 
 from goalcoach.agents.grader_component import GraderComponent, parse_matching_pairs
 from goalcoach.application.orchestrator import DeterministicOrchestrator
-from goalcoach.domain.models import AnswerSubmission, Exercise, LearningGoal
+from goalcoach.domain.models import Exercise, LearningGoal
 from goalcoach.infrastructure.persistence import (
     ContentRepository,
     ContentService,
@@ -45,7 +45,10 @@ def test_parse_matching_pairs_formats():
     assert parse_matching_pairs("C, A, D, B, E") == expected
 
     # Format 5: JSON string
-    assert parse_matching_pairs('{"pairs": {"1": "C", "2": "A", "3": "D", "4": "B", "5": "E"}}') == expected
+    assert (
+        parse_matching_pairs('{"pairs": {"1": "C", "2": "A", "3": "D", "4": "B", "5": "E"}}')
+        == expected
+    )
 
     # Empty / invalid input
     assert parse_matching_pairs("") == {}
@@ -77,7 +80,7 @@ def test_synthesize_matching_exercise_hsk1(content_service: ContentService):
     # Check answer pairs
     pairs = ex.answer["pairs"]
     assert len(pairs) == 4
-    assert all(k in ("1", "2", "3", "4") for k in pairs.keys())
+    assert all(k in ("1", "2", "3", "4") for k in pairs)
     assert all(v in ("A", "B", "C", "D") for v in pairs.values())
 
 
@@ -155,7 +158,11 @@ def test_orchestrator_fallback_grade_matching():
         reference_answers=["1C 2A 3D"],
         options={
             "left": [{"id": "1", "word": "A"}, {"id": "2", "word": "B"}, {"id": "3", "word": "C"}],
-            "right": [{"id": "A", "meaning": "B"}, {"id": "B", "meaning": "C"}, {"id": "C", "meaning": "A"}],
+            "right": [
+                {"id": "A", "meaning": "B"},
+                {"id": "B", "meaning": "C"},
+                {"id": "C", "meaning": "A"},
+            ],
         },
         metadata={"pairs": {"1": "C", "2": "A", "3": "D"}},
     )
@@ -195,10 +202,14 @@ def test_matching_exercise_meanings_are_english_only(content_service: ContentSer
                 meaning = item["meaning"]
                 assert meaning, "Meaning should not be empty"
                 # Meaning must have ASCII letters
-                assert any(c.isascii() and c.isalpha() for c in meaning), f"Meaning '{meaning}' should contain English letters"
+                assert any(c.isascii() and c.isalpha() for c in meaning), (
+                    f"Meaning '{meaning}' should contain English letters"
+                )
                 # Meaning must not be identical to any Chinese word in the left column
                 left_words = [l["word"] for l in ex.options["left"]]
-                assert meaning not in left_words, f"Meaning '{meaning}' should not equal a Chinese word"
+                assert meaning not in left_words, (
+                    f"Meaning '{meaning}' should not equal a Chinese word"
+                )
 
 
 def test_planner_progresses_from_current_mastery_to_target_level(content_service: ContentService):
@@ -207,12 +218,14 @@ def test_planner_progresses_from_current_mastery_to_target_level(content_service
     rather than jumping ahead to the target level.
     """
     from goalcoach.agents.planning_agent import PlanningWorker
-    from goalcoach.domain.models import ConceptMastery, LearnerState, LearningGoal
+    from goalcoach.domain.models import ConceptMastery, LearnerState
 
     planner = PlanningWorker()
     state = LearnerState(
         learner_id="test_learner_progression",
-        goal=LearningGoal(title="Target Higher Milestone", target_hsk_level=3, daily_available_minutes=20),
+        goal=LearningGoal(
+            title="Target Higher Milestone", target_hsk_level=3, daily_available_minutes=20
+        ),
         mastery={
             "hsk1_c01": ConceptMastery(concept_id="hsk1_c01", mastery_score=1.0),
             "hsk1_c02": ConceptMastery(concept_id="hsk1_c02", mastery_score=1.0),
@@ -232,7 +245,7 @@ def test_planner_progresses_from_current_mastery_to_target_level(content_service
 def test_resolve_active_level_unlocks_progressively(content_service: ContentService):
     """Verify that resolve_active_level only unlocks higher levels once current level is mastered."""
     from goalcoach.agents.planning_agent import resolve_active_level
-    from goalcoach.domain.models import ConceptMastery, LearnerState, LearningGoal
+    from goalcoach.domain.models import ConceptMastery, LearnerState
 
     # 1. Partial HSK 1 mastery -> active level remains HSK 1
     state = LearnerState(
@@ -262,4 +275,3 @@ def test_resolve_active_level_unlocks_progressively(content_service: ContentServ
     }
     state.mastery = {**complete_hsk1_mastery, **complete_hsk2_mastery}
     assert resolve_active_level(state, content_service) == 3
-

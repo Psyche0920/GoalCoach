@@ -82,7 +82,7 @@ def parse_matching_pairs(text: str) -> dict[str, str]:
                 return {str(k).upper(): str(v).upper() for k, v in data["pairs"].items()}
             return {str(k).upper(): str(v).upper() for k, v in data.items()}
         except Exception:
-            pass
+            logger.debug("Failed to parse text as JSON matching pairs: %s", text)
 
     # 2. Key-value matching like "1C 2A 3D 4B 5E", "1-C, 2-A", "1:C 2:A"
     pair_matches = re.findall(r"(\d+)\s*[-:=]?\s*([A-Za-z]+)", text)
@@ -117,7 +117,11 @@ class GraderComponent:
                 expected_pairs = parsed
                 break
 
-        if not expected_pairs and isinstance(exercise.metadata, dict) and "pairs" in exercise.metadata:
+        if (
+            not expected_pairs
+            and isinstance(exercise.metadata, dict)
+            and "pairs" in exercise.metadata
+        ):
             expected_pairs = {
                 str(k).upper(): str(v).upper() for k, v in exercise.metadata["pairs"].items()
             }

@@ -312,7 +312,7 @@ class PlanningWorker:
         # If nothing allocated, add first curriculum concept
         if not items:
             default_id = all_ids[0]
-            level_tag = f"HSK {target_level}" if target_level else "Mandarin"
+            level_tag = f"HSK {active_level}" if active_level else "Mandarin"
             items.append(
                 PlanItem(
                     concept_id=default_id,

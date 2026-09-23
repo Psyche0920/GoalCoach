@@ -117,7 +117,9 @@ async def main(target_level: int = 1) -> None:
     learner_id = "terminal_learner_001"
 
     # Step 1: GOAL_CREATED
-    with console.status(f"[bold cyan]Configuring Goal & Planning Curriculum for HSK {target_level}...[/bold cyan]"):
+    with console.status(
+        f"[bold cyan]Configuring Goal & Planning Curriculum for HSK {target_level}...[/bold cyan]"
+    ):
         goal_response = await orchestrator.handle_event(
             event_type=EventType.GOAL_CREATED,
             learner_id=learner_id,
@@ -171,7 +173,7 @@ async def main(target_level: int = 1) -> None:
         )
         if options and isinstance(options, list):
             options_lines = [
-                f"  [bold cyan]({i+1})[/bold cyan] {opt}" for i, opt in enumerate(options)
+                f"  [bold cyan]({i + 1})[/bold cyan] {opt}" for i, opt in enumerate(options)
             ]
             options_text = "\n\n" + "\n".join(options_lines)
         elif is_matching and isinstance(options, dict):
@@ -182,7 +184,9 @@ async def main(target_level: int = 1) -> None:
             max_len = max(len(left_items), len(right_items))
             for i in range(max_len):
                 if i < len(left_items):
-                    pinyin_part = f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                    pinyin_part = (
+                        f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                    )
                     l_str = f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']}{pinyin_part}"
                 else:
                     l_str = ""
@@ -240,7 +244,8 @@ async def main(target_level: int = 1) -> None:
             help_options = exercise_payload.get("options")
             if help_options and isinstance(help_options, list):
                 help_lines = [
-                    f"  [bold cyan]({i+1})[/bold cyan] {opt}" for i, opt in enumerate(help_options)
+                    f"  [bold cyan]({i + 1})[/bold cyan] {opt}"
+                    for i, opt in enumerate(help_options)
                 ]
                 help_prompt_note = "\n\n[bold green]Options:[/bold green]\n" + "\n".join(help_lines)
             elif help_options and isinstance(help_options, dict) and "left" in help_options:
@@ -251,7 +256,9 @@ async def main(target_level: int = 1) -> None:
                 max_len = max(len(left_items), len(right_items))
                 for i in range(max_len):
                     if i < len(left_items):
-                        pinyin_part = f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                        pinyin_part = (
+                            f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                        )
                         l_str = f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']}{pinyin_part}"
                     else:
                         l_str = ""
@@ -261,7 +268,9 @@ async def main(target_level: int = 1) -> None:
                         else ""
                     )
                     lines.append(f"  {l_str:<35} {r_str}")
-                help_prompt_note = "\n\n[bold green]Pairs to Match:[/bold green]\n" + "\n".join(lines)
+                help_prompt_note = "\n\n[bold green]Pairs to Match:[/bold green]\n" + "\n".join(
+                    lines
+                )
 
             console.print(
                 Panel(
@@ -323,7 +332,6 @@ async def main(target_level: int = 1) -> None:
 def run_cli() -> None:
     """CLI entrypoint for GoalCoach interactive terminal harness."""
     import argparse
-    import sys
 
     parser = argparse.ArgumentParser(description="GoalCoach Interactive Terminal Study Harness")
     parser.add_argument(

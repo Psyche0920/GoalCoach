@@ -282,7 +282,9 @@ class DeterministicOrchestrator:
                 ref_answers.append(ans_val)
 
             concept = self.content_service.get_concept(content_ex.concept_id)
-            exercise_level = concept.hsk_level if concept else (state.goal.target_hsk_level if state.goal else 1)
+            exercise_level = (
+                concept.hsk_level if concept else (state.goal.target_hsk_level if state.goal else 1)
+            )
             exercise = Exercise(
                 id=content_ex.exercise_id,
                 concept_id=content_ex.concept_id,

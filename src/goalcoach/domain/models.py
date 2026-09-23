@@ -230,7 +230,9 @@ class Exercise(DomainBaseModel):
     concept_id: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1)
     target_instruction: str = Field(min_length=1)
-    exercise_type: str = Field(default="mcq", description="Type of exercise e.g. mcq, matching, fill_blank")
+    exercise_type: str = Field(
+        default="mcq", description="Type of exercise e.g. mcq, matching, fill_blank"
+    )
     hsk_level: int = Field(default=3, ge=1, le=6)
     reference_answers: list[str] = Field(default_factory=list)
     options: list[str] | dict[str, Any] | None = Field(

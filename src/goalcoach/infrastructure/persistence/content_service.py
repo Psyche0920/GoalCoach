@@ -78,10 +78,15 @@ class ContentService:
         randomize: bool = False,
     ) -> list[ContentExercise]:
         """Retrieve practice exercises targeting a specific concept."""
-        repo_exercises = list(self._repo.get_exercises(concept_id, limit=limit, randomize=randomize))
+        repo_exercises = list(
+            self._repo.get_exercises(concept_id, limit=limit, randomize=randomize)
+        )
         concept = self.get_concept(concept_id)
         # Mix-and-match is ONLY for vocabulary concepts or concepts with explicit vocabulary focus
-        if concept and (concept.concept_type == "vocabulary" or (concept.vocabulary_focus and len(concept.vocabulary_focus) >= 3)):
+        if concept and (
+            concept.concept_type == "vocabulary"
+            or (concept.vocabulary_focus and len(concept.vocabulary_focus) >= 3)
+        ):
             matching_ex = self.get_or_synthesize_matching_exercise(concept_id)
             if matching_ex:
                 existing_ids = {e.exercise_id for e in repo_exercises}
@@ -116,6 +121,7 @@ class ContentService:
     ) -> ContentExercise | None:
         """Dynamically synthesizes a mix-and-match exercise strictly from vocabulary words."""
         import random
+
         from goalcoach.infrastructure.persistence.models import ContentExercise
 
         concept = self.get_concept(concept_id)
@@ -148,10 +154,8 @@ class ContentService:
             if not has_ascii_alpha:
                 return False
             # Meaning should not be predominantly Chinese
-            hanzi_count = sum(1 for c in meaning_str if '\u4e00' <= c <= '\u9fff')
-            if hanzi_count > 0 and hanzi_count >= len(meaning_str) / 2:
-                return False
-            return True
+            hanzi_count = sum(1 for c in meaning_str if "\u4e00" <= c <= "\u9fff")
+            return not (hanzi_count > 0 and hanzi_count >= len(meaning_str) / 2)
 
         # 1. Collect strictly vocabulary cards (skip grammar templates / rules)
         for c in cards:
@@ -160,12 +164,18 @@ class ContentService:
             word = c.prompt_zh
             meaning = c.meaning_en
             pinyin = c.pinyin or ""
-            if word and meaning and _is_clean_vocab_word(word) and _is_valid_english_meaning(meaning, word) and word not in seen_words:
+            if (
+                word
+                and meaning
+                and _is_clean_vocab_word(word)
+                and _is_valid_english_meaning(meaning, word)
+                and word not in seen_words
+            ):
                 vocab_items.append((word, pinyin, meaning))
                 seen_words.add(word)
 
         # 2. Add words from vocabulary_focus only if a genuine English meaning is found
-        for word in (concept.vocabulary_focus or []):
+        for word in concept.vocabulary_focus or []:
             if _is_clean_vocab_word(word) and word not in seen_words:
                 match_meaning = ""
                 match_pinyin = ""
@@ -208,7 +218,13 @@ class ContentService:
                     w = oc.prompt_zh
                     m = oc.meaning_en
                     p = oc.pinyin or ""
-                    if w and m and _is_clean_vocab_word(w) and _is_valid_english_meaning(m, w) and w not in seen_words:
+                    if (
+                        w
+                        and m
+                        and _is_clean_vocab_word(w)
+                        and _is_valid_english_meaning(m, w)
+                        and w not in seen_words
+                    ):
                         vocab_items.append((w, p, m))
                         seen_words.add(w)
                     if len(vocab_items) >= count:

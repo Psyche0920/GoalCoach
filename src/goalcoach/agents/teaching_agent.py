@@ -154,10 +154,7 @@ class TeachingWorker:
             learner_query=learner_query,
         )
 
-        relevant_errors = [
-            err.code for err in state.error_profile if err.concept_id == concept_id]
-        interests_str = ", ".join(
-            state.context_interests) if state.context_interests else "general"
+        interests_str = ", ".join(state.context_interests) if state.context_interests else "general"
 
         options_hint = ""
         if getattr(candidate_exercise, "options", None):
@@ -212,8 +209,7 @@ class TeachingWorker:
             randomize=False,
         )
         if not all_exercises:
-            raise LookupError(
-                f"No curriculum exercise found for concept {concept_id}")
+            raise LookupError(f"No curriculum exercise found for concept {concept_id}")
 
         completed = set(state.today_completed_exercise_ids) if state else set()
         mistakes = set(state.today_mistake_exercise_ids) if state else set()
@@ -225,12 +221,10 @@ class TeachingWorker:
                 if e.exercise_id not in completed and e.exercise_id not in mistakes
             ]
             if not candidates:
-                candidates = [
-                    e for e in all_exercises if e.exercise_id not in completed]
+                candidates = [e for e in all_exercises if e.exercise_id not in completed]
             return candidates[0] if candidates else all_exercises[0]
         else:
-            uncompleted = [
-                e for e in all_exercises if e.exercise_id not in completed]
+            uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
             return uncompleted[0] if uncompleted else all_exercises[0]
 
     @staticmethod
@@ -347,8 +341,7 @@ class TeachingWorker:
 class TutorResponse(BaseModel):
     """Backwards-compatible legacy tutor response structure."""
 
-    reply: str = Field(
-        default="", description="Explanations, exercises, or feedback with Pinyin")
+    reply: str = Field(default="", description="Explanations, exercises, or feedback with Pinyin")
     grammar_points: list[str] = Field(default_factory=list)
     suggested_practice: str | None = Field(default=None)
     concept_id: str = Field(default="hsk1_c01")
