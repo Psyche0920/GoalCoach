@@ -318,15 +318,21 @@ class PlanningWorker:
                 if allocated_minutes >= available_minutes or len(items) >= 4:
                     break
 
-        # If nothing allocated, add first curriculum concept
+        # If nothing allocated, pick the first unmastered concept in sequence (or the first curriculum concept)
         if not items:
-            default_id = all_ids[0]
+            unmastered = [
+                cid
+                for cid in all_ids
+                if cid not in state.mastery or state.mastery[cid].mastery_score < 0.50
+            ]
+            default_id = unmastered[0] if unmastered else all_ids[0]
+            kind = PlanItemKind.REMEDIAL if default_id in state.mastery else PlanItemKind.NEW
             level_tag = f"HSK {active_level}" if active_level else "Mandarin"
             items.append(
                 PlanItem(
                     concept_id=default_id,
-                    kind=PlanItemKind.NEW,
-                    objective=f"Introduction to {level_tag}: {default_id}",
+                    kind=kind,
+                    objective=f"Practice {level_tag} concept: {default_id}",
                     estimated_minutes=min(10, available_minutes),
                 )
             )

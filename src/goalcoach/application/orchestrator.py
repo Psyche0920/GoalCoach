@@ -440,11 +440,18 @@ class DeterministicOrchestrator:
                 break
 
         if not items:
+            unmastered = [
+                cid
+                for cid in concept_ids
+                if cid not in state.mastery or state.mastery[cid].mastery_score < 0.80
+            ]
+            default_id = unmastered[0] if unmastered else concept_ids[0]
+            kind = PlanItemKind.REMEDIAL if default_id in state.mastery else PlanItemKind.NEW
             items.append(
                 PlanItem(
-                    concept_id=concept_ids[0],
-                    kind=PlanItemKind.NEW,
-                    objective="Introductory HSK1 concept",
+                    concept_id=default_id,
+                    kind=kind,
+                    objective=f"Practice concept {default_id}",
                     estimated_minutes=5,
                 )
             )
