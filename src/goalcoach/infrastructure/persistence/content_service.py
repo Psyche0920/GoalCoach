@@ -31,9 +31,13 @@ class ContentService:
         """Fetch a single curriculum concept by ID, slug, or title."""
         return self._repo.get_concept(concept_id)
 
-    def list_all_concepts(self, hsk_level: int | None = None) -> list[CurriculumConcept]:
-        """List all active curriculum concepts in sequence order, optionally filtered by HSK level."""
-        return self._repo.list_concepts(hsk_level=hsk_level)
+    def list_all_concepts(
+        self,
+        hsk_level: int | None = None,
+        max_hsk_level: int | None = None,
+    ) -> list[CurriculumConcept]:
+        """List all active curriculum concepts in sequence order, optionally filtered by HSK level or max level."""
+        return self._repo.list_concepts(hsk_level=hsk_level, max_hsk_level=max_hsk_level)
 
     def get_teaching_cards(self, concept_id: str) -> list[TeachingCard]:
         """Fetch all teaching cards ordered for a concept."""
@@ -58,8 +62,14 @@ class ContentService:
         return self._repo.get_prerequisites()
 
     def get_exercise(self, exercise_id: str) -> ContentExercise | None:
-        """Lookup an exercise by its unique content ID."""
-        return self._repo.get_exercise(exercise_id)
+        """Lookup an exercise by its unique content ID or synthesize if auto matching."""
+        repo_ex = self._repo.get_exercise(exercise_id)
+        if repo_ex is not None:
+            return repo_ex
+        if exercise_id.endswith("_match_auto"):
+            concept_id = exercise_id[:-11]
+            return self.synthesize_matching_exercise(concept_id)
+        return None
 
     def get_exercises_for_concept(
         self,
@@ -68,7 +78,16 @@ class ContentService:
         randomize: bool = False,
     ) -> list[ContentExercise]:
         """Retrieve practice exercises targeting a specific concept."""
-        return self._repo.get_exercises(concept_id, limit=limit, randomize=randomize)
+        repo_exercises = list(self._repo.get_exercises(concept_id, limit=limit, randomize=randomize))
+        concept = self.get_concept(concept_id)
+        # Mix-and-match is ONLY for vocabulary concepts or concepts with explicit vocabulary focus
+        if concept and (concept.concept_type == "vocabulary" or (concept.vocabulary_focus and len(concept.vocabulary_focus) >= 3)):
+            matching_ex = self.get_or_synthesize_matching_exercise(concept_id)
+            if matching_ex:
+                existing_ids = {e.exercise_id for e in repo_exercises}
+                if matching_ex.exercise_id not in existing_ids:
+                    return [matching_ex] + repo_exercises
+        return repo_exercises
 
     def get_remedial_exercises(
         self,
@@ -95,7 +114,7 @@ class ContentService:
         concept_id: str,
         count: int = 5,
     ) -> ContentExercise | None:
-        """Dynamically synthesizes a mix-and-match exercise from concept cards and vocabulary."""
+        """Dynamically synthesizes a mix-and-match exercise strictly from vocabulary words."""
         import random
         from goalcoach.infrastructure.persistence.models import ContentExercise
 
@@ -107,19 +126,76 @@ class ContentService:
         vocab_items: list[tuple[str, str, str]] = []
         seen_words: set[str] = set()
 
+        def _is_clean_vocab_word(word: str) -> bool:
+            """Check that an item is a pure vocabulary word, not a grammar template or sentence."""
+            if not word or len(word) > 8:
+                return False
+            # Exclude grammar placeholders like 'A', 'B', '+', '...', '~'
+            for bad_char in ("A", "B", "C", "+", "...", "~", "？", "?", "。", "!"):
+                if bad_char in word:
+                    return False
+            return True
+
+        def _is_valid_english_meaning(meaning: str, word: str) -> bool:
+            """Ensure meaning is genuinely English, not missing, not Chinese characters, and not the word itself."""
+            if not meaning or not meaning.strip():
+                return False
+            meaning_str = meaning.strip()
+            if meaning_str == word:
+                return False
+            # Meaning must contain ASCII letters
+            has_ascii_alpha = any(c.isascii() and c.isalpha() for c in meaning_str)
+            if not has_ascii_alpha:
+                return False
+            # Meaning should not be predominantly Chinese
+            hanzi_count = sum(1 for c in meaning_str if '\u4e00' <= c <= '\u9fff')
+            if hanzi_count > 0 and hanzi_count >= len(meaning_str) / 2:
+                return False
+            return True
+
+        # 1. Collect strictly vocabulary cards (skip grammar templates / rules)
         for c in cards:
-            word = c.prompt_zh or c.example_zh
-            meaning = c.meaning_en or c.explanation_en or c.example_en
-            pinyin = c.pinyin or c.example_pinyin or ""
-            if word and meaning and word not in seen_words:
+            if getattr(c, "card_type", "") in ("grammar", "pattern", "rule", "structure"):
+                continue
+            word = c.prompt_zh
+            meaning = c.meaning_en
+            pinyin = c.pinyin or ""
+            if word and meaning and _is_clean_vocab_word(word) and _is_valid_english_meaning(meaning, word) and word not in seen_words:
                 vocab_items.append((word, pinyin, meaning))
                 seen_words.add(word)
 
+        # 2. Add words from vocabulary_focus only if a genuine English meaning is found
         for word in (concept.vocabulary_focus or []):
-            if word not in seen_words:
-                vocab_items.append((word, "", word))
-                seen_words.add(word)
+            if _is_clean_vocab_word(word) and word not in seen_words:
+                match_meaning = ""
+                match_pinyin = ""
+                for c in cards:
+                    if c.prompt_zh == word or c.example_zh == word:
+                        candidate = c.meaning_en or c.explanation_en or ""
+                        if _is_valid_english_meaning(candidate, word):
+                            match_meaning = candidate
+                            match_pinyin = c.pinyin or c.example_pinyin or ""
+                            break
 
+                # If not found in concept cards, look across same-level cards
+                if not match_meaning:
+                    level_concepts = self.list_all_concepts(hsk_level=concept.hsk_level)
+                    for other_c in level_concepts:
+                        if match_meaning:
+                            break
+                        for oc in self.get_teaching_cards(other_c.concept_id):
+                            if oc.prompt_zh == word or oc.example_zh == word:
+                                candidate = oc.meaning_en or oc.explanation_en or ""
+                                if _is_valid_english_meaning(candidate, word):
+                                    match_meaning = candidate
+                                    match_pinyin = oc.pinyin or oc.example_pinyin or ""
+                                    break
+
+                if match_meaning and _is_valid_english_meaning(match_meaning, word):
+                    vocab_items.append((word, match_pinyin, match_meaning))
+                    seen_words.add(word)
+
+        # 3. Backfill from same-level vocabulary cards if needed
         if len(vocab_items) < count:
             level_concepts = self.list_all_concepts(hsk_level=concept.hsk_level)
             for other_c in level_concepts:
@@ -127,10 +203,12 @@ class ContentService:
                     continue
                 other_cards = self.get_teaching_cards(other_c.concept_id)
                 for oc in other_cards:
-                    w = oc.prompt_zh or oc.example_zh
-                    m = oc.meaning_en or oc.explanation_en or oc.example_en
-                    p = oc.pinyin or oc.example_pinyin or ""
-                    if w and m and w not in seen_words:
+                    if getattr(oc, "card_type", "") in ("grammar", "pattern", "rule", "structure"):
+                        continue
+                    w = oc.prompt_zh
+                    m = oc.meaning_en
+                    p = oc.pinyin or ""
+                    if w and m and _is_clean_vocab_word(w) and _is_valid_english_meaning(m, w) and w not in seen_words:
                         vocab_items.append((w, p, m))
                         seen_words.add(w)
                     if len(vocab_items) >= count:

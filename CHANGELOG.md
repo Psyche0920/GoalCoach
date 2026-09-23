@@ -16,11 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added automated multi-level test cases in `tests/integration/test_content_repository.py` and `tests/unit/test_api_learning.py`.
 
 - **Mix-and-Match (Matching) Exercise Engine**:
-  - Added `'matching'` exercise type to domain `Exercise` model ([`src/goalcoach/domain/models.py`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/domain/models.py)) and web frontend types ([`apps/web/src/types.ts`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/apps/web/src/types.ts)).
-  - Implemented dynamic synthesis (`synthesize_matching_exercise` and `get_or_synthesize_matching_exercise`) in [`ContentService`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/infrastructure/persistence/content_service.py) creating 5-pair matching exercises from concept teaching cards with level-matched backfill.
-  - Implemented deterministic `<1ms` fast-path evaluation in [`GraderComponent`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/agents/grader_component.py) supporting flexible input formats (`1C 2A 3D...`, `1-C, 2-A...`, `C, A, D...`, JSON) with 80% passing threshold and `ERR_VOCAB_MATCH` tagging.
-  - Enhanced [`terminal_harness.py`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/src/goalcoach/agents/terminal_harness.py) to format matching exercises with clear, aligned two-column panels.
-  - Added comprehensive test suite [`tests/unit/test_matching_exercise.py`](file:///mnt/c/Users/Karla/OneDrive/Desktop/GoalCoach/tests/unit/test_matching_exercise.py).
+  - Added `'matching'` exercise type to domain `Exercise` model (`src/goalcoach/domain/models.py`) and web frontend types (`apps/web/src/types.ts`).
+  - Implemented dynamic synthesis (`synthesize_matching_exercise` and `get_or_synthesize_matching_exercise`) in `ContentService` (`src/goalcoach/infrastructure/persistence/content_service.py`) creating 5-pair matching exercises from concept teaching cards with level-matched backfill.
+  - Implemented deterministic `<1ms` fast-path evaluation in `GraderComponent` (`src/goalcoach/agents/grader_component.py`) supporting flexible input formats (`1C 2A 3D...`, `1-C, 2-A...`, `C, A, D...`, JSON) with 80% passing threshold and `ERR_VOCAB_MATCH` tagging.
+  - Enhanced `terminal_harness.py` (`src/goalcoach/agents/terminal_harness.py`) to format matching exercises with clear, aligned two-column panels.
+  - Automatically prepended synthesized matching exercises into `ContentService.get_exercises_for_concept` (`src/goalcoach/infrastructure/persistence/content_service.py`) so mix-and-match exercises serve as the primary gateway for vocabulary acquisition.
+  - Streamlined `TEACHING_SYSTEM_PROMPT` (`src/goalcoach/agents/teaching_agent.py`) to produce ultra-concise, bite-sized lessons (<60 words for explanations, <40 words for hints/retries) and explicitly scaffold mix-and-match pair matching.
+  - Added comprehensive test suite `tests/unit/test_matching_exercise.py`.
+
+- **Progressive Reachable HSK Level Window & Curriculum Sequencing**:
+  - Implemented `resolve_active_level(state, content_service)` in `src/goalcoach/agents/planning_agent.py` to dynamically determine the learner's active reachable HSK proficiency window based on verified concept mastery ($\ge 0.50$).
+  - Updated `get_curriculum_catalog` agent tool in `src/goalcoach/agents/planning_agent.py` to constrain catalog concepts to the active reachable level window (`max_hsk_level=active_level`).
+  - Added active level guidance to `PlanningWorker.create_plan` prompt in `src/goalcoach/agents/planning_agent.py` and guardrail filtering (`valid_active_ids`) preventing premature jumping into higher HSK levels before earlier levels are mastered.
+  - Aligned deterministic fallback `_heuristic_fallback` in `src/goalcoach/agents/planning_agent.py` to schedule unmastered concepts within the active level window.
+  - Added comprehensive progressive unlock tests in `tests/unit/test_matching_exercise.py`.
 
 ### Changed
 - **Content Persistence & Service Layer Generalization**:

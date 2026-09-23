@@ -82,11 +82,11 @@ def render_error_table(state) -> Table | None:
     return table
 
 
-async def main() -> None:
+async def main(target_level: int = 1) -> None:
     console.print(
         Panel.fit(
             "[bold green]GoalCoach: Closed State-Driven Agentic System[/bold green]\n"
-            "[dim]HSK1 Adaptive Closed Loop Prototype[/dim]",
+            f"[dim]HSK {target_level} Adaptive Closed Loop Learning[/dim]",
             border_style="green",
         )
     )
@@ -117,13 +117,13 @@ async def main() -> None:
     learner_id = "terminal_learner_001"
 
     # Step 1: GOAL_CREATED
-    with console.status("[bold cyan]Configuring Goal & Planning Curriculum...[/bold cyan]"):
+    with console.status(f"[bold cyan]Configuring Goal & Planning Curriculum for HSK {target_level}...[/bold cyan]"):
         goal_response = await orchestrator.handle_event(
             event_type=EventType.GOAL_CREATED,
             learner_id=learner_id,
             payload={
-                "title": "HSK 1 Complete Goal",
-                "target_hsk_level": 1,
+                "title": f"HSK {target_level} Complete Goal",
+                "target_hsk_level": target_level,
                 "daily_available_minutes": 20,
                 "context_interests": ["Travel", "Daily Life"],
             },
@@ -181,11 +181,11 @@ async def main() -> None:
             lines = [header, "  " + "-" * 55]
             max_len = max(len(left_items), len(right_items))
             for i in range(max_len):
-                l_str = (
-                    f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']} ({left_items[i].get('pinyin', '')})"
-                    if i < len(left_items)
-                    else ""
-                )
+                if i < len(left_items):
+                    pinyin_part = f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                    l_str = f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']}{pinyin_part}"
+                else:
+                    l_str = ""
                 r_str = (
                     f"[bold cyan]({right_items[i]['id']})[/bold cyan] {right_items[i]['meaning']}"
                     if i < len(right_items)
@@ -250,11 +250,11 @@ async def main() -> None:
                 lines = [header, "  " + "-" * 55]
                 max_len = max(len(left_items), len(right_items))
                 for i in range(max_len):
-                    l_str = (
-                        f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']} ({left_items[i].get('pinyin', '')})"
-                        if i < len(left_items)
-                        else ""
-                    )
+                    if i < len(left_items):
+                        pinyin_part = f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                        l_str = f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']}{pinyin_part}"
+                    else:
+                        l_str = ""
                     r_str = (
                         f"[bold cyan]({right_items[i]['id']})[/bold cyan] {right_items[i]['meaning']}"
                         if i < len(right_items)
@@ -322,7 +322,30 @@ async def main() -> None:
 
 def run_cli() -> None:
     """CLI entrypoint for GoalCoach interactive terminal harness."""
-    asyncio.run(main())
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="GoalCoach Interactive Terminal Study Harness")
+    parser.add_argument(
+        "-l",
+        "--level",
+        type=int,
+        choices=[1, 2, 3, 4, 5, 6],
+        default=None,
+        help="Target HSK level (1 to 6)",
+    )
+    args, _ = parser.parse_known_args()
+
+    target_level = args.level
+    if target_level is None:
+        level_input = Prompt.ask(
+            "[bold cyan]Select Target HSK Level (1-6)[/bold cyan]",
+            choices=["1", "2", "3", "4", "5", "6"],
+            default="1",
+        )
+        target_level = int(level_input)
+
+    asyncio.run(main(target_level=target_level))
 
 
 if __name__ == "__main__":

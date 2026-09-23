@@ -59,11 +59,33 @@ planning_agent = Agent(
 )
 
 
+def resolve_active_level(state: LearnerState, content_service: ContentService) -> int:
+    """Determine the learner's active reachable HSK level window based on their current mastery.
+
+    A higher level is unlocked only when all concepts of the current level have been studied and
+    have achieved acceptable mastery (>= 0.50).
+    """
+    target_level = state.goal.target_hsk_level if state.goal else 1
+    # Check levels from 1 up to target_level
+    for level in range(1, target_level):
+        level_concepts = content_service.list_all_concepts(hsk_level=level)
+        if not level_concepts:
+            continue
+        # If any concept in this level has not reached mastery, stay at this level
+        is_level_completed = all(
+            c.concept_id in state.mastery and state.mastery[c.concept_id].mastery_score >= 0.50
+            for c in level_concepts
+        )
+        if not is_level_completed:
+            return level
+    return target_level
+
+
 @planning_agent.tool
 def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]]:
-    """List available curriculum concepts for the learner's target HSK level with difficulty and sequencing."""
-    target_level = ctx.deps.state.goal.target_hsk_level if ctx.deps.state.goal else 1
-    concepts = ctx.deps.content_service.list_all_concepts(hsk_level=target_level)
+    """List available curriculum concepts up to the learner's active reachable HSK level window."""
+    active_level = resolve_active_level(ctx.deps.state, ctx.deps.content_service)
+    concepts = ctx.deps.content_service.list_all_concepts(max_hsk_level=active_level)
     return [
         {
             "concept_id": c.concept_id,
@@ -112,24 +134,29 @@ class PlanningWorker:
             for err in state.error_profile
         ]
 
+        active_level = resolve_active_level(state, content_service)
+
         prompt = (
             f"Learner Goal: {state.goal.title if state.goal else 'HSK1'}\n"
+            f"Current Active Reachable Level: HSK {active_level}\n"
             f"Daily Time Budget: {available_minutes} minutes\n"
             f"Needs Replanning: {state.needs_replanning}\n"
             f"Interests: {state.context_interests}\n"
             f"Current Mastery: {mastery_summary}\n"
             f"Active Errors: {error_summary}\n"
-            "Generate today's optimal PlanUpdate conforming to the schema."
+            "Generate today's optimal PlanUpdate conforming to the schema. "
+            f"Select concepts from the curriculum catalog within the active level window (up to HSK {active_level})."
         )
 
         try:
             result, _ = await run_with_fallback(self.agent, prompt, deps=deps)
             plan_update: PlanUpdate = result.output
 
-            # Guardrail: Validate all concept IDs against Database #1
-            all_valid_ids = {c.concept_id for c in content_service.list_all_concepts()}
+            # Guardrail: Validate all concept IDs against Database #1 within active level window
+            reachable_concepts = content_service.list_all_concepts(max_hsk_level=active_level)
+            valid_active_ids = {c.concept_id for c in reachable_concepts}
             validated_items = [
-                item for item in plan_update.ordered_items if item.concept_id in all_valid_ids
+                item for item in plan_update.ordered_items if item.concept_id in valid_active_ids
             ]
 
             if validated_items:
@@ -189,8 +216,8 @@ class PlanningWorker:
         available_minutes: int,
     ) -> PlanUpdate:
         """Deterministic algorithm guaranteeing valid PlanUpdate execution."""
-        target_level = state.goal.target_hsk_level if state.goal else None
-        all_concepts = content_service.list_all_concepts(hsk_level=target_level)
+        active_level = resolve_active_level(state, content_service)
+        all_concepts = content_service.list_all_concepts(max_hsk_level=active_level)
         if not all_concepts:
             all_concepts = content_service.list_all_concepts()
         all_ids = [c.concept_id for c in all_concepts] or ["hsk1_c01", "hsk1_c02"]
@@ -320,4 +347,5 @@ __all__ = [
     "PlanningDeps",
     "PlanningWorker",
     "planning_agent",
+    "resolve_active_level",
 ]

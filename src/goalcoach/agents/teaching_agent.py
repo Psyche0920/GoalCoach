@@ -37,8 +37,8 @@ class TeachingDeps:
     learner_query: str | None = None
 
 
-TEACHING_SYSTEM_PROMPT = """You are Coach Baobao, the warm, encouraging, and adaptive Chinese Tutor for HSK1 learners.
-You teach strictly within verified HSK1 curriculum boundaries with clarity, empathy, and high pedagogical precision.
+TEACHING_SYSTEM_PROMPT = """You are Coach Baobao, the warm, encouraging, and adaptive Chinese Tutor.
+You teach strictly within verified curriculum boundaries with clarity, empathy, and high pedagogical precision.
 
 Core Pedagogical Philosophy:
 Same concept + different error history -> different instructional action.
@@ -163,16 +163,19 @@ class TeachingWorker:
         if getattr(candidate_exercise, "options", None):
             options_hint = f"\nUpcoming Practice Options: {candidate_exercise.options}"
 
+        ex_type = getattr(candidate_exercise, "exercise_type", "mcq")
         prompt = (
             f"Active Concept: {concept_id}\n"
             f"Failed Attempts on this concept: {failed_attempts}\n"
-            f"Recurring Error Codes: {relevant_errors}\n"
-            f"Learner Interests: {interests_str}\n"
-            f"Learner Query / Context: {learner_query or 'Normal lesson progression'}\n"
+            f"Target Upcoming Practice Type: {ex_type}\n"
             f"Target Upcoming Practice: {candidate_exercise.instruction or ''} -> {candidate_exercise.prompt}"
             f"{options_hint}\n"
-            "Emit the optimal TeachingAction for this turn. Ground your explanation or guidance directly to help the student succeed on this upcoming practice task."
-            "CRITICAL: Write all explanations and conversational text in ENGLISH. Do not explain in Chinese."
+            f"Learner Interests: {interests_str}\n"
+            f"Learner Query / Context: {learner_query or 'Normal lesson progression'}\n"
+            "Emit the optimal TeachingAction for this turn. Ground your explanation or guidance directly to help the student succeed on this upcoming practice task.\n"
+            "CRITICAL:\n"
+            "1. Write all explanations and conversational text in ENGLISH. Do not explain in Chinese.\n"
+            "2. Keep it ultra-concise (under 60 words for fresh explanations, under 40 words for hints/retries). Do NOT write long essays."
         )
 
         try:
@@ -288,18 +291,20 @@ class TeachingWorker:
         target_inst = getattr(candidate_exercise, "instruction", "")
 
         if failed_attempts == 0:
-            # Standard Explanation - warm greeting, clear table, encouraging bridge
-            interests = (
-                f" (Focus: {', '.join(state.context_interests)})" if state.context_interests else ""
-            )
-            content = (
-                f"Welcome! Let's explore **{title_zh}** ({title_en}){interests}.\n\n"
-                f"Here is our core pattern for this lesson:\n\n"
-                f"| Character | Pinyin | Meaning |\n"
-                f"| :--- | :--- | :--- |\n"
-                f"| {example_zh} | {example_pinyin} | {example_en} |\n\n"
-                f"Notice how natural and clear the expression is! Let's try putting it into practice below."
-            )
+            is_matching = getattr(candidate_exercise, "exercise_type", "") == "matching"
+            if is_matching:
+                content = (
+                    f"Let's learn **{title_zh}** ({title_en})!\n\n"
+                    f"Review the key words below, then connect each numbered Chinese word with its English meaning."
+                )
+            else:
+                content = (
+                    f"Let's explore **{title_zh}** ({title_en})!\n\n"
+                    f"| Hanzi | Pinyin | Meaning |\n"
+                    f"| :--- | :--- | :--- |\n"
+                    f"| {example_zh} | {example_pinyin} | {example_en} |\n\n"
+                    f"Let's put this into practice below!"
+                )
             return TeachingAction(
                 action_kind=TeachingActionKind.EXPLANATION,
                 concept_id=concept_id,

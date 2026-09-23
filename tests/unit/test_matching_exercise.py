@@ -81,8 +81,8 @@ def test_synthesize_matching_exercise_hsk1(content_service: ContentService):
     assert all(v in ("A", "B", "C", "D") for v in pairs.values())
 
 
-def test_synthesize_matching_exercise_hsk2(content_service: ContentService):
-    """Test dynamic matching exercise synthesis for HSK 2 concept."""
+def test_synthesize_matching_exercise_multi_level(content_service: ContentService):
+    """Test dynamic matching exercise synthesis for higher level concepts."""
     ex = content_service.get_or_synthesize_matching_exercise("hsk2_c01", count=5)
     assert ex is not None
     assert ex.exercise_type == "matching"
@@ -163,4 +163,103 @@ def test_orchestrator_fallback_grade_matching():
     result = orchestrator._deterministic_fallback_grade(exercise, "1C 2A 3D")
     assert result.passed_gates is True
     assert result.scores.semantic_precision == 1.0
+
+
+def test_get_exercises_for_concept_includes_matching(content_service: ContentService):
+    """Verify that get_exercises_for_concept automatically prepends a matching exercise."""
+    exercises = content_service.get_exercises_for_concept("hsk1_c01", limit=3)
+    assert len(exercises) > 0
+    assert exercises[0].exercise_type == "matching"
+    assert exercises[0].options is not None
+    assert "left" in exercises[0].options
+    assert "right" in exercises[0].options
+
+
+def test_matching_exercise_excludes_grammar_structures(content_service: ContentService):
+    """Verify that synthesized matching exercises contain strictly vocabulary words and no grammar templates."""
+    ex = content_service.synthesize_matching_exercise("hsk1_c03", count=5)
+    assert ex is not None
+    left_words = [item["word"] for item in ex.options["left"]]
+    for w in left_words:
+        assert "A" not in w and "B" not in w
+        assert "+" not in w and "..." not in w
+        assert len(w) <= 8
+
+
+def test_matching_exercise_meanings_are_english_only(content_service: ContentService):
+    """Verify that meanings on the right-hand column are valid English strings and not Hanzi."""
+    for concept_id in ("hsk1_c01", "hsk1_c02", "hsk1_c03"):
+        ex = content_service.synthesize_matching_exercise(concept_id, count=5)
+        if ex and ex.options and "right" in ex.options:
+            for item in ex.options["right"]:
+                meaning = item["meaning"]
+                assert meaning, "Meaning should not be empty"
+                # Meaning must have ASCII letters
+                assert any(c.isascii() and c.isalpha() for c in meaning), f"Meaning '{meaning}' should contain English letters"
+                # Meaning must not be identical to any Chinese word in the left column
+                left_words = [l["word"] for l in ex.options["left"]]
+                assert meaning not in left_words, f"Meaning '{meaning}' should not equal a Chinese word"
+
+
+def test_planner_progresses_from_current_mastery_to_target_level(content_service: ContentService):
+    """Verify that when a learner's goal is set to a higher level milestone,
+    the planner continues sequentially from their current unmastered concept
+    rather than jumping ahead to the target level.
+    """
+    from goalcoach.agents.planning_agent import PlanningWorker
+    from goalcoach.domain.models import ConceptMastery, LearnerState, LearningGoal
+
+    planner = PlanningWorker()
+    state = LearnerState(
+        learner_id="test_learner_progression",
+        goal=LearningGoal(title="Target Higher Milestone", target_hsk_level=3, daily_available_minutes=20),
+        mastery={
+            "hsk1_c01": ConceptMastery(concept_id="hsk1_c01", mastery_score=1.0),
+            "hsk1_c02": ConceptMastery(concept_id="hsk1_c02", mastery_score=1.0),
+            "hsk1_c03": ConceptMastery(concept_id="hsk1_c03", mastery_score=1.0),
+            "hsk1_c04": ConceptMastery(concept_id="hsk1_c04", mastery_score=1.0),
+        },
+    )
+
+    plan = planner._heuristic_fallback(state, content_service, available_minutes=20)
+    assert len(plan.ordered_items) > 0
+    # The next sequential unmastered concept must be scheduled
+    new_items = [it for it in plan.ordered_items if it.kind == "new"]
+    assert len(new_items) > 0
+    assert new_items[0].concept_id == "hsk1_c05"
+
+
+def test_resolve_active_level_unlocks_progressively(content_service: ContentService):
+    """Verify that resolve_active_level only unlocks higher levels once current level is mastered."""
+    from goalcoach.agents.planning_agent import resolve_active_level
+    from goalcoach.domain.models import ConceptMastery, LearnerState, LearningGoal
+
+    # 1. Partial HSK 1 mastery -> active level remains HSK 1
+    state = LearnerState(
+        learner_id="test_active_level",
+        goal=LearningGoal(title="HSK 3 Goal", target_hsk_level=3),
+        mastery={
+            "hsk1_c01": ConceptMastery(concept_id="hsk1_c01", mastery_score=1.0),
+            "hsk1_c02": ConceptMastery(concept_id="hsk1_c02", mastery_score=1.0),
+        },
+    )
+    assert resolve_active_level(state, content_service) == 1
+
+    # 2. Complete HSK 1 mastery -> unlocks HSK 2
+    hsk1_concepts = content_service.list_all_concepts(hsk_level=1)
+    complete_hsk1_mastery = {
+        c.concept_id: ConceptMastery(concept_id=c.concept_id, mastery_score=1.0)
+        for c in hsk1_concepts
+    }
+    state.mastery = complete_hsk1_mastery
+    assert resolve_active_level(state, content_service) == 2
+
+    # 3. Complete both HSK 1 and HSK 2 mastery -> unlocks target HSK 3
+    hsk2_concepts = content_service.list_all_concepts(hsk_level=2)
+    complete_hsk2_mastery = {
+        c.concept_id: ConceptMastery(concept_id=c.concept_id, mastery_score=1.0)
+        for c in hsk2_concepts
+    }
+    state.mastery = {**complete_hsk1_mastery, **complete_hsk2_mastery}
+    assert resolve_active_level(state, content_service) == 3
 
