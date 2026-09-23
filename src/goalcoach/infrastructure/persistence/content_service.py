@@ -91,7 +91,7 @@ class ContentService:
             if matching_ex:
                 existing_ids = {e.exercise_id for e in repo_exercises}
                 if matching_ex.exercise_id not in existing_ids:
-                    return [matching_ex] + repo_exercises
+                    return repo_exercises + [matching_ex]
         return repo_exercises
 
     def get_remedial_exercises(

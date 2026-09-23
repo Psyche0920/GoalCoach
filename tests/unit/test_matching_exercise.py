@@ -179,13 +179,14 @@ def test_orchestrator_fallback_grade_matching():
 
 
 def test_get_exercises_for_concept_includes_matching(content_service: ContentService):
-    """Verify that get_exercises_for_concept automatically prepends a matching exercise."""
+    """Verify that get_exercises_for_concept includes a matching exercise."""
     exercises = content_service.get_exercises_for_concept("hsk1_c01", limit=3)
     assert len(exercises) > 0
-    assert exercises[0].exercise_type == "matching"
-    assert exercises[0].options is not None
-    assert "left" in exercises[0].options
-    assert "right" in exercises[0].options
+    matching_ex = next((e for e in exercises if e.exercise_type == "matching"), None)
+    assert matching_ex is not None
+    assert matching_ex.options is not None
+    assert "left" in matching_ex.options
+    assert "right" in matching_ex.options
 
 
 def test_matching_exercise_excludes_grammar_structures(content_service: ContentService):

@@ -144,6 +144,12 @@ class PlanningWorker:
             f"Interests: {state.context_interests}\n"
             f"Current Mastery: {mastery_summary}\n"
             f"Active Errors: {error_summary}\n"
+            f"Today Studied Concepts (do not repeat today): {state.today_studied_concept_ids}\n"
+            f"Today Remediated Concepts: {state.today_remediated_concept_ids}\n"
+            "Rules for planning:\n"
+            "1. If the learner has no mastery, schedule 'new' concepts unlocked by prerequisites (start with the first concept).\n"
+            "2. Do NOT schedule concepts that have already been studied today.\n"
+            "3. If the learner has errors or needs_replanning is True, prioritize 'remedial' items on weak concepts.\n"
             "Generate today's optimal PlanUpdate conforming to the schema. "
             f"Select concepts from the curriculum catalog within the active level window (up to HSK {active_level})."
         )
@@ -156,7 +162,10 @@ class PlanningWorker:
             reachable_concepts = content_service.list_all_concepts(max_hsk_level=active_level)
             valid_active_ids = {c.concept_id for c in reachable_concepts}
             validated_items = [
-                item for item in plan_update.ordered_items if item.concept_id in valid_active_ids
+                item
+                for item in plan_update.ordered_items
+                if item.concept_id in valid_active_ids
+                and item.concept_id not in state.today_studied_concept_ids
             ]
 
             if validated_items:

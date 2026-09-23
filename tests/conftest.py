@@ -1,5 +1,8 @@
+import os
 import sqlite3
 from pathlib import Path
+
+os.environ["GOALCOACH_OFFLINE_LLM_FALLBACK"] = "true"
 
 import pytest
 import pytest_asyncio

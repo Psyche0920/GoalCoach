@@ -86,9 +86,15 @@ def get_ollama_fallback_model() -> OpenAIModel:
     return OpenAIModel(model_name=model_name, provider=provider)
 
 
+class LLMUnavailableError(RuntimeError):
+    """Raised when offline mode is active or no configured LLM can complete a request."""
+
+
 async def run_with_fallback(agent: Any, prompt: str, deps: Any = None) -> tuple[Any, str]:
     """Run the primary model and optionally use a configured local fallback."""
     settings = Settings()
+    if settings.offline_llm_fallback:
+        raise LLMUnavailableError("Offline LLM fallback is enabled for deterministic execution")
     primary_model = get_openrouter_model()
 
     try:
