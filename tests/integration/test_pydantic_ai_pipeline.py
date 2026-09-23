@@ -98,6 +98,7 @@ async def test_search_hsk_curriculum_unknown_concept(mock_content_repo, sample_l
 async def test_openrouter_failover_to_ollama(mock_content_repo, sample_learner_state, monkeypatch):
     """Assert automatic failover to local Ollama Gemma 4 when OpenRouter raises connection errors."""
     monkeypatch.setenv("GOALCOACH_ENABLE_OLLAMA_FALLBACK", "true")
+    monkeypatch.setenv("GOALCOACH_OFFLINE_LLM_FALLBACK", "false")
     deps = AgentDeps(
         learner_state=sample_learner_state,
         content_repo=mock_content_repo,

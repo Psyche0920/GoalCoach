@@ -4,6 +4,7 @@ FastAPI router providing the unified closed-loop event endpoint and canonical cu
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -124,7 +125,10 @@ def serialize_card(card: TeachingCard) -> dict[str, Any]:
 def serialize_exercise(ex: ContentExercise) -> dict[str, Any]:
     ans = ex.answer
     if isinstance(ans, dict):
-        ans_str = ans.get("value") or ans.get("text") or str(ans)
+        if "pairs" in ans:
+            ans_str = json.dumps(ans)
+        else:
+            ans_str = ans.get("value") or ans.get("text") or str(ans)
     else:
         ans_str = str(ans or "")
 
@@ -145,7 +149,9 @@ def serialize_exercise(ex: ContentExercise) -> dict[str, Any]:
         "promptPinyin": ex.prompt_pinyin,
         "instruction": ex.instruction,
         "answer": ans_str,
-        "options": ex.options or [],
+        "options": ex.options
+        if ex.options is not None
+        else ([] if ex.exercise_type != "matching" else {}),
         "acceptedAnswers": accepted,
         "explanation": ex.explanation or "",
         "targetTokens": ex.target_tokens or [],
@@ -255,7 +261,8 @@ async def get_learner_aggregate(
 ) -> dict[str, Any]:
     """Fetch complete learner state, deterministic route, and progress summary."""
     state = await get_or_create_learner(learner_id, learner_repo)
-    concepts = content_repo.list_concepts()
+    target_level = state.goal.target_hsk_level if state.goal else None
+    concepts = content_repo.list_concepts(hsk_level=target_level)
     summary = compute_progress_summary(state, concepts)
     next_action = compute_next_action(state)
 
@@ -340,7 +347,8 @@ async def complete_concept_endpoint(
     state.updated_at = now
     await learner_repo.save(state)
 
-    concepts = content_repo.list_concepts()
+    target_level = state.goal.target_hsk_level if state.goal else None
+    concepts = content_repo.list_concepts(hsk_level=target_level)
     summary = compute_progress_summary(state, concepts)
     return {
         "state": state,
@@ -355,10 +363,13 @@ async def complete_concept_endpoint(
 
 @router.get("/curriculum/concepts")
 async def list_curriculum_concepts(
+    level: int | None = Query(
+        default=None, ge=1, le=6, description="Optional HSK level filter (1-6)"
+    ),
     content_repo: ContentRepository = Depends(get_content_repo),
 ) -> list[dict[str, Any]]:
-    """List all active curriculum concepts."""
-    concepts = content_repo.list_concepts()
+    """List all active curriculum concepts, optionally filtered by HSK level."""
+    concepts = content_repo.list_concepts(hsk_level=level)
     return [serialize_concept(c) for c in concepts]
 
 
@@ -374,6 +385,11 @@ async def get_curriculum_concept_details(
 
     cards = content_repo.get_teaching_cards(concept.concept_id)
     exercises = content_repo.get_exercises(concept.concept_id, limit=5, randomize=False)
+
+    content_svc = ContentService(content_repo)
+    matching_ex = content_svc.get_or_synthesize_matching_exercise(concept.concept_id)
+    if matching_ex and not any(getattr(e, "exercise_type", "") == "matching" for e in exercises):
+        exercises.append(matching_ex)
 
     return {
         "concept": serialize_concept(concept),

@@ -37,27 +37,36 @@ class TeachingDeps:
     learner_query: str | None = None
 
 
-TEACHING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Chinese Tutor for HSK1 learners.
-You teach strictly within the verified HSK1 curriculum boundaries.
+TEACHING_SYSTEM_PROMPT = """You are Coach Baobao, the warm, encouraging, and adaptive Chinese Tutor.
+You teach strictly within verified curriculum boundaries with clarity, empathy, and high pedagogical precision.
 
-Core Pedagogical Invariant:
+Core Pedagogical Philosophy:
 Same concept + different error history -> different instructional action.
+- Tone & Persona: Supportive, observant, and humane. Greet the learner warmly, celebrate their efforts, and explain grammatical ideas in simple, intuitive terms. Avoid cold, robotic statements.
+- Strict Grounding: The student is about to practice an actual target exercise (specified in Target Upcoming Practice). Your explanation or guidance MUST directly bridge to and prepare the student for this specific practice task!
+- Never Abandon the Learner: Even during retries or multiple failures, NEVER throw a naked exercise without guidance. Always deconstruct the concept step-by-step with empathy.
 
-Modality Selection Rules:
+Pedagogical Modality Rules:
 1. Fresh Encounter (failed_attempts == 0):
    - Choose `EXPLANATION` or `DIALOGUE`.
-   - Provide a clear, bite-sized explanation. You MUST present the target vocabulary or sentence structure using a Markdown table with the exact columns:
+   - Provide a warm, conversational intro connecting to the communicative goal.
+   - Present the target vocabulary or sentence structure using a clear Markdown table with the exact columns:
      | Character | Pinyin | Meaning |
      | :--- | :--- | :--- |
      | <Hanzi> | <tone-marked pinyin> | <English meaning> |
-   - If the learner has context interests (e.g., travel, food, business), weave them into the example sentences!
-2. First Confusion / Help Requested (failed_attempts == 1 or learner asking for help):
-   - Switch strategy! Do NOT simply repeat the same explanation.
+   - Provide 1 natural example sentence tailored to the upcoming practice task and learner interests (e.g. food, travel, business).
+   - Conclude with an encouraging prompt introducing the upcoming practice.
+
+2. First Confusion / Help Requested (failed_attempts == 1 or learner query):
    - Choose `HINT` or `CONTRAST_EXAMPLE`.
-   - For particle/grammar issues (like 吗, 呢, 了 or word order), highlight the contrast between a statement and a question or provide an intuitive structural cue.
+   - Validate the student's effort empathetically ("That was a great try!").
+   - Highlight the precise contrast (e.g., statement vs. question word order, or 吗 vs. 呢). Give an intuitive rule-of-thumb.
+   - Do NOT just repeat the earlier explanation.
+
 3. Multiple Failures (failed_attempts >= 2):
-   - Choose `RETRY` or `EXERCISE`.
-   - Provide a simplified fill-in-the-blank or scaffolded prompt to rebuild confidence.
+   - Choose `RETRY` or `CONTRAST_EXAMPLE`.
+   - Provide gentle, compassionate scaffolding: break down the target pattern into tiny bite-sized pieces (e.g., Subject + Verb + Particle).
+   - Reassure the learner, highlight where the key word goes, and guide them into the retry.
 
 Output Format:
 Emit a structured `TeachingAction` containing:
@@ -67,7 +76,7 @@ Emit a structured `TeachingAction` containing:
 - `pinyin`: Tone-marked Pinyin for any Chinese characters.
 
 Language Requirements (STRICT):
-- Instructional Medium: English ONLY. All grammar explanations, instructions, guidelines, hints, structural breakdowns, and feedback MUST be written in English.
+- Instructional Medium: English ONLY. All grammar explanations, instructions, guidelines, hints, structural breakdowns, and feedback MUST be written in English. You are teaching absolute beginners. Do NOT converse in Chinese.
 - Target Language: Mandarin Chinese. Chinese characters (Hanzi) and Pinyin are ONLY permitted as specific vocabulary examples, patterns, or target exercise items—NEVER as the explanatory language.
 
 Explanation and exercises should be strongly relevant.
@@ -132,7 +141,11 @@ class TeachingWorker:
         failed_attempts: int = 0,
         learner_query: str | None = None,
     ) -> TeachingAction:
-        """Adapts pedagogical strategy based on concept cards, student errors, and failed attempts."""
+        is_remedial = failed_attempts > 0
+        candidate_exercise = self._select_candidate_exercise(
+            concept_id, content_service, state=state, is_remedial=is_remedial
+        )
+
         deps = TeachingDeps(
             state=state,
             content_service=content_service,
@@ -141,25 +154,32 @@ class TeachingWorker:
             learner_query=learner_query,
         )
 
-        relevant_errors = [err.code for err in state.error_profile if err.concept_id == concept_id]
         interests_str = ", ".join(state.context_interests) if state.context_interests else "general"
 
+        options_hint = ""
+        if getattr(candidate_exercise, "options", None):
+            options_hint = f"\nUpcoming Practice Options: {candidate_exercise.options}"
+
+        ex_type = getattr(candidate_exercise, "exercise_type", "mcq")
         prompt = (
             f"Active Concept: {concept_id}\n"
             f"Failed Attempts on this concept: {failed_attempts}\n"
-            f"Recurring Error Codes: {relevant_errors}\n"
+            f"Target Upcoming Practice Type: {ex_type}\n"
+            f"Target Upcoming Practice: {candidate_exercise.instruction or ''} -> {candidate_exercise.prompt}"
+            f"{options_hint}\n"
             f"Learner Interests: {interests_str}\n"
             f"Learner Query / Context: {learner_query or 'Normal lesson progression'}\n"
-            "Emit the optimal TeachingAction for this turn."
+            "Emit the optimal TeachingAction for this turn. Ground your explanation or guidance directly to help the student succeed on this upcoming practice task.\n"
+            "CRITICAL:\n"
+            "1. Write all explanations and conversational text in ENGLISH. Do not explain in Chinese.\n"
+            "2. Keep it ultra-concise (under 60 words for fresh explanations, under 40 words for hints/retries). Do NOT write long essays."
         )
 
         try:
             result, _ = await run_with_fallback(self.agent, prompt, deps=deps)
             action: TeachingAction = result.output
             if action.concept_id == concept_id and action.content:
-                return self._attach_curriculum_exercise(
-                    action, content_service, state=state, is_remedial=(failed_attempts > 0)
-                )
+                return self._attach_selected_exercise(action, candidate_exercise)
         except Exception as exc:
             logger.warning(
                 "TeachingAgent LLM execution failed (%s); using heuristic fallback.", exc
@@ -171,10 +191,61 @@ class TeachingWorker:
             content_service,
             failed_attempts,
             learner_query,
+            candidate_exercise=candidate_exercise,
         )
-        return self._attach_curriculum_exercise(
-            fallback, content_service, state=state, is_remedial=(failed_attempts > 0)
+        return self._attach_selected_exercise(fallback, candidate_exercise)
+
+    @staticmethod
+    def _select_candidate_exercise(
+        concept_id: str,
+        content_service: ContentService,
+        state: LearnerState | None = None,
+        is_remedial: bool = False,
+    ) -> Any:
+        """Select the target exercise before agent invocation to ensure grounded teaching."""
+        all_exercises = content_service.get_exercises_for_concept(
+            concept_id,
+            limit=10,
+            randomize=False,
         )
+        if not all_exercises:
+            raise LookupError(f"No curriculum exercise found for concept {concept_id}")
+
+        completed = set(state.today_completed_exercise_ids) if state else set()
+        mistakes = set(state.today_mistake_exercise_ids) if state else set()
+
+        if is_remedial:
+            candidates = [
+                e
+                for e in all_exercises
+                if e.exercise_id not in completed and e.exercise_id not in mistakes
+            ]
+            if not candidates:
+                candidates = [e for e in all_exercises if e.exercise_id not in completed]
+            return candidates[0] if candidates else all_exercises[0]
+        else:
+            uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
+            return uncompleted[0] if uncompleted else all_exercises[0]
+
+    @staticmethod
+    def _attach_selected_exercise(
+        action: TeachingAction,
+        selected: Any,
+    ) -> TeachingAction:
+        """Attach a canonical exercise without exposing its accepted answers."""
+        payload = dict(action.exercise_payload or {})
+        payload.update(
+            {
+                "exercise_id": selected.exercise_id,
+                "concept_id": selected.concept_id,
+                "exercise_type": getattr(selected, "exercise_type", "unknown"),
+                "prompt": selected.prompt,
+                "instruction": selected.instruction or "",
+                "options": getattr(selected, "options", None),
+            }
+        )
+        action.exercise_payload = payload
+        return action
 
     @staticmethod
     def _attach_curriculum_exercise(
@@ -183,44 +254,11 @@ class TeachingWorker:
         state: LearnerState | None = None,
         is_remedial: bool = False,
     ) -> TeachingAction:
-        """Attach a canonical exercise without exposing its accepted answers, rotating on completion or failure."""
-        all_exercises = content_service.get_exercises_for_concept(
-            action.concept_id,
-            limit=10,
-            randomize=False,
+        """Backwards compatibility helper."""
+        selected = TeachingWorker._select_candidate_exercise(
+            action.concept_id, content_service, state=state, is_remedial=is_remedial
         )
-        if not all_exercises:
-            raise LookupError(f"No curriculum exercise found for concept {action.concept_id}")
-
-        completed = set(state.today_completed_exercise_ids) if state else set()
-        mistakes = set(state.today_mistake_exercise_ids) if state else set()
-
-        if is_remedial:
-            # In remediation: prioritize unattempted exercises (neither completed nor failed today)
-            candidates = [
-                e
-                for e in all_exercises
-                if e.exercise_id not in completed and e.exercise_id not in mistakes
-            ]
-            if not candidates:
-                # If all exercises have been attempted, pick one not yet completed
-                candidates = [e for e in all_exercises if e.exercise_id not in completed]
-            selected = candidates[0] if candidates else all_exercises[0]
-        else:
-            uncompleted = [e for e in all_exercises if e.exercise_id not in completed]
-            selected = uncompleted[0] if uncompleted else all_exercises[0]
-
-        payload = dict(action.exercise_payload or {})
-        payload.update(
-            {
-                "exercise_id": selected.exercise_id,
-                "concept_id": selected.concept_id,
-                "prompt": selected.prompt,
-                "instruction": selected.instruction or "",
-            }
-        )
-        action.exercise_payload = payload
-        return action
+        return TeachingWorker._attach_selected_exercise(action, selected)
 
     def _heuristic_fallback(
         self,
@@ -229,6 +267,7 @@ class TeachingWorker:
         content_service: ContentService,
         failed_attempts: int,
         learner_query: str | None,
+        candidate_exercise: Any | None = None,
     ) -> TeachingAction:
         """Deterministic strategy fallback based on state and attempt counts."""
         concept = content_service.get_concept(concept_id)
@@ -243,17 +282,20 @@ class TeachingWorker:
         example_en = card.example_en if card and card.example_en else title_en
 
         if failed_attempts == 0:
-            # Standard Explanation
-            interests = (
-                f" (Focus: {', '.join(state.context_interests)})" if state.context_interests else ""
-            )
-            content = (
-                f"Let's learn **{title_zh}** ({title_en}){interests}!\n\n"
-                f"| Character | Pinyin | Meaning |\n"
-                f"| :--- | :--- | :--- |\n"
-                f"| {example_zh} | {example_pinyin} | {example_en} |\n\n"
-                "Try forming a sentence using this pattern!"
-            )
+            is_matching = getattr(candidate_exercise, "exercise_type", "") == "matching"
+            if is_matching:
+                content = (
+                    f"Let's learn **{title_zh}** ({title_en})!\n\n"
+                    f"Review the key words below, then connect each numbered Chinese word with its English meaning."
+                )
+            else:
+                content = (
+                    f"Let's explore **{title_zh}** ({title_en})!\n\n"
+                    f"| Hanzi | Pinyin | Meaning |\n"
+                    f"| :--- | :--- | :--- |\n"
+                    f"| {example_zh} | {example_pinyin} | {example_en} |\n\n"
+                    f"Let's put this into practice below!"
+                )
             return TeachingAction(
                 action_kind=TeachingActionKind.EXPLANATION,
                 concept_id=concept_id,
@@ -261,34 +303,35 @@ class TeachingWorker:
                 pinyin=example_pinyin,
             )
         elif failed_attempts == 1:
-            # Contrast Example or Hint
+            # Contrast Example or Hint - empathetic validation and clear contrast cue
             content = (
-                f"**Coach Hint for {title_zh}:**\n\n"
-                f"Remember the key structure: In Chinese, yes/no questions simply place **吗 (ma)** "
-                f"at the very end of a statement without changing the word order!\n\n"
-                f"**Example:**\n"
-                f"• Statement: 你是老师。 (Nǐ shì lǎoshī - You are a teacher.)\n"
-                f"• Question: 你是老师**吗**？ (Nǐ shì lǎoshī **ma**? - Are you a teacher?)"
+                f"Good effort! Let's look at **{title_zh}** from a slightly different angle.\n\n"
+                f"**Coach Tip:** In Chinese, sentence structure often stays very straightforward. "
+                f"Pay attention to the key words and particles:\n\n"
+                f"• Focus item: **{example_zh}** ({example_pinyin}) — {example_en}\n"
+                f"• Rule of thumb: Check the exact word order and meaning before answering.\n\n"
+                f"Take a breath and give it another try below!"
             )
             return TeachingAction(
                 action_kind=TeachingActionKind.CONTRAST_EXAMPLE,
                 concept_id=concept_id,
                 content=content,
-                pinyin="ma?",
+                pinyin=example_pinyin,
             )
         else:
-            # Retry / Simplified scaffold
+            # Retry / Simplified scaffold - gentle deconstruction, no cold sentences
             content = (
-                "Let's simplify! Fill in the blank to ask 'Are you busy?':\n\n"
-                "你忙 ___ ？\n"
-                "(Hint: Use the question particle you just learned!)"
+                f"Don't worry, mastering Chinese takes patience! Let's break this down step-by-step.\n\n"
+                f"For this question, remember:\n"
+                f"1. What are we looking for? **{title_zh}** ({title_en}).\n"
+                f"2. Look for the key element: `{example_zh}` ({example_pinyin}).\n\n"
+                f"You've got this! Choose or complete the correct option below."
             )
             return TeachingAction(
                 action_kind=TeachingActionKind.RETRY,
                 concept_id=concept_id,
                 content=content,
-                pinyin="Nǐ máng ___ ?",
-                exercise_payload={"type": "fill_blank", "target": "吗"},
+                pinyin=example_pinyin,
             )
 
 

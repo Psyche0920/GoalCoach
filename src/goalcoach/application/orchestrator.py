@@ -281,13 +281,20 @@ class DeterministicOrchestrator:
             if ans_val and ans_val not in ref_answers:
                 ref_answers.append(ans_val)
 
+            concept = self.content_service.get_concept(content_ex.concept_id)
+            exercise_level = (
+                concept.hsk_level if concept else (state.goal.target_hsk_level if state.goal else 1)
+            )
             exercise = Exercise(
                 id=content_ex.exercise_id,
                 concept_id=content_ex.concept_id,
+                exercise_type=getattr(content_ex, "exercise_type", "meaning_mcq"),
                 prompt=content_ex.prompt,
                 target_instruction=content_ex.instruction or "",
                 reference_answers=ref_answers,
-                hsk_level=1,
+                options=content_ex.options,
+                hsk_level=exercise_level,
+                metadata=content_ex.metadata_json or {},
             )
         else:
             raise ValueError(
@@ -433,11 +440,18 @@ class DeterministicOrchestrator:
                 break
 
         if not items:
+            unmastered = [
+                cid
+                for cid in concept_ids
+                if cid not in state.mastery or state.mastery[cid].mastery_score < 0.80
+            ]
+            default_id = unmastered[0] if unmastered else concept_ids[0]
+            kind = PlanItemKind.REMEDIAL if default_id in state.mastery else PlanItemKind.NEW
             items.append(
                 PlanItem(
-                    concept_id=concept_ids[0],
-                    kind=PlanItemKind.NEW,
-                    objective="Introductory HSK1 concept",
+                    concept_id=default_id,
+                    kind=kind,
+                    objective=f"Practice concept {default_id}",
                     estimated_minutes=5,
                 )
             )
@@ -473,14 +487,41 @@ class DeterministicOrchestrator:
             pinyin="ma?",
         )
 
-    def _deterministic_fallback_grade(self, exercise: Exercise, answer: str) -> GradingResult:
+    @staticmethod
+    def _deterministic_fallback_grade(exercise: Exercise, answer: str) -> GradingResult:
         from uuid import uuid4
 
         from goalcoach.domain.models import RubricScores
 
         clean_answer = answer.strip()
-        passed = clean_answer in [a.strip() for a in exercise.reference_answers]
+
+        if getattr(exercise, "exercise_type", "") == "matching" or (
+            isinstance(exercise.options, dict)
+            and "left" in exercise.options
+            and "right" in exercise.options
+        ):
+            from goalcoach.agents.grader_component import GraderComponent
+
+            return GraderComponent._grade_matching_exercise(
+                exercise, clean_answer, exercise.id or uuid4()
+            )
+
+        accepted = [a.strip() for a in exercise.reference_answers]
+        resolved = clean_answer
+
+        if exercise.options and isinstance(exercise.options, list):
+            if clean_answer.isdigit():
+                idx = int(clean_answer) - 1
+                if 0 <= idx < len(exercise.options):
+                    resolved = exercise.options[idx].strip()
+            elif clean_answer.upper() in ("A", "B", "C", "D"):
+                idx = ord(clean_answer.upper()) - ord("A")
+                if 0 <= idx < len(exercise.options):
+                    resolved = exercise.options[idx].strip()
+
+        passed = clean_answer in accepted or resolved in accepted
         score = 1.0 if passed else 0.4
+
         return GradingResult(
             exercise_id=exercise.id or uuid4(),
             scores=RubricScores(
@@ -490,8 +531,9 @@ class DeterministicOrchestrator:
             ),
             passed_gates=passed,
             confidence=1.0,
-            feedback="Correct!" if passed else "Please check sentence structure and particles.",
-            detected_errors=[] if passed else [f"ERR_{exercise.concept_id.upper()}"],
+            feedback="Correct." if passed else "Please try again.",
+            detected_errors=[] if passed else ["ERR_INCORRECT"],
+            grader_version="deterministic-fallback",
         )
 
 

@@ -36,12 +36,22 @@ async def test_curriculum_concepts(client: AsyncClient):
     assert res.status_code == 200
     data = res.json()
     assert isinstance(data, list)
-    assert len(data) > 0
+    assert len(data) >= 120
     # Check camelCase keys
     first = data[0]
     assert "conceptId" in first
     assert "hskLevel" in first
     assert "titleZh" in first
+
+
+@pytest.mark.asyncio
+async def test_curriculum_concepts_level_filter(client: AsyncClient):
+    res = await client.get("/api/v1/curriculum/concepts?level=2")
+    assert res.status_code == 200
+    data = res.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+    assert all(c["hskLevel"] == 2 for c in data)
 
 
 @pytest.mark.asyncio

@@ -16,12 +16,23 @@ def repository() -> ContentRepository:
 
 
 def test_lists_seeded_concepts_in_learning_order(repository: ContentRepository) -> None:
-    concepts = repository.list_concepts()
+    # HSK 1 filtered list
+    hsk1_concepts = repository.list_concepts(hsk_level=1)
+    assert len(hsk1_concepts) == 20
+    assert hsk1_concepts[0].concept_id == "hsk1_c01"
+    assert hsk1_concepts[-1].concept_id == "hsk1_c20"
+    assert hsk1_concepts[0].vocabulary_focus == ["你好", "您好", "谢谢", "再见"]
 
-    assert len(concepts) == 20
-    assert concepts[0].concept_id == "hsk1_c01"
-    assert concepts[-1].concept_id == "hsk1_c20"
-    assert concepts[0].vocabulary_focus == ["你好", "您好", "谢谢", "再见"]
+    # All concepts unlocked across HSK levels 1-6
+    all_concepts = repository.list_concepts()
+    assert len(all_concepts) >= 120
+    levels = {c.hsk_level for c in all_concepts}
+    assert {1, 2, 3, 4, 5, 6}.issubset(levels)
+
+    # HSK 2 specific query
+    hsk2_concepts = repository.list_concepts(hsk_level=2)
+    assert len(hsk2_concepts) > 0
+    assert all(c.hsk_level == 2 for c in hsk2_concepts)
 
 
 def test_loads_teaching_cards_and_exercises(repository: ContentRepository) -> None:
