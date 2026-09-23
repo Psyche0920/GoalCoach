@@ -21,16 +21,21 @@ def ensure_curriculum_db_initialized() -> None:
 
     need_init = True
     if db_path.exists() and db_path.stat().st_size > 0:
-        try:
-            with sqlite3.connect(db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT count(*) FROM curriculum_concepts")
-                if cursor.fetchone()[0] > 0:
-                    need_init = False
-        except Exception:
+        if sql_path.exists() and sql_path.stat().st_mtime > db_path.stat().st_mtime:
             need_init = True
+        else:
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT count(*) FROM curriculum_concepts")
+                    if cursor.fetchone()[0] > 0:
+                        need_init = False
+            except Exception:
+                need_init = True
 
     if need_init and sql_path.exists():
+        if db_path.exists():
+            db_path.unlink()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with open(sql_path, encoding="utf-8") as f:
             sql_script = f.read()
