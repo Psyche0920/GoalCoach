@@ -287,9 +287,6 @@ class TeachingWorker:
         example_pinyin = card.example_pinyin if card and card.example_pinyin else pinyin
         example_en = card.example_en if card and card.example_en else title_en
 
-        target_prompt = getattr(candidate_exercise, "prompt", example_zh)
-        target_inst = getattr(candidate_exercise, "instruction", "")
-
         if failed_attempts == 0:
             is_matching = getattr(candidate_exercise, "exercise_type", "") == "matching"
             if is_matching:
