@@ -480,12 +480,14 @@ class DeterministicOrchestrator:
             pinyin="ma?",
         )
 
-    def _deterministic_fallback_grade(self, exercise: Exercise, answer: str) -> GradingResult:
+    @staticmethod
+    def _deterministic_fallback_grade(exercise: Exercise, answer: str) -> GradingResult:
         from uuid import uuid4
 
         from goalcoach.domain.models import RubricScores
 
         clean_answer = answer.strip()
+
         if getattr(exercise, "exercise_type", "") == "matching" or (
             isinstance(exercise.options, dict)
             and "left" in exercise.options
@@ -499,6 +501,7 @@ class DeterministicOrchestrator:
 
         accepted = [a.strip() for a in exercise.reference_answers]
         resolved = clean_answer
+
         if exercise.options and isinstance(exercise.options, list):
             if clean_answer.isdigit():
                 idx = int(clean_answer) - 1
@@ -511,6 +514,7 @@ class DeterministicOrchestrator:
 
         passed = clean_answer in accepted or resolved in accepted
         score = 1.0 if passed else 0.4
+
         return GradingResult(
             exercise_id=exercise.id or uuid4(),
             scores=RubricScores(
@@ -520,8 +524,9 @@ class DeterministicOrchestrator:
             ),
             passed_gates=passed,
             confidence=1.0,
-            feedback="Correct!" if passed else "Please check sentence structure and particles.",
-            detected_errors=[] if passed else [f"ERR_{exercise.concept_id.upper()}"],
+            feedback="Correct." if passed else "Please try again.",
+            detected_errors=[] if passed else ["ERR_INCORRECT"],
+            grader_version="deterministic-fallback",
         )
 
 

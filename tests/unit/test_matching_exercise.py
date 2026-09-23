@@ -148,8 +148,6 @@ async def test_grader_fast_path_matching():
 
 def test_orchestrator_fallback_grade_matching():
     """Test deterministic orchestrator fallback grading for matching exercises."""
-    orchestrator = DeterministicOrchestrator()
-
     exercise = Exercise(
         concept_id="hsk1_c01",
         exercise_type="matching",
@@ -157,7 +155,11 @@ def test_orchestrator_fallback_grade_matching():
         target_instruction="Match pairs",
         reference_answers=["1C 2A 3D"],
         options={
-            "left": [{"id": "1", "word": "A"}, {"id": "2", "word": "B"}, {"id": "3", "word": "C"}],
+            "left": [
+                {"id": "1", "word": "A"},
+                {"id": "2", "word": "B"},
+                {"id": "3", "word": "C"},
+            ],
             "right": [
                 {"id": "A", "meaning": "B"},
                 {"id": "B", "meaning": "C"},
@@ -167,7 +169,11 @@ def test_orchestrator_fallback_grade_matching():
         metadata={"pairs": {"1": "C", "2": "A", "3": "D"}},
     )
 
-    result = orchestrator._deterministic_fallback_grade(exercise, "1C 2A 3D")
+    result = DeterministicOrchestrator._deterministic_fallback_grade(
+        exercise,
+        "1C 2A 3D",
+    )
+
     assert result.passed_gates is True
     assert result.scores.semantic_precision == 1.0
 
