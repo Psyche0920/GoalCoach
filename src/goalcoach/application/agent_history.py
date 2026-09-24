@@ -214,10 +214,12 @@ def format_agent_history(state: LearnerState) -> str:
     if not history.recent_teaching_turns:
         return f"Sessions started: {history.session_count}; no prior teaching turns."
 
-    lines = [(
-        f"Sessions started: {history.session_count}; "
-        f"total teaching turns: {history.teaching_turn_count}."
-    )]
+    lines = [
+        (
+            f"Sessions started: {history.session_count}; "
+            f"total teaching turns: {history.teaching_turn_count}."
+        )
+    ]
     for turn in history.recent_teaching_turns:
         outcome = "not graded" if turn.passed is None else ("passed" if turn.passed else "failed")
         errors = ",".join(turn.error_codes) or "none"

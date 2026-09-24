@@ -92,7 +92,9 @@ def validate_curriculum_references(
         exercise_id = str(payload["exercise_id"])
         exercise = content_repo.get_exercise(exercise_id)
         if exercise is None:
-            raise HTTPException(status_code=422, detail=f"Unknown curriculum exercise: {exercise_id}")
+            raise HTTPException(
+                status_code=422, detail=f"Unknown curriculum exercise: {exercise_id}"
+            )
         if exercise.concept_id != concept_id:
             raise HTTPException(
                 status_code=422,

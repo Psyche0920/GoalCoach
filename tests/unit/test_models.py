@@ -322,6 +322,7 @@ def test_session_summary() -> None:
     )
     assert len(session.concepts_covered) == 2
 
+
 # --- Full JSON Roundtrip Serialization Test ---
 
 

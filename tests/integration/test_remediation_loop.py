@@ -578,7 +578,11 @@ async def test_timezone_update_only_changes_daily_boundary(
     updated = await orchestrator.handle_event(
         event_type=EventType.GOAL_CREATED,
         learner_id=learner_id,
-        payload={"title": "Travel in China", "daily_available_minutes": 20, "timezone": "Asia/Shanghai"},
+        payload={
+            "title": "Travel in China",
+            "daily_available_minutes": 20,
+            "timezone": "Asia/Shanghai",
+        },
     )
 
     assert updated.state is not None

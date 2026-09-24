@@ -62,7 +62,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> JSONResponse:
         return JSONResponse(
             status_code=503,
-            content={"detail": "LLM unavailable. Check the configured model provider and try again."},
+            content={
+                "detail": "LLM unavailable. Check the configured model provider and try again."
+            },
         )
 
     @application.exception_handler(AgentOutputError)
@@ -96,6 +98,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 def get_learner_repository(request: Request) -> SqlAlchemyLearnerRepository:
     """Resolve the request-scoped learner persistence boundary."""
     from typing import cast
+
     return cast(SqlAlchemyLearnerRepository, request.app.state.learner_repository)
 
 

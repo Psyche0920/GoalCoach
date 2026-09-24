@@ -46,7 +46,9 @@ def create_learner_schema(session_factory: sessionmaker[Session]) -> None:
     if "state_version" not in learner_columns:
         with engine.begin() as connection:
             connection.execute(
-                text("ALTER TABLE learner_states ADD COLUMN state_version INTEGER NOT NULL DEFAULT 1")
+                text(
+                    "ALTER TABLE learner_states ADD COLUMN state_version INTEGER NOT NULL DEFAULT 1"
+                )
             )
             connection.execute(
                 text("""

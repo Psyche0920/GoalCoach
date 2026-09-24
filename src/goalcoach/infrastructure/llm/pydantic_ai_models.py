@@ -21,6 +21,7 @@ try:
 except ImportError:
     from pydantic_ai.exceptions import ModelHTTPError as ModelAPIError  # type: ignore[no-redef]
     from pydantic_ai.exceptions import UnexpectedModelBehavior
+
     ModelHTTPError = ModelAPIError  # type: ignore[misc]
 
 try:

@@ -125,8 +125,14 @@ async def test_submit_answer_via_events(client: AsyncClient):
 
     details_res = await client.get(f"/api/v1/curriculum/concepts/{concept_id}")
     exercises = details_res.json().get("exercises", [])
-    matched_ex = next((e for e in exercises if e["id"] == exercise_id), exercises[0] if exercises else None)
-    accepted = matched_ex["acceptedAnswers"][0] if (matched_ex and matched_ex["acceptedAnswers"]) else "你好"
+    matched_ex = next(
+        (e for e in exercises if e["id"] == exercise_id), exercises[0] if exercises else None
+    )
+    accepted = (
+        matched_ex["acceptedAnswers"][0]
+        if (matched_ex and matched_ex["acceptedAnswers"])
+        else "你好"
+    )
     ex_id_to_submit = exercise_id or (matched_ex["id"] if matched_ex else "hsk1_c01_e01")
 
     submission_payload = {

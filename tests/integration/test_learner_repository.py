@@ -91,20 +91,25 @@ async def test_legacy_database_backfills_optimistic_version(tmp_path: Path) -> N
     database_path = tmp_path / "legacy.db"
     engine = create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
-        connection.execute(text("""
+        connection.execute(
+            text("""
             CREATE TABLE learner_states (
                 learner_id VARCHAR(64) PRIMARY KEY,
                 state_json JSON NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )
-        """))
-        connection.execute(text("""
+        """)
+        )
+        connection.execute(
+            text("""
             INSERT INTO learner_states (learner_id, state_json, updated_at)
             VALUES (:learner_id, :state_json, CURRENT_TIMESTAMP)
-        """), {
-            "learner_id": "legacy-learner",
-            "state_json": '{"learner_id": "legacy-learner", "state_version": 7}',
-        })
+        """),
+            {
+                "learner_id": "legacy-learner",
+                "state_json": '{"learner_id": "legacy-learner", "state_version": 7}',
+            },
+        )
 
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     create_learner_schema(session_factory)

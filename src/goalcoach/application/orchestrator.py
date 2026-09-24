@@ -83,6 +83,7 @@ class GraderPort(Protocol):
 
     async def grade(self, exercise: Exercise, answer: str) -> GradingResult: ...
 
+
 class OrchestratorResponse(DomainBaseModel):
     """Unified response envelope returned by the Deterministic Orchestrator."""
 
@@ -257,8 +258,7 @@ class DeterministicOrchestrator:
         learner_today = datetime.now(learner_timezone).date()
         if (
             entry_source == StudyEntrySource.PLANNED
-            and
-            plan is not None
+            and plan is not None
             and plan.status == PlanStatus.EXHAUSTED
             and plan.date.astimezone(learner_timezone).date() == learner_today
         ):
@@ -400,9 +400,9 @@ class DeterministicOrchestrator:
             state.active_session.current_entry_source = entry_source
             state.active_session.has_progress_eligible_activity |= progress_eligible
             state.active_session.pending_concept_id = teaching_action.concept_id
-            state.active_session.pending_exercise_id = str(
-                (teaching_action.exercise_payload or {}).get("exercise_id") or ""
-            ) or None
+            state.active_session.pending_exercise_id = (
+                str((teaching_action.exercise_payload or {}).get("exercise_id") or "") or None
+            )
 
         record_teaching_turn(state, teaching_action)
         await self._persist_state(state)
@@ -478,9 +478,9 @@ class DeterministicOrchestrator:
 
         if state.active_session is not None:
             state.active_session.pending_concept_id = teaching_action.concept_id
-            state.active_session.pending_exercise_id = str(
-                (teaching_action.exercise_payload or {}).get("exercise_id") or ""
-            ) or None
+            state.active_session.pending_exercise_id = (
+                str((teaching_action.exercise_payload or {}).get("exercise_id") or "") or None
+            )
         if progress_eligible:
             record_teaching_turn(state, teaching_action, learner_query=learner_query)
         await self._persist_state(state)
