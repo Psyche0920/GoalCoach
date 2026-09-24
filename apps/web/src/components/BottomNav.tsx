@@ -1,19 +1,17 @@
 import React from 'react';
-import { Compass, BookOpen, TrendingUp, MessageSquare } from 'lucide-react';
+import { Compass, BookOpen, TrendingUp } from 'lucide-react';
 
 interface BottomNavProps {
   activeTab: 'plan' | 'curriculum' | 'retention';
   setActiveTab: (tab: 'plan' | 'curriculum' | 'retention') => void;
-  onOpenChat: () => void;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
   activeTab,
   setActiveTab,
-  onOpenChat,
 }) => {
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t-2 border-zinc-200 px-4 py-2 flex items-center justify-around select-none">
+    <nav className="lg:hidden fixed bottom-3 left-3 right-3 z-40 rounded-2xl bg-white/95 border border-slate-200 px-4 py-2 flex items-center justify-around select-none shadow-[0_12px_35px_rgba(15,23,42,0.18)] backdrop-blur-xl">
       <button
         onClick={() => setActiveTab('plan')}
         className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all ${
@@ -21,7 +19,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         }`}
       >
         <Compass className="w-5 h-5" />
-        <span className="text-[10px] uppercase">Plan</span>
+        <span className="text-[10px] uppercase">Today</span>
       </button>
 
       <button
@@ -31,7 +29,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         }`}
       >
         <BookOpen className="w-5 h-5" />
-        <span className="text-[10px] uppercase">Curriculum</span>
+        <span className="text-[10px] uppercase">Roadmap</span>
       </button>
 
       <button
@@ -44,13 +42,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         <span className="text-[10px] uppercase">Progress</span>
       </button>
 
-      <button
-        onClick={onOpenChat}
-        className="flex flex-col items-center gap-1 py-1 px-3 rounded-xl text-zinc-900 font-extrabold"
-      >
-        <MessageSquare className="w-5 h-5 text-emerald-500" />
-        <span className="text-[10px] uppercase">Bǎobao</span>
-      </button>
     </nav>
   );
 };

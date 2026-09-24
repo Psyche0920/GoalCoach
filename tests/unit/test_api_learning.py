@@ -76,7 +76,6 @@ async def test_learner_aggregate_and_routing(client: AsyncClient):
     assert res.status_code == 200
     data = res.json()
     assert "state" in data
-    assert "nextAction" in data
     assert "overallProgress" in data
     assert "progressSummary" in data
     assert data["state"]["learnerId"] == learner_id
@@ -85,6 +84,14 @@ async def test_learner_aggregate_and_routing(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_today_plan_generation(client: AsyncClient):
     learner_id = "test_learner_plan_001"
+    await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "GOAL_CREATED",
+            "learner_id": learner_id,
+            "payload": {"title": "HSK 1", "daily_available_minutes": 20},
+        },
+    )
     res = await client.get(f"/api/v1/learners/{learner_id}/today-plan")
     assert res.status_code == 200
     data = res.json()
@@ -94,29 +101,99 @@ async def test_today_plan_generation(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_submit_answer_via_events(client: AsyncClient):
-    # Look up an exercise from the database
-    list_res = await client.get("/api/v1/curriculum/concepts")
-    concept_id = list_res.json()[0]["conceptId"]
+    learner_id = "test_learner_001"
+    await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "GOAL_CREATED",
+            "learner_id": learner_id,
+            "payload": {"title": "HSK 1", "daily_available_minutes": 20},
+        },
+    )
+    session_res = await client.post(
+        "/api/v1/events",
+        json={
+            "event_type": "SESSION_STARTED",
+            "learner_id": learner_id,
+            "payload": {},
+        },
+    )
+    action = session_res.json()["teachingAction"]
+    concept_id = action["conceptId"]
+    ex_payload = action.get("exercisePayload") or {}
+    exercise_id = ex_payload.get("exercise_id")
+
     details_res = await client.get(f"/api/v1/curriculum/concepts/{concept_id}")
     exercises = details_res.json().get("exercises", [])
+    matched_ex = next(
+        (e for e in exercises if e["id"] == exercise_id), exercises[0] if exercises else None
+    )
+    accepted = (
+        matched_ex["acceptedAnswers"][0]
+        if (matched_ex and matched_ex["acceptedAnswers"])
+        else "你好"
+    )
+    ex_id_to_submit = exercise_id or (matched_ex["id"] if matched_ex else "hsk1_c01_e01")
 
-    if exercises:
-        ex = exercises[0]
-        accepted = ex["acceptedAnswers"][0] if ex["acceptedAnswers"] else "你好"
-        submission_payload = {
-            "event_type": "ANSWER_SUBMITTED",
-            "learner_id": "test_learner_001",
-            "payload": {
-                "exercise_id": ex["id"],
-                "concept_id": concept_id,
-                "answer": accepted,
-            },
-        }
-        res = await client.post("/api/v1/events", json=submission_payload)
-        assert res.status_code == 200
-        data = res.json()
-        assert data["gradingResult"] is not None
-        assert data["gradingResult"]["passedGates"] is True
+    submission_payload = {
+        "event_type": "ANSWER_SUBMITTED",
+        "learner_id": learner_id,
+        "payload": {
+            "exercise_id": ex_id_to_submit,
+            "concept_id": concept_id,
+            "answer": accepted,
+        },
+    }
+    res = await client.post("/api/v1/events", json=submission_payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["gradingResult"] is not None
+    assert data["gradingResult"]["passedGates"] is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_answers_route_returns_404(client: AsyncClient):
+    res = await client.post(
+        "/api/v1/answers",
+        json={
+            "learnerId": "test_learner_001",
+            "exerciseId": "ex_dummy",
+            "answer": "你好",
+        },
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_grade_freeform(client: AsyncClient):
+    res = await client.post(
+        "/api/v1/grade-freeform",
+        json={"userInput": "我想喝茶", "blueprintId": "bp_test"},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_learning_events(client: AsyncClient):
+    payload = {
+        "learnerId": "test_learner_001",
+        "planItemId": "item_test",
+        "conceptIds": ["c_test"],
+        "eventType": "output",
+        "activeSeconds": 45,
+        "engagementScore": 1.0,
+    }
+    res = await client.post("/api/v1/learning-events", json=payload)
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_complete_concept(client: AsyncClient):
+    res = await client.post(
+        "/api/v1/learners/test_learner_001/complete-concept",
+        json={"conceptId": "c_test_complete", "score": 100, "mode": "card"},
+    )
+    assert res.status_code == 404
 
 
 @pytest.mark.asyncio

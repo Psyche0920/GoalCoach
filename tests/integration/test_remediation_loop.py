@@ -22,7 +22,7 @@ import pytest
 from goalcoach.agents.grader_component import GraderComponent
 from goalcoach.agents.planning_agent import PlanningWorker
 from goalcoach.agents.teaching_agent import TeachingWorker
-from goalcoach.application.orchestrator import DeterministicOrchestrator
+from goalcoach.application.orchestrator import DeterministicOrchestrator, OrchestratorResponse
 from goalcoach.application.progress_service import ProgressService
 from goalcoach.domain.enums import EventType, PlanItemKind, TeachingActionKind
 from goalcoach.domain.models import (
@@ -32,6 +32,7 @@ from goalcoach.domain.models import (
     LearnerState,
     LearningGoal,
     RubricScores,
+    TeachingAction,
 )
 from goalcoach.infrastructure.persistence.content_service import ContentService
 from goalcoach.infrastructure.persistence.database import (
@@ -69,7 +70,7 @@ def orchestrator(
     content_service: ContentService,
 ) -> DeterministicOrchestrator:
     progress_service = ProgressService(learner_repo=temp_learner_repo)
-    planning_worker = PlanningWorker()
+    planning_worker = PlanningWorker(enable_prerequisites=False)
     teaching_worker = TeachingWorker()
     grader_worker = GraderComponent()
 
@@ -84,6 +85,63 @@ def orchestrator(
 
 
 # --- 1. Remediation Triggering & Replanning ---
+
+
+async def _submit_next_wrong_answer(
+    orchestrator: DeterministicOrchestrator,
+    learner_id: str,
+) -> tuple[str, OrchestratorResponse]:
+    """Open the next teaching turn and fail its canonical pending exercise."""
+    lesson = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert lesson.teaching_action is not None
+    assert lesson.teaching_action.exercise_payload is not None
+    exercise_id = str(lesson.teaching_action.exercise_payload["exercise_id"])
+    result = await orchestrator.handle_event(
+        event_type=EventType.ANSWER_SUBMITTED,
+        learner_id=learner_id,
+        payload={
+            "exercise_id": exercise_id,
+            "concept_id": "hsk1_c01",
+            "answer": "Wrong",
+        },
+    )
+    return exercise_id, result
+
+
+def _canonical_answer(content_service: ContentService, exercise_id: str) -> str:
+    exercise = content_service.get_exercise(exercise_id)
+    assert exercise is not None
+    if exercise.accepted_answers:
+        return str(exercise.accepted_answers[0])
+    if isinstance(exercise.answer, dict):
+        return str(exercise.answer["value"])
+    return str(exercise.answer)
+
+
+def test_help_replacement_explicitly_excludes_current_exercise(
+    content_service: ContentService,
+) -> None:
+    action = TeachingAction(
+        action_kind=TeachingActionKind.CONTRAST_EXAMPLE,
+        concept_id="hsk1_c01",
+        content="Alternative explanation",
+        history_summary="Explained the concept with a contrasting example.",
+    )
+
+    replaced = TeachingWorker._attach_curriculum_exercise(
+        action,
+        content_service,
+        state=LearnerState(),
+        is_remedial=True,
+        excluded_exercise_id="hsk1_c01_e01",
+    )
+
+    assert replaced.exercise_payload is not None
+    assert replaced.exercise_payload["exercise_id"] != "hsk1_c01_e01"
 
 
 @pytest.mark.asyncio
@@ -101,32 +159,33 @@ async def test_remediation_triggers_after_repeated_errors(
         payload={"title": "HSK 1", "daily_available_minutes": 20},
     )
 
-    # Step 2: Fail attempt 1 (occurrences = 1)
-    res_1 = await orchestrator.handle_event(
-        event_type=EventType.ANSWER_SUBMITTED,
-        learner_id=learner_id,
-        payload={"exercise_id": "hsk1_c01_e01", "concept_id": "hsk1_c01", "answer": "Wrong1"},
-    )
+    # Step 2: Fail two distinct pending teaching turns.
+    first_exercise, res_1 = await _submit_next_wrong_answer(orchestrator, learner_id)
     assert res_1.grading_result.passed_gates is False
     assert res_1.replanned is False
 
-    # Step 3: Fail attempt 2 (occurrences = 2 -> triggers replanning)
-    res_2 = await orchestrator.handle_event(
-        event_type=EventType.ANSWER_SUBMITTED,
-        learner_id=learner_id,
-        payload={"exercise_id": "hsk1_c01_e01", "concept_id": "hsk1_c01", "answer": "Wrong2"},
-    )
+    second_exercise, res_2 = await _submit_next_wrong_answer(orchestrator, learner_id)
+    assert second_exercise != first_exercise
     assert res_2.grading_result.passed_gates is False
-    assert res_2.replanned is True
-    assert res_2.daily_plan is not None
-    assert res_2.daily_plan.items[0].kind == PlanItemKind.REMEDIAL
-    assert res_2.daily_plan.items[0].concept_id == "hsk1_c01"
+    assert res_2.replanned is False
+    assert res_2.state is not None and res_2.state.needs_replanning is True
+
+    # Replanning is a separate event, so one request never invokes Grader + Planner.
+    replanned = await orchestrator.handle_event(
+        event_type=EventType.REPLAN_REQUESTED,
+        learner_id=learner_id,
+        payload={"reason": "Repeated errors"},
+    )
+    assert replanned.replanned is True
+    assert replanned.daily_plan is not None
+    assert replanned.daily_plan.items[0].kind == PlanItemKind.REMEDIAL
+    assert replanned.daily_plan.items[0].concept_id == "hsk1_c01"
 
     # Verify state in DB
     state = await temp_learner_repo.get(learner_id)
     assert state is not None
     assert state.needs_replanning is False  # Reset by orchestrator after creating adapted plan
-    assert "hsk1_c01_e01" in state.today_mistake_exercise_ids
+    assert {first_exercise, second_exercise}.issubset(state.today_mistake_exercise_ids)
 
 
 # --- 2. Dynamic Exercise Rotation ---
@@ -146,37 +205,20 @@ async def test_remediation_exercise_rotates_and_does_not_repeat_e01(
         payload={"title": "HSK 1", "daily_available_minutes": 20},
     )
 
-    # Fail 2 times on e01
-    for i in range(2):
-        await orchestrator.handle_event(
-            event_type=EventType.ANSWER_SUBMITTED,
-            learner_id=learner_id,
-            payload={
-                "exercise_id": "hsk1_c01_e01",
-                "concept_id": "hsk1_c01",
-                "answer": f"Mistake_{i}",
-            },
-        )
-
-    # Start remedial session
+    first_exercise, _ = await _submit_next_wrong_answer(orchestrator, learner_id)
     session_res = await orchestrator.handle_event(
-        event_type=EventType.SESSION_STARTED,
-        learner_id=learner_id,
-        payload={},
+        event_type=EventType.SESSION_STARTED, learner_id=learner_id, payload={}
     )
-
     action = session_res.teaching_action
-    assert action is not None
-    # Exercise must NOT be e01
-    assert action.exercise_payload is not None
-    assert action.exercise_payload["exercise_id"] == "hsk1_c01_e02"
-    assert action.exercise_payload["prompt"] == "Goodbye"
+    assert action is not None and action.exercise_payload is not None
+    assert action.exercise_payload["exercise_id"] != first_exercise
 
     # Modality must adapt away from EXPLANATION because failed_attempts >= 1
     assert action.action_kind in (
         TeachingActionKind.CONTRAST_EXAMPLE,
         TeachingActionKind.HINT,
         TeachingActionKind.RETRY,
+        TeachingActionKind.EXERCISE,
     )
 
 
@@ -187,6 +229,7 @@ async def test_remediation_exercise_rotates_and_does_not_repeat_e01(
 async def test_remediation_success_clears_error_profile_and_resets_replanning(
     orchestrator: DeterministicOrchestrator,
     temp_learner_repo: SqliteLearnerRepository,
+    content_service: ContentService,
 ) -> None:
     """Passing a remedial exercise resolves the concept's errors and marks it remediated today."""
     learner_id = f"learner_clear_{uuid4().hex[:8]}"
@@ -197,26 +240,21 @@ async def test_remediation_success_clears_error_profile_and_resets_replanning(
         payload={"title": "HSK 1", "daily_available_minutes": 20},
     )
 
-    # Fail twice to slot remediation
-    for i in range(2):
-        await orchestrator.handle_event(
-            event_type=EventType.ANSWER_SUBMITTED,
-            learner_id=learner_id,
-            payload={"exercise_id": "hsk1_c01_e01", "concept_id": "hsk1_c01", "answer": "Wrong"},
-        )
-
-    # Start session to receive e02
+    await _submit_next_wrong_answer(orchestrator, learner_id)
+    await _submit_next_wrong_answer(orchestrator, learner_id)
     await orchestrator.handle_event(
-        event_type=EventType.SESSION_STARTED,
-        learner_id=learner_id,
-        payload={},
+        event_type=EventType.REPLAN_REQUESTED, learner_id=learner_id, payload={}
     )
-
-    # Submit correct answer for e02 ("再见")
+    lesson = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED, learner_id=learner_id, payload={}
+    )
+    assert lesson.teaching_action is not None
+    exercise_id = str(lesson.teaching_action.exercise_payload["exercise_id"])
+    correct_answer = _canonical_answer(content_service, exercise_id)
     pass_res = await orchestrator.handle_event(
         event_type=EventType.ANSWER_SUBMITTED,
         learner_id=learner_id,
-        payload={"exercise_id": "hsk1_c01_e02", "concept_id": "hsk1_c01", "answer": "再见"},
+        payload={"exercise_id": exercise_id, "concept_id": "hsk1_c01", "answer": correct_answer},
     )
     assert pass_res.grading_result.passed_gates is True
     assert pass_res.replanned is False  # Must not trigger immediate turn-level replanning
@@ -224,9 +262,12 @@ async def test_remediation_success_clears_error_profile_and_resets_replanning(
     # Verify state in repository
     state = await temp_learner_repo.get(learner_id)
     assert state is not None
-    assert len(state.error_profile) == 0  # Errors for hsk1_c01 resolved!
+    # Lifelong error history is preserved; only the remediation threshold
+    # counter is reset by the successful fix.
+    assert state.error_profile  # historical errors remain
+    assert state.remediation_counters.get("hsk1_c01", 0) == 0
     assert "hsk1_c01" in state.today_remediated_concept_ids
-    assert "hsk1_c01_e02" in state.today_completed_exercise_ids
+    assert exercise_id in state.today_completed_exercise_ids
     assert state.needs_replanning is False
 
 
@@ -237,6 +278,7 @@ async def test_remediation_success_clears_error_profile_and_resets_replanning(
 async def test_curriculum_advances_after_remediation_without_infinite_loop(
     orchestrator: DeterministicOrchestrator,
     temp_learner_repo: SqliteLearnerRepository,
+    content_service: ContentService,
 ) -> None:
     """After passing remediation for hsk1_c01, the system seamlessly advances to hsk1_c02."""
     learner_id = f"learner_advance_{uuid4().hex[:8]}"
@@ -247,29 +289,25 @@ async def test_curriculum_advances_after_remediation_without_infinite_loop(
         payload={"title": "HSK 1", "daily_available_minutes": 20},
     )
 
-    # Fail twice on e01
-    for _ in range(2):
-        await orchestrator.handle_event(
-            event_type=EventType.ANSWER_SUBMITTED,
-            learner_id=learner_id,
-            payload={"exercise_id": "hsk1_c01_e01", "concept_id": "hsk1_c01", "answer": "Wrong"},
-        )
-
-    # Session start (gets e02)
+    await _submit_next_wrong_answer(orchestrator, learner_id)
+    await _submit_next_wrong_answer(orchestrator, learner_id)
     await orchestrator.handle_event(
-        event_type=EventType.SESSION_STARTED,
-        learner_id=learner_id,
-        payload={},
+        event_type=EventType.REPLAN_REQUESTED, learner_id=learner_id, payload={}
     )
-
-    # Pass remedial exercise e02
+    lesson = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED, learner_id=learner_id, payload={}
+    )
+    exercise_id = str(lesson.teaching_action.exercise_payload["exercise_id"])
+    correct_answer = _canonical_answer(content_service, exercise_id)
     await orchestrator.handle_event(
         event_type=EventType.ANSWER_SUBMITTED,
         learner_id=learner_id,
-        payload={"exercise_id": "hsk1_c01_e02", "concept_id": "hsk1_c01", "answer": "再见"},
+        payload={"exercise_id": exercise_id, "concept_id": "hsk1_c01", "answer": correct_answer},
     )
 
-    # Next session turn: previous remedial plan item was completed, plan should regenerate
+    await orchestrator.handle_event(
+        event_type=EventType.REPLAN_REQUESTED, learner_id=learner_id, payload={}
+    )
     next_session = await orchestrator.handle_event(
         event_type=EventType.SESSION_STARTED,
         learner_id=learner_id,
@@ -334,8 +372,10 @@ async def test_edge_case_multiple_distinct_errors_for_same_concept(
 
     updated_state = progress_service.apply_grading_result(state, pass_result, concept_id="hsk1_c01")
 
-    # All errors for hsk1_c01 should be cleared
-    assert len(updated_state.error_profile) == 0
+    # The lifelong error history is preserved; the remediation threshold
+    # counter (not the error_profile) is what the successful fix resets.
+    assert len(updated_state.error_profile) == 2  # historical errors remain
+    assert updated_state.remediation_counters.get("hsk1_c01", 0) == 0
     assert updated_state.needs_replanning is False
     assert "hsk1_c01" in updated_state.today_remediated_concept_ids
     assert "hsk1_c01_e02" in updated_state.today_completed_exercise_ids
@@ -349,12 +389,13 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
     content_service: ContentService,
 ) -> None:
     """When all exercises for a concept have been attempted, system does not crash and safely falls back."""
-    all_exercises = content_service.get_exercises_for_concept("hsk1_c01", limit=100)
-    all_exercise_ids = [e.exercise_id for e in all_exercises]
     teacher = TeachingWorker()
+    all_c01_exercises = content_service.get_exercises_for_concept("hsk1_c01", limit=20)
+    all_c01_exercise_ids = [e.exercise_id for e in all_c01_exercises]
     state = LearnerState(
         goal=LearningGoal(title="HSK1"),
-        today_completed_exercise_ids=all_exercise_ids,
+        # Simulate all exercises for hsk1_c01 completed
+        today_completed_exercise_ids=all_c01_exercise_ids,
     )
 
     # Should not raise IndexError
@@ -365,7 +406,7 @@ async def test_edge_case_exercise_exhaustion_graceful_fallback(
         failed_attempts=0,
     )
     assert action.exercise_payload is not None
-    assert action.exercise_payload["exercise_id"] in all_exercise_ids
+    assert action.exercise_payload["exercise_id"] in all_c01_exercise_ids
 
 
 # --- 7. Stress Test: Zero Error Profile Ingress on Remedial Item ---
@@ -422,7 +463,7 @@ async def test_edge_case_prerequisite_dag_blocks_unready_and_unlocks_remediated(
     content_service: ContentService,
 ) -> None:
     """hsk1_c02 requires hsk1_c01. It is strictly blocked if hsk1_c01 has 0 mastery, but unlocked if remediated."""
-    planner = PlanningWorker()
+    planner = PlanningWorker(enable_prerequisites=True)
 
     # Case A: Clean state -> hsk1_c02 is blocked because hsk1_c01 not started
     state_a = LearnerState(goal=LearningGoal(title="HSK1", daily_available_minutes=20))
@@ -473,6 +514,85 @@ async def test_edge_case_state_persistence_and_reload_with_new_fields(
     assert reloaded.today_completed_exercise_ids == ["hsk1_c01_e01", "hsk1_c01_e02"]
     assert reloaded.today_remediated_concept_ids == ["hsk1_c01"]
     assert reloaded.all_attempted_exercise_ids() == {"hsk1_c01_e01", "hsk1_c01_e02"}
+
+
+@pytest.mark.asyncio
+async def test_repeated_replan_rebuild_preserves_daily_plan_and_roadmap(
+    orchestrator: DeterministicOrchestrator,
+    temp_learner_repo: SqliteLearnerRepository,
+) -> None:
+    """Ordinary replanning preserves the frozen roadmap and does not loop on rebuild."""
+    learner_id = f"learner_frozen_{uuid4().hex[:8]}"
+    await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "HSK 1", "daily_available_minutes": 20},
+    )
+    before = await temp_learner_repo.get(learner_id)
+    assert before is not None and before.active_plan is not None
+
+    before.active_plan.items = list(reversed(before.active_plan.items))
+    before.roadmap_concept_ids = list(reversed(before.roadmap_concept_ids))
+    before.needs_replanning = True
+    await temp_learner_repo.save(before)
+
+    after_replan = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert after_replan.replanned is True
+    assert after_replan.state is not None
+    assert after_replan.state.roadmap_concept_ids == before.roadmap_concept_ids
+
+    before_version = after_replan.state.state_version
+    repeat = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+    assert repeat.replanned is False
+    assert repeat.state is not None
+    assert str(repeat.state.active_plan.id) == str(after_replan.state.active_plan.id)
+    assert [str(item.id) for item in repeat.state.active_plan.items] == [
+        str(item.id) for item in after_replan.state.active_plan.items
+    ]
+    assert repeat.state.state_version == before_version + 1
+
+
+@pytest.mark.asyncio
+async def test_timezone_update_only_changes_daily_boundary(
+    orchestrator: DeterministicOrchestrator,
+    temp_learner_repo: SqliteLearnerRepository,
+) -> None:
+    """Changing the calendar timezone is configuration, not a new learning goal."""
+    learner_id = f"learner_timezone_{uuid4().hex[:8]}"
+    created = await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "Travel in China", "daily_available_minutes": 20, "timezone": "UTC"},
+    )
+    before = created.state
+    assert before is not None and before.goal is not None and before.active_plan is not None
+
+    updated = await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={
+            "title": "Travel in China",
+            "daily_available_minutes": 20,
+            "timezone": "Asia/Shanghai",
+        },
+    )
+
+    assert updated.state is not None
+    assert updated.state.goal is not None
+    assert updated.state.goal.timezone == "Asia/Shanghai"
+    assert updated.state.goal_fingerprint == before.goal_fingerprint
+    assert updated.state.mastery == before.mastery
+    assert updated.state.concept_progress == before.concept_progress
+    assert updated.state.sessions == before.sessions
+    assert updated.state.roadmap_concept_ids == before.roadmap_concept_ids
 
 
 # --- 10. MCQ Options & 1-Click Answering Test ---

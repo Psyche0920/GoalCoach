@@ -1,7 +1,4 @@
-"""
-apps/api/dependencies.py
-FastAPI dependency injectors for persistence repositories.
-"""
+"""FastAPI dependency injectors for persistence repositories and worker adapters."""
 
 from __future__ import annotations
 
@@ -9,12 +6,30 @@ from typing import cast
 
 from fastapi import Request
 
+from goalcoach.agents.grader_component import GraderComponent
+from goalcoach.agents.planning_agent import PlanningWorker
+from goalcoach.agents.teaching_agent import TeachingWorker
 from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
 )
 
 _default_content_repo: ContentRepository | None = None
+
+
+def get_planning_worker() -> PlanningWorker:
+    """Create the configured Planning Agent application adapter."""
+    return PlanningWorker()
+
+
+def get_teaching_worker() -> TeachingWorker:
+    """Create the configured Teaching Agent application adapter."""
+    return TeachingWorker()
+
+
+def get_grader_component() -> GraderComponent:
+    """Create the isolated grading component."""
+    return GraderComponent()
 
 
 def get_learner_repo(request: Request) -> SqliteLearnerRepository:

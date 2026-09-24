@@ -141,7 +141,7 @@ GoalCoach is model-agnostic and interfaces with hosted or local models via an Op
 - **Anti-Stagnation Remediation Engine:** Hardened against infinite loops. Failed exercises dynamically rotate to alternative exercise IDs; remediating blocking prerequisites immediately unlocks downstream curriculum nodes.
 - **Deterministic 40/40/20 Progress Reducer:** Computes overall mastery mathematically from concept coverage, exercise accuracy, and time-decayed retention.
 - **Interactive CLI Terminal Harness:** A complete terminal interface (`terminal_harness.py`) providing instant, end-to-end interactive study sessions in the command line.
-- **Unified REST API:** FastAPI application providing `/api/v1/events` for the event-driven closed loop, `/api/v1/tutoring/chat` for conversational sessions, and `/health` monitoring.
+- **Unified REST API:** FastAPI application providing `/api/v1/events` for planning, teaching, help, grading, and replanning, plus `/health` monitoring.
 - **Modern Web Application:** Standalone React 18 + Vite SPA with interactive Pinyin charts, visual progress roadmaps, and adaptive exercise modals.
 
 ---
@@ -190,6 +190,8 @@ Configure your LLM credentials in `.env`:
 GOALCOACH_ENVIRONMENT=development
 GOALCOACH_DATABASE_URL=sqlite:///./goalcoach.db
 GOALCOACH_CONTENT_DATABASE_URL=sqlite:///./data/database1/goalcoach_hsk1_learning.db
+# Keep prerequisite data/query interfaces available, but do not gate planning unless enabled.
+GOALCOACH_ENABLE_PREREQUISITES=false
 
 # Hosted Model (Primary)
 GOALCOACH_LLM_BASE_URL=https://openrouter.ai/api/v1
@@ -252,14 +254,13 @@ uv run ruff check src/ apps/ tests/
 # 4. Fast Unit Tests (67 tests: domain models, math reducers, API routes)
 uv run pytest tests/unit/ -v
 
-# 5. End-to-End Closed Loop Integration Tests (33 tests: AC1-AC11, remediation, vector RAG)
+# 5. End-to-End Closed Loop Integration Tests
 GOALCOACH_ENVIRONMENT="testing" \
 GOALCOACH_LLM_API_KEY="ci-mock-token" \
-GOALCOACH_ENABLE_VECTOR_RETRIEVAL="true" \
 uv run pytest tests/integration/ -v
 ```
 
-All 100 tests pass out-of-the-box in offline and CI environments.
+Deterministic unit and API tests run offline. Tests that exercise a configured remote model require its API credentials.
 
 ---
 

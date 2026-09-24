@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from goalcoach.infrastructure.persistence.learner_models import LearnerBase
@@ -36,7 +36,25 @@ def get_engine(session_factory: sessionmaker[Session]) -> Engine:
 
 def create_learner_schema(session_factory: sessionmaker[Session]) -> None:
     """Create all learner state and audit tables in the configured database."""
+    engine = get_engine(session_factory)
     LearnerBase.metadata.create_all(
-        bind=get_engine(session_factory),
+        bind=engine,
         checkfirst=True,
     )
+    inspector = inspect(engine)
+    learner_columns = {column["name"] for column in inspector.get_columns("learner_states")}
+    if "state_version" not in learner_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE learner_states ADD COLUMN state_version INTEGER NOT NULL DEFAULT 1"
+                )
+            )
+            connection.execute(
+                text("""
+                    UPDATE learner_states
+                    SET state_version = CAST(JSON_EXTRACT(state_json, '$.state_version') AS INTEGER)
+                    WHERE JSON_VALID(state_json)
+                      AND JSON_EXTRACT(state_json, '$.state_version') IS NOT NULL
+                """)
+            )

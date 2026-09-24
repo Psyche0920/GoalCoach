@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 class LearnerRepositoryError(RuntimeError):
     """Raised when a learner aggregate cannot be loaded or persisted."""
+
+
+class StaleLearnerStateError(LearnerRepositoryError):
+    """Raised when a saved aggregate no longer matches the loaded optimistic version."""
 
 
 class ContentRepository:
@@ -150,9 +155,12 @@ class SqlAlchemyLearnerRepository:
         return await asyncio.to_thread(self._get_sync, learner_id)
 
     async def save(self, state: LearnerState) -> None:
-        """Insert or replace one aggregate in a single database transaction."""
-        snapshot = state.model_dump(mode="json")
-        await asyncio.to_thread(self._save_sync, state, snapshot)
+        """Insert or update one aggregate with optimistic concurrency."""
+        await asyncio.to_thread(self._save_sync, state)
+
+    async def save_with_event(self, state: LearnerState, event: LearningEvent) -> None:
+        """Persist state and its audit event in one atomic transaction."""
+        await asyncio.to_thread(self._save_with_event_sync, state, event)
 
     async def record_learning_event(self, event: LearningEvent) -> None:
         """Record an immutable learning event into the audit log."""
@@ -175,26 +183,105 @@ class SqlAlchemyLearnerRepository:
             logger.exception("Failed to load learner state", extra={"learner_id": str(learner_id)})
             raise LearnerRepositoryError(f"Failed to load learner {learner_id}") from exc
 
-    def _save_sync(self, state: LearnerState, snapshot: dict[str, object]) -> None:
+    def _save_sync(self, state: LearnerState) -> None:
         try:
             with self._session_factory.begin() as session:
+                snapshot = state.model_dump(mode="json")
                 record = session.get(LearnerStateORM, str(state.learner_id))
                 if record is None:
+                    if state.state_version != 1:
+                        raise StaleLearnerStateError(
+                            f"Stale learner state for {state.learner_id}: expected a new aggregate"
+                        )
+                    state.state_version += 1
+                    snapshot["state_version"] = state.state_version
                     session.add(
                         LearnerStateORM(
                             learner_id=str(state.learner_id),
                             state_json=snapshot,
+                            state_version=state.state_version,
                             updated_at=state.updated_at,
                         )
                     )
                 else:
+                    record_version = int(record.state_version)
+                    if record_version != state.state_version:
+                        raise StaleLearnerStateError(
+                            f"Stale learner state for {state.learner_id}: "
+                            f"expected version {state.state_version}, found {record_version}"
+                        )
+                    state.state_version += 1
+                    snapshot["state_version"] = state.state_version
                     record.state_json = snapshot
+                    record.state_version = state.state_version
                     record.updated_at = state.updated_at
         except SQLAlchemyError as exc:
             logger.exception(
                 "Failed to save learner state", extra={"learner_id": str(state.learner_id)}
             )
             raise LearnerRepositoryError(f"Failed to save learner {state.learner_id}") from exc
+
+    def _save_with_event_sync(
+        self,
+        state: LearnerState,
+        event: LearningEvent,
+    ) -> None:
+        try:
+            with self._session_factory.begin() as session:
+                snapshot = state.model_dump(mode="json")
+                record = session.get(LearnerStateORM, str(state.learner_id))
+                if record is None:
+                    if state.state_version != 1:
+                        raise StaleLearnerStateError(
+                            f"Stale learner state for {state.learner_id}: expected a new aggregate"
+                        )
+                    state.state_version += 1
+                    snapshot["state_version"] = state.state_version
+                    session.add(
+                        LearnerStateORM(
+                            learner_id=str(state.learner_id),
+                            state_json=snapshot,
+                            state_version=state.state_version,
+                            updated_at=state.updated_at,
+                        )
+                    )
+                else:
+                    record_version = int(record.state_version)
+                    if record_version != state.state_version:
+                        raise StaleLearnerStateError(
+                            f"Stale learner state for {state.learner_id}: "
+                            f"expected version {state.state_version}, found {record_version}"
+                        )
+                    state.state_version += 1
+                    snapshot["state_version"] = state.state_version
+                    record.state_json = snapshot
+                    record.state_version = state.state_version
+                    record.updated_at = state.updated_at
+
+                session.add(
+                    LearningEventORM(
+                        id=event.id,
+                        learner_id=str(event.learner_id),
+                        plan_item_id=str(event.plan_item_id),
+                        concept_ids=list(event.concept_ids),
+                        event_type=event.event_type,
+                        started_at=event.started_at,
+                        active_seconds=event.active_seconds,
+                        engagement_score=event.engagement_score,
+                        grading_result=event.grading_result,
+                        created_at=event.created_at,
+                    )
+                )
+        except StaleLearnerStateError:
+            raise
+        except SQLAlchemyError as exc:
+            logger.exception(
+                "Failed to save learner state and event",
+                extra={"learner_id": str(state.learner_id), "event_id": event.id},
+            )
+            raise LearnerRepositoryError(
+                f"Failed to save learner {state.learner_id} and event {event.id}"
+            ) from exc
 
     def _record_learning_event_sync(self, event: LearningEvent) -> None:
         try:
@@ -237,7 +324,9 @@ class SqlAlchemyLearnerRepository:
                         concept_ids=r.concept_ids,
                         event_type=r.event_type,  # type: ignore[arg-type]
                         started_at=r.started_at,
+                        last_active_at=r.started_at + timedelta(seconds=r.active_seconds),
                         active_seconds=r.active_seconds,
+                        estimated_minutes=r.active_seconds / 60.0,
                         engagement_score=r.engagement_score,
                         grading_result=r.grading_result,
                         created_at=r.created_at,

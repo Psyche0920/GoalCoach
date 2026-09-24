@@ -1,40 +1,179 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar.tsx';
 import { TopStatusBar } from './components/TopStatusBar.tsx';
 import { BottomNav } from './components/BottomNav.tsx';
 import { DailyPlanView } from './components/DailyPlanView.tsx';
-import { CurriculumRoadmapView } from './components/CurriculumRoadmapView.tsx';
+import { RoadmapView } from './components/RoadmapView.tsx';
 import { RetentionVisualizer } from './components/RetentionVisualizer.tsx';
-import { DuolingoExerciseModal } from './components/DuolingoExerciseModal.tsx';
-import { PinyinLessonModal } from './components/PinyinLessonModal.tsx';
-import { ModernChatDrawer } from './components/ModernChatDrawer.tsx';
 import { LearnerProfileDrawer } from './components/LearnerProfileDrawer.tsx';
-import { LearnerState, NextAction, CurriculumConcept, GradingResult, LearningGoal } from './types.ts';
-import { HSK1_CONCEPTS } from './data/hsk1Curriculum.ts';
+import { TeachingAgentModal } from './components/TeachingAgentModal.tsx';
+import { LearnerState, NextAction, CurriculumConcept, GradingResult, LearningGoal, LearningLoopResponse, TeachingAction, ProgressSummary, StudyEntrySource } from './types.ts';
+
+interface LessonSelection {
+  entrySource: StudyEntrySource;
+  conceptId?: string;
+  planItemId?: string;
+}
 
 export function App() {
   const [learnerId] = useState('learner_001');
   const [learnerState, setLearnerState] = useState<LearnerState | null>(null);
-  const [overallProgress, setOverallProgress] = useState(0.0);
+  const [goalCompletion, setGoalCompletion] = useState(0.0);
   const [learnedProgress, setLearnedProgress] = useState(0.0);
   const [masteredProgress, setMasteredProgress] = useState(0.0);
+  const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
   const [nextAction, setNextAction] = useState<NextAction>('teach');
-  const [concepts, setConcepts] = useState<CurriculumConcept[]>(HSK1_CONCEPTS);
+  const [concepts, setConcepts] = useState<CurriculumConcept[]>([]);
+  const [roadmapCoverageRationale, setRoadmapCoverageRationale] = useState('');
   const [activeTab, setActiveTab] = useState<'plan' | 'curriculum' | 'retention'>('plan');
 
-  const [selectedStudyConceptId, setSelectedStudyConceptId] = useState<string | null>(null);
-  const [selectedPinyinConceptId, setSelectedPinyinConceptId] = useState<string | null>(null);
-  const [studyMode, setStudyMode] = useState<'review' | 'new' | 'remedial' | 'daily_quiz'>('new');
-  const [todayMistakes, setTodayMistakes] = useState<string[]>([]);
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [isProfileDrawerOpen, setIsProfileDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isTeachingOpen, setIsTeachingOpen] = useState(false);
+  const [teachingLoading, setTeachingLoading] = useState(false);
+  const [teachingAction, setTeachingAction] = useState<TeachingAction | null>(null);
+  const [teachingError, setTeachingError] = useState<string | null>(null);
+  const [agentGradingResult, setAgentGradingResult] = useState<GradingResult | null>(null);
+  const [agentReplanned, setAgentReplanned] = useState(false);
+  const [appError, setAppError] = useState<string | null>(null);
+  const activityStartedAt = useRef<number | null>(null);
+  const roadmapRequestId = useRef(0);
 
   const acceptLearnerState = (incoming: LearnerState) => {
     setLearnerState((current) => {
       if ((incoming.stateVersion ?? 0) < (current?.stateVersion ?? 0)) return current;
       return incoming;
     });
+  };
+
+  const goalForDisplay: LearningGoal | null = (() => {
+    if (!learnerState?.goal) return null;
+    return learnerState.goal;
+  })();
+
+  const parseApiError = async (response: Response, fallback: string): Promise<string> => {
+    try {
+      const body = await response.json() as { detail?: string | Array<{ msg?: string }> };
+      if (typeof body.detail === 'string') return body.detail;
+      if (Array.isArray(body.detail)) return body.detail.map((item) => item.msg).filter(Boolean).join(' ') || fallback;
+    } catch {
+      // The fallback below is safe for empty and non-JSON responses.
+    }
+    return fallback;
+  };
+
+  const dispatchLearningEvent = async (
+    eventType: LearningLoopResponse['eventType'],
+    payload: Record<string, unknown>,
+    attempt = 0,
+  ): Promise<LearningLoopResponse> => {
+    const response = await fetch('/api/v1/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_type: eventType, learner_id: learnerId, payload }),
+    });
+    if (response.status === 409) {
+      const detail = await parseApiError(response, 'Your learning state changed in another request.');
+      const staleStateDetail = 'Your learning state changed in another request. Reload and try again.';
+      if (detail === staleStateDetail && attempt === 0) {
+        await refreshAuthoritativeState();
+        return dispatchLearningEvent(eventType, payload, attempt + 1);
+      }
+      await refreshAuthoritativeState();
+      throw new Error(`${detail} The latest state has been reloaded; try again.`);
+    }
+    if (!response.ok) {
+      throw new Error(await parseApiError(response, 'GoalCoach could not complete this request.'));
+    }
+    return response.json() as Promise<LearningLoopResponse>;
+  };
+
+  const refreshAuthoritativeState = async (): Promise<void> => {
+    const response = await fetch(`/api/v1/learners/${learnerId}`);
+    if (!response.ok) return;
+    const body = await response.json() as {
+      state?: LearnerState;
+      progressSummary?: ProgressSummary;
+    };
+    if (body.state) acceptLearnerState(body.state);
+    if (body.progressSummary) acceptProgress(body.progressSummary);
+  };
+
+  const refreshRoadmap = async (): Promise<void> => {
+    const requestId = ++roadmapRequestId.current;
+    const learnerResponse = await fetch(`/api/v1/learners/${learnerId}`);
+    if (!learnerResponse.ok) {
+      throw new Error(await parseApiError(learnerResponse, 'The roadmap could not be loaded.'));
+    }
+    const learnerBody = await learnerResponse.json() as {
+      state?: LearnerState;
+      progressSummary?: ProgressSummary;
+    };
+    if (!learnerBody.state) {
+      throw new Error('The roadmap could not be loaded.');
+    }
+    const response = await fetch(`/api/v1/learners/${learnerId}/roadmap`);
+    if (!response.ok) throw new Error(await parseApiError(response, 'The roadmap could not be loaded.'));
+    const body = await response.json() as {
+      roadmap?: CurriculumConcept[];
+      roadmapCoverageRationale?: string;
+      stateVersion?: number;
+    };
+    if (
+      requestId !== roadmapRequestId.current ||
+      (body.stateVersion ?? 0) !== learnerBody.state.stateVersion
+    ) {
+      return;
+    }
+    acceptLearnerState(learnerBody.state);
+    if (learnerBody.progressSummary) acceptProgress(learnerBody.progressSummary);
+    setConcepts(Array.isArray(body.roadmap) ? body.roadmap : []);
+      setRoadmapCoverageRationale(body.roadmapCoverageRationale ?? '');
+  };
+
+  const acceptProgress = (summary: ProgressSummary): void => {
+    setProgressSummary(summary);
+    setGoalCompletion(summary.goalCompletion);
+    setLearnedProgress(summary.learnedProgress);
+    setMasteredProgress(summary.masteredProgress);
+  };
+
+  const acceptRoadmapProjection = async (
+    data: LearningLoopResponse,
+  ): Promise<void> => {
+    if (!data.state) return;
+    const response = await fetch(`/api/v1/learners/${learnerId}/roadmap`);
+    if (!response.ok) return;
+    const body = await response.json() as {
+      roadmap?: CurriculumConcept[];
+      roadmapCoverageRationale?: string;
+      stateVersion?: number;
+    };
+    if ((body.stateVersion ?? 0) !== data.state.stateVersion) return;
+    setConcepts(Array.isArray(body.roadmap) ? body.roadmap : []);
+    setRoadmapCoverageRationale(body.roadmapCoverageRationale ?? '');
+  };
+
+  const acceptResponse = async (
+    data: LearningLoopResponse,
+    refreshRoadmapProjection = false,
+  ): Promise<void> => {
+    if (data.state) acceptLearnerState(data.state);
+    if (data.progressSummary) acceptProgress(data.progressSummary);
+    setNextAction(data.nextAction);
+    const planningNotice = data.planUpdate?.metadata?.notice;
+    if (data.planUpdate?.metadata?.fallback_used && typeof planningNotice === 'string') {
+      setAppError(planningNotice);
+    }
+    if (refreshRoadmapProjection) await acceptRoadmapProjection(data);
+  };
+
+  const currentActivitySeconds = (): number => {
+    if (activityStartedAt.current === null) return 0;
+    return Math.min(
+      86_400,
+      Math.max(0, Math.round((Date.now() - activityStartedAt.current) / 1_000)),
+    );
   };
 
   // Fetch initial learner state and curriculum
@@ -44,29 +183,13 @@ export function App() {
         const res = await fetch(`/api/v1/learners/${learnerId}`);
         if (res.ok) {
           const data = await res.json();
-          acceptLearnerState(data.state);
           setNextAction(data.nextAction);
-          setOverallProgress(data.overallProgress);
-          setLearnedProgress(data.progressSummary?.learnedProgress ?? 0);
-          setMasteredProgress(data.progressSummary?.masteredProgress ?? 0);
-          const planRes = await fetch(`/api/v1/learners/${learnerId}/today-plan`);
-          if (planRes.ok) {
-            const plan = await planRes.json();
-            setLearnerState((current) => current && (plan.stateVersion ?? 0) >= (current.stateVersion ?? 0)
-              ? { ...current, activePlan: plan, stateVersion: plan.stateVersion }
-              : current);
-          }
+          if (data.progressSummary) acceptProgress(data.progressSummary);
+          acceptLearnerState(data.state as LearnerState);
         }
-
-        const conceptsRes = await fetch('/api/v1/curriculum/concepts');
-        if (conceptsRes.ok) {
-          const data = await conceptsRes.json();
-          if (Array.isArray(data) && data.length > 0) {
-            setConcepts(data);
-          }
-        }
+        await refreshRoadmap();
       } catch (err) {
-        console.error('Failed to initialize learner state:', err);
+        setAppError(err instanceof Error ? err.message : 'GoalCoach could not be initialized.');
       } finally {
         setLoading(false);
       }
@@ -74,100 +197,154 @@ export function App() {
     init();
   }, [learnerId]);
 
-  // Handle plan regeneration
-  const handleRegeneratePlan = async () => {
+  // Replanning is an explicit backend event, never a read-only plan fetch.
+  const handleRegeneratePlan = async (): Promise<void> => {
+    setAppError(null);
     try {
-      const res = await fetch(`/api/v1/learners/${learnerId}/today-plan`);
-      if (res.ok) {
-        const plan = await res.json();
-        setLearnerState((current) => current && (plan.stateVersion ?? 0) >= (current.stateVersion ?? 0)
-          ? { ...current, activePlan: plan, stateVersion: plan.stateVersion }
-          : current);
-      }
-    } catch (err) {
-      console.error('Failed to regenerate plan:', err);
+      const data = await dispatchLearningEvent('REPLAN_REQUESTED', {
+        reason: 'Learner requested a refreshed daily plan.',
+      });
+      await acceptResponse(data, true);
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Today’s plan could not be refreshed.');
     }
   };
 
-  // Handle goal update via canonical closed-loop event dispatcher
+  // Handle goal update
   const handleUpdateGoal = async (updatedGoal: Partial<LearningGoal>) => {
+    setAppError(null);
+    setIsProfileDrawerOpen(false);
+    const title = updatedGoal.title?.trim() || goalForDisplay?.title?.trim();
+    const dailyMinutes = updatedGoal.dailyAvailableMinutes ?? goalForDisplay?.dailyAvailableMinutes;
+    const timezone = updatedGoal.timezone ?? learnerState?.goal?.timezone
+      ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
+    if (!title) throw new Error('Please describe your learning goal.');
+    if (!Number.isInteger(dailyMinutes) || dailyMinutes! < 5 || dailyMinutes! > 120) {
+      throw new Error('Daily study time must be a whole number between 5 and 120 minutes.');
+    }
+
+    const data = await dispatchLearningEvent('GOAL_CREATED', {
+      title,
+      target_hsk_level: 1,
+      daily_available_minutes: dailyMinutes,
+      timezone,
+    });
+    if (!data.state) throw new Error('The updated learner state was missing from the server response.');
     try {
-      const res = await fetch('/api/v1/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event_type: 'GOAL_CREATED',
-          learner_id: learnerId,
-          payload: {
-            title: updatedGoal.title,
-            target_hsk_level: updatedGoal.targetHskLevel,
-            daily_available_minutes: updatedGoal.dailyAvailableMinutes,
-          },
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.state) {
-          acceptLearnerState(data.state);
-        }
-        if (data.dailyPlan) {
-          setLearnerState((curr) => curr ? { ...curr, activePlan: data.dailyPlan } : curr);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to update goal:', err);
+      await acceptResponse(data, true);
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Your goal was saved, but the roadmap could not be refreshed.');
     }
   };
 
-  // Handle submitting answer to structured rubric grader via closed-loop event dispatcher
-  const handleSubmitAnswer = async (exerciseId: string, answer: string): Promise<GradingResult | null> => {
+  const handleStartAgentSession = async (
+    selection: LessonSelection = { entrySource: 'planned' },
+  ): Promise<void> => {
+    setIsTeachingOpen(true);
+    setTeachingLoading(true);
+    setTeachingError(null);
+    setAgentGradingResult(null);
+    setAgentReplanned(false);
     try {
-      const res = await fetch('/api/v1/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event_type: 'ANSWER_SUBMITTED',
-          learner_id: learnerId,
-          payload: {
-            exercise_id: exerciseId,
-            answer,
-          },
-        }),
+      let data = await dispatchLearningEvent('SESSION_STARTED', {
+        entry_source: selection.entrySource,
+        concept_id: selection.conceptId,
+        plan_item_id: selection.planItemId,
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.state) {
-          acceptLearnerState(data.state);
-          if (data.dailyPlan) {
-            setLearnerState((curr) => curr ? { ...curr, activePlan: data.dailyPlan } : curr);
-          }
-        }
-        return data.gradingResult ?? data.grading_result ?? null;
+      const replanned = data.replanned;
+      await acceptResponse(data, replanned);
+      // Planning and teaching remain separate backend events. If this turn
+      // regenerated the plan, request the teaching turn only after it finishes.
+      if (!data.teachingAction && data.nextAction === 'teach') {
+        data = await dispatchLearningEvent('SESSION_STARTED', { entry_source: 'planned' });
+        await acceptResponse(data);
       }
-    } catch (err) {
-      console.error('Failed to submit answer:', err);
+      if (!data.teachingAction) {
+        throw new Error(
+          data.nextAction === 'complete'
+            ? 'Today’s plan is complete.'
+            : 'No teaching action was returned.',
+        );
+      }
+      setTeachingAction(data.teachingAction);
+      setAgentReplanned(replanned || data.replanned);
+      activityStartedAt.current = Date.now();
+    } catch (error) {
+      setTeachingError(error instanceof Error ? error.message : 'The lesson could not be started.');
+    } finally {
+      setTeachingLoading(false);
     }
-    return null;
   };
 
-  // Handle completing concept study with audio demonstration & practice
-  const handleCompleteConcept = async (conceptId: string, score: number = 100) => {
+  const handleTeachingHelp = async (query: string): Promise<void> => {
+    if (!teachingAction) return;
+    setTeachingLoading(true);
+    setTeachingError(null);
+    setAgentGradingResult(null);
+    setAgentReplanned(false);
     try {
-      const res = await fetch(`/api/v1/learners/${learnerId}/complete-concept`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ concept_id: conceptId, score, mode: studyMode }),
+      const data = await dispatchLearningEvent('HELP_REQUESTED', {
+        concept_id: teachingAction.conceptId,
+        current_exercise_id: teachingAction.exercisePayload?.exercise_id,
+        learner_query: query,
       });
-      if (res.ok) {
-        const data = await res.json();
-        acceptLearnerState(data.state);
-        setOverallProgress(data.overallProgress);
-        setLearnedProgress(data.progressSummary?.learnedProgress ?? 0);
-        setMasteredProgress(data.progressSummary?.masteredProgress ?? 0);
-        setNextAction(data.nextAction);
-      }
-    } catch (err) {
-      console.error('Failed to complete concept:', err);
+      if (!data.teachingAction) throw new Error('No alternative explanation was returned.');
+      setTeachingAction(data.teachingAction);
+      await acceptResponse(data);
+    } catch (error) {
+      setTeachingError(error instanceof Error ? error.message : 'Coach help is temporarily unavailable.');
+    } finally {
+      setTeachingLoading(false);
+    }
+  };
+
+  const handleAgentAnswer = async (answer: string): Promise<void> => {
+    const exerciseId = teachingAction?.exercisePayload?.exercise_id;
+    const conceptId = teachingAction?.exercisePayload?.concept_id || teachingAction?.conceptId;
+    if (!exerciseId || !conceptId) {
+      setTeachingError('This lesson does not contain a gradable curriculum exercise.');
+      return;
+    }
+    setTeachingLoading(true);
+    setTeachingError(null);
+    try {
+      const data = await dispatchLearningEvent('ANSWER_SUBMITTED', {
+        exercise_id: exerciseId,
+        concept_id: conceptId,
+        answer,
+        time_spent_seconds: currentActivitySeconds(),
+      });
+      setAgentGradingResult(data.gradingResult ?? null);
+      setAgentReplanned(data.replanned);
+      await acceptResponse(data, true);
+      activityStartedAt.current = Date.now();
+    } catch (error) {
+      setTeachingError(error instanceof Error ? error.message : 'Your answer could not be checked.');
+    } finally {
+      setTeachingLoading(false);
+    }
+  };
+
+  const handleCloseAgentSession = async (): Promise<void> => {
+    if (!learnerState?.activeSession) {
+      setIsTeachingOpen(false);
+      return;
+    }
+    setTeachingLoading(true);
+    setTeachingError(null);
+    try {
+      const data = await dispatchLearningEvent('SESSION_ENDED', {
+        additional_active_seconds: teachingAction?.metadata?.progress_eligible === false
+          ? 0
+          : currentActivitySeconds(),
+      });
+      await acceptResponse(data, true);
+      activityStartedAt.current = null;
+      setIsTeachingOpen(false);
+    } catch (error) {
+      setTeachingError(error instanceof Error ? error.message : 'The study session could not be closed.');
+    } finally {
+      setTeachingLoading(false);
     }
   };
 
@@ -184,15 +361,14 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-950 flex select-none">
+    <div className="min-h-screen text-slate-950 flex select-none">
       {/* Desktop Sidebar (Duolingo Style) */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenChat={() => setIsChatOpen(true)}
         onOpenProfile={() => setIsProfileDrawerOpen(true)}
         learnerState={learnerState}
-        overallProgress={overallProgress}
+        goalCompletion={goalCompletion}
         nextAction={nextAction}
       />
 
@@ -200,65 +376,38 @@ export function App() {
       <div className="flex-1 flex flex-col min-w-0 pb-20 lg:pb-0">
         {/* Top Status Bar (Duolingo Streak / Energy / Daily Quota) */}
         <TopStatusBar
-          learnerState={learnerState}
-          overallProgress={overallProgress}
-          nextAction={nextAction}
-          onRegeneratePlan={handleRegeneratePlan}
-          onOpenChat={() => setIsChatOpen(true)}
+          goalCompletion={goalCompletion}
           onOpenProfile={() => setIsProfileDrawerOpen(true)}
         />
 
         {/* Main Content View */}
-        <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-8 py-6">
+        <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-8 py-7 sm:py-10">
+          {appError && (
+            <p role="alert" className="mb-5 rounded-2xl bg-rose-50 p-4 text-sm font-bold text-rose-800">
+              {appError}
+            </p>
+          )}
           {activeTab === 'plan' && (
             <DailyPlanView
               plan={learnerState?.activePlan || null}
-              goal={learnerState?.goal || null}
+              goal={goalForDisplay}
               concepts={concepts}
               learnerState={learnerState}
-              overallProgress={overallProgress}
-              todayMistakes={todayMistakes}
-              onStartStudy={(conceptId, mode = 'new') => {
-                setStudyMode(mode);
-                if (conceptId.startsWith('hsk1_p')) {
-                  setSelectedPinyinConceptId(conceptId);
-                } else {
-                  setSelectedStudyConceptId(conceptId);
-                }
-              }}
+              onStartStudy={(selection) => void handleStartAgentSession(selection)}
               onUpdateGoal={handleUpdateGoal}
               onRegeneratePlan={handleRegeneratePlan}
-              onLearningUpdate={(update) => {
-                setOverallProgress(update.progressSummary.goalCompletion);
-                setLearnedProgress(update.progressSummary.learnedProgress);
-                setMasteredProgress(update.progressSummary.masteredProgress);
-                setLearnerState((current) => {
-                  if (!current || update.stateVersion < (current.stateVersion ?? 0)) return current;
-                  const conceptProgress = { ...(current.conceptProgress ?? {}) };
-                  for (const affected of update.affectedConcepts) conceptProgress[affected.conceptId] = affected;
-                  return { ...current, activePlan: update.plan, conceptProgress, stateVersion: update.stateVersion };
-                });
-              }}
             />
           )}
 
           {activeTab === 'curriculum' && (
-            <CurriculumRoadmapView
+            <RoadmapView
               concepts={concepts}
               learnerState={learnerState}
-              goal={learnerState?.goal || null}
-              onStartStudy={(conceptId, isPinyin) => {
-                const p = learnerState?.conceptProgress?.[conceptId];
-                const isAlreadyLearned = (p?.learnedPercent ?? 0) >= 100;
-                setStudyMode(isAlreadyLearned ? 'review' : 'new');
-                if (isPinyin || conceptId.startsWith('hsk1_p')) {
-                  setSelectedPinyinConceptId(conceptId);
-                } else {
-                  setSelectedStudyConceptId(conceptId);
-                }
-              }}
-              onUpdateGoal={handleUpdateGoal}
-              onOpenProfile={() => setIsProfileDrawerOpen(true)}
+              coverageRationale={roadmapCoverageRationale || learnerState?.roadmapCoverageRationale || ''}
+              onStartConcept={(conceptId) => void handleStartAgentSession({
+                entrySource: 'roadmap',
+                conceptId,
+              })}
             />
           )}
 
@@ -266,16 +415,8 @@ export function App() {
             <RetentionVisualizer
               learnerState={learnerState}
               concepts={concepts}
-              overallProgress={overallProgress}
-              onReviewConcept={(conceptId) => {
-                if (conceptId.startsWith('hsk1_p')) {
-                  setStudyMode('review');
-                  setSelectedPinyinConceptId(conceptId);
-                } else {
-                  setStudyMode('review');
-                  setSelectedStudyConceptId(conceptId);
-                }
-              }}
+              goalCompletion={goalCompletion}
+              progressSummary={progressSummary}
             />
           )}
         </main>
@@ -285,49 +426,6 @@ export function App() {
       <BottomNav
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenChat={() => setIsChatOpen(true)}
-      />
-
-      {/* Pinyin Interactive Lab Modal with Native Fluent Audio Demonstrations & Practice */}
-      {selectedPinyinConceptId && (
-        <PinyinLessonModal
-          conceptId={selectedPinyinConceptId}
-          onClose={() => setSelectedPinyinConceptId(null)}
-          onComplete={(score) => {
-            handleCompleteConcept(selectedPinyinConceptId, score);
-          }}
-          learnerState={learnerState}
-          concepts={concepts}
-          onUpdateLearnerState={setLearnerState}
-        />
-      )}
-
-      {/* Duolingo Practice Modal */}
-      {selectedStudyConceptId && (
-        <DuolingoExerciseModal
-          conceptId={selectedStudyConceptId}
-          targetDomain={learnerState?.goal?.targetDomain || 'general'}
-          mode={studyMode}
-          onClose={() => setSelectedStudyConceptId(null)}
-          onSubmitAnswer={handleSubmitAnswer}
-          onCompleteConcept={(conceptId) => {
-            handleCompleteConcept(conceptId, 100);
-          }}
-          onRecordMistake={(exerciseId) => {
-            setTodayMistakes((prev) => Array.from(new Set([...prev, exerciseId])));
-          }}
-        />
-      )}
-
-      {/* Modern Panda Coach Chat Drawer */}
-      <ModernChatDrawer
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-        context={{
-          currentGoal: learnerState?.goal?.title,
-          activePlanItems: learnerState?.activePlan?.items?.map((i) => i.objective),
-          errorCount: learnerState?.errorProfile?.length,
-        }}
       />
 
       {/* Learner Profile Drawer (Triggered by clicking Panda Logo/Name) */}
@@ -335,10 +433,23 @@ export function App() {
         isOpen={isProfileDrawerOpen}
         onClose={() => setIsProfileDrawerOpen(false)}
         displayName={learnerState?.displayName || 'Ann'}
-        goal={learnerState?.goal || null}
+        goal={goalForDisplay}
         learnedProgress={learnedProgress}
         masteredProgress={masteredProgress}
         onUpdateGoal={handleUpdateGoal}
+      />
+
+      <TeachingAgentModal
+        isOpen={isTeachingOpen}
+        action={teachingAction}
+        loading={teachingLoading}
+        error={teachingError}
+        gradingResult={agentGradingResult}
+        replanned={agentReplanned}
+        onClose={handleCloseAgentSession}
+        onContinue={() => handleStartAgentSession()}
+        onRequestHelp={handleTeachingHelp}
+        onSubmitAnswer={handleAgentAnswer}
       />
     </div>
   );
