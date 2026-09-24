@@ -31,12 +31,21 @@ logger = logging.getLogger(__name__)
 
 
 def log_validation_retries(messages: list[ModelMessage]) -> None:
-    """Expose bounded retry causes without logging learner content or prompts."""
+    """Log validation locations and safe diagnostic messages without input values."""
     for message in messages:
         for part in getattr(message, "parts", []):
             if not isinstance(part, RetryPromptPart):
                 continue
-            reason = part.content if isinstance(part.content, str) else "schema validation"
+            if isinstance(part.content, str):
+                reason = part.content
+            else:
+                details = []
+                for error in part.content:
+                    location = ".".join(str(item) for item in error.get("loc", ())) or "output"
+                    error_type = error.get("type", "validation_error")
+                    message_text = error.get("msg", "Output did not match the schema.")
+                    details.append(f"field={location} type={error_type} reason={message_text}")
+                reason = "; ".join(details) or "Output did not match the schema."
             logger.warning("Planning output retry: %s", reason)
 
 
@@ -148,7 +157,8 @@ def validate_planning_output(
     valid_roadmap = validate_agent_roadmap(output.roadmap_concept_ids, curriculum_ids)
     if len(valid_roadmap) != len(output.roadmap_concept_ids):
         raise ModelRetry(
-            "Roadmap contains unknown or duplicate concept IDs. Return valid unique IDs."
+            "field=roadmap_concept_ids: contains unknown or duplicate concept IDs. "
+            "Return valid unique IDs."
         )
     if not ctx.deps.allow_roadmap_changes and valid_roadmap != ctx.deps.state.roadmap_concept_ids:
         # The long-term roadmap is persisted learner state. Requiring the model
@@ -157,11 +167,14 @@ def validate_planning_output(
         output.roadmap_concept_ids = list(ctx.deps.state.roadmap_concept_ids)
     if not output.roadmap_coverage_rationale.strip():
         raise ModelRetry(
-            "roadmap_coverage_rationale is required. Explain goal capabilities and roadmap coverage."
+            "field=roadmap_coverage_rationale: required. Explain goal capabilities and roadmap coverage."
         )
     daily_ids = {item.concept_id for item in output.ordered_items}
     if not daily_ids.issubset(set(valid_roadmap)):
-        raise ModelRetry("Every ordered_items concept must also appear in roadmap_concept_ids.")
+        raise ModelRetry(
+            "field=ordered_items[].concept_id: every daily concept must also appear in "
+            "roadmap_concept_ids."
+        )
     required_remedial = sorted(
         (
             (concept_id, count)
@@ -175,7 +188,8 @@ def validate_planning_output(
         first = output.ordered_items[0]
         if first.kind != PlanItemKind.REMEDIAL or first.concept_id != required_remedial[0][0]:
             raise ModelRetry(
-                "The first Daily Plan item must remediate the highest-priority unresolved concept."
+                "field=ordered_items[0].kind, ordered_items[0].concept_id: the first Daily Plan "
+                "item must remediate the highest-priority unresolved concept."
             )
     return output
 
