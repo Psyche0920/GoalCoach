@@ -53,5 +53,4 @@ jobs:
           # Use local in-memory/dummy configs for CI test runs
           GOALCOACH_ENVIRONMENT: "testing"
           GOALCOACH_LLM_API_KEY: "ci-mock-token"
-          GOALCOACH_ENABLE_VECTOR_RETRIEVAL: "true"
         run: uv run pytest tests/integration/ -v

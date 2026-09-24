@@ -83,7 +83,7 @@ class AgentPlanUpdate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for Chinese learning.
+PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for Mandarin Chinese learners.
 Your responsibility is to decide what the learner should study next based on their goal, time budget, mastery history, and prerequisite graph.
 
 Key Pedagogical Rules:
@@ -180,11 +180,33 @@ def validate_planning_output(
     return output
 
 
+def resolve_active_level(state: LearnerState, content_service: ContentService) -> int:
+    """Determine the learner's active reachable HSK level window based on their current mastery.
+
+    A higher level is unlocked only when all concepts of the current level have been studied and
+    have achieved acceptable mastery (>= 0.50).
+    """
+    target_level = state.goal.target_hsk_level if state.goal else 1
+    # Check levels from 1 up to target_level
+    for level in range(1, target_level):
+        level_concepts = content_service.list_all_concepts(hsk_level=level)
+        if not level_concepts:
+            continue
+        # If any concept in this level has not reached mastery, stay at this level
+        is_level_completed = all(
+            c.concept_id in state.mastery and state.mastery[c.concept_id].mastery_score >= 0.50
+            for c in level_concepts
+        )
+        if not is_level_completed:
+            return level
+    return target_level
+
+
 @planning_agent.tool
 def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]]:
-    """List available HSK1 curriculum concepts with difficulty and sequencing."""
-    hsk_level = ctx.deps.state.goal.target_hsk_level if ctx.deps.state.goal else 1
-    concepts = ctx.deps.content_service.list_all_concepts(hsk_level=hsk_level)
+    """List available curriculum concepts up to the learner's active reachable HSK level window."""
+    active_level = resolve_active_level(ctx.deps.state, ctx.deps.content_service)
+    concepts = ctx.deps.content_service.list_all_concepts(max_hsk_level=active_level)
     return [
         {
             "concept_id": c.concept_id,
@@ -197,6 +219,7 @@ def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]
             "vocabulary_focus": c.vocabulary_focus,
             "metadata": c.metadata_json or {},
             "prerequisites": ctx.deps.content_service.get_prerequisites(c.concept_id),
+            "hsk_level": c.hsk_level,
         }
         for c in concepts
     ]
@@ -263,9 +286,11 @@ class PlanningWorker:
         remediated_summary = ", ".join(state.today_remediated_concept_ids) or "None"
         studied_summary = ", ".join(state.today_studied_concept_ids) or "None"
         history_summary = format_agent_history(state)
+        active_level = resolve_active_level(state, content_service)
 
         prompt = (
             f"Learner Goal: {state.goal.title if state.goal else 'HSK1'}\n"
+            f"Current Active Reachable Level: HSK {active_level}\n"
             f"Daily Time Budget: {available_minutes} minutes\n"
             f"Needs Replanning: {state.needs_replanning}\n"
             f"Prerequisite Enforcement Enabled: {self.enable_prerequisites}\n"
@@ -275,9 +300,15 @@ class PlanningWorker:
             f"Current Mastery: {mastery_summary}\n"
             f"Active Errors: {error_summary}\n"
             f"Recent Cross-Session Learning History:\n{history_summary}\n"
-            "Generate today's optimal PlanUpdate and a complete personalized roadmap "
-            "conforming to the schema. The roadmap must cover multiple future sessions; only "
-            "ordered_items is constrained by today's time budget."
+            f"Today Studied Concepts (do not repeat today): {state.today_studied_concept_ids}\n"
+            f"Today Remediated Concepts: {state.today_remediated_concept_ids}\n"
+            "Rules for planning:\n"
+            "1. If the learner has no mastery, schedule 'new' concepts unlocked by prerequisites (start with the first concept).\n"
+            "2. Do NOT schedule concepts that have already been studied today.\n"
+            "3. If the learner has errors or needs_replanning is True, prioritize 'remedial' items on weak concepts.\n"
+            "Generate today's optimal PlanUpdate conforming to the schema. "
+            f"Select concepts from the curriculum catalog within the active level window (up to HSK {active_level}). "
+            "The roadmap must cover multiple future sessions; only ordered_items is constrained by today's time budget."
         )
 
         try:
@@ -301,9 +332,12 @@ class PlanningWorker:
                 }
             )
 
-            # Guardrail: Validate all concept IDs against Database #1
+            try:
+                reachable_concepts = content_service.list_all_concepts(max_hsk_level=active_level)
+            except TypeError:
+                reachable_concepts = content_service.list_all_concepts()
+            valid_active_ids = {c.concept_id for c in reachable_concepts}
             curriculum_ids = [c.concept_id for c in content_service.list_all_concepts()]
-            all_valid_ids = set(curriculum_ids)
             proposed_roadmap_ids = validate_agent_roadmap(
                 plan_update.roadmap_concept_ids, curriculum_ids
             )
@@ -311,7 +345,10 @@ class PlanningWorker:
                 proposed_roadmap_ids = list(state.roadmap_concept_ids)
                 plan_update.roadmap_concept_ids = proposed_roadmap_ids
             validated_items = [
-                item for item in plan_update.ordered_items if item.concept_id in all_valid_ids
+                item
+                for item in plan_update.ordered_items
+                if item.concept_id in valid_active_ids
+                and item.concept_id not in state.today_studied_concept_ids
             ]
             daily_ids = list(dict.fromkeys(item.concept_id for item in validated_items))
             if not proposed_roadmap_ids or not set(daily_ids).issubset(set(proposed_roadmap_ids)):
@@ -428,7 +465,13 @@ class PlanningWorker:
         notice: str,
     ) -> PlanUpdate:
         """Create a conservative, curriculum-grounded plan when model reasoning is unavailable."""
-        concepts = content_service.list_all_concepts()
+        active_level = resolve_active_level(state, content_service)
+        try:
+            concepts = content_service.list_all_concepts(max_hsk_level=active_level)
+        except TypeError:
+            concepts = content_service.list_all_concepts()
+        if not concepts:
+            concepts = content_service.list_all_concepts()
         if not concepts:
             raise AgentOutputError(
                 "No curriculum concepts are available for deterministic planning"
@@ -532,12 +575,25 @@ class PlanningWorker:
             },
         )
 
+    def _heuristic_fallback(
+        self,
+        state: LearnerState,
+        content_service: ContentService,
+        available_minutes: int = 20,
+        *,
+        notice: str = "Deterministic planning fallback used.",
+    ) -> PlanUpdate:
+        return self._deterministic_fallback(
+            state, content_service, available_minutes, notice=notice
+        )
+
 
 __all__ = [
     "PLANNING_SYSTEM_PROMPT",
     "PlanningDeps",
     "PlanningWorker",
     "planning_agent",
+    "resolve_active_level",
     "validate_agent_roadmap",
     "validate_planning_output",
 ]

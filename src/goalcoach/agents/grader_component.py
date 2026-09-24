@@ -9,7 +9,13 @@ Implements PRD Section 10:
 
 from __future__ import annotations
 
+import json
+import logging
+import re
+from typing import Any
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from pydantic_ai import Agent
 
@@ -62,11 +68,117 @@ grader_agent = Agent(
 )
 
 
+def parse_matching_pairs(text: str) -> dict[str, str]:
+    """Parse various matching input formats into a normalized dict of {left_id: right_id}."""
+    text = text.strip()
+    if not text:
+        return {}
+
+    # 1. JSON parsing
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            data = json.loads(text)
+            if "pairs" in data and isinstance(data["pairs"], dict):
+                return {str(k).upper(): str(v).upper() for k, v in data["pairs"].items()}
+            return {str(k).upper(): str(v).upper() for k, v in data.items()}
+        except (json.JSONDecodeError, TypeError, KeyError, AttributeError):
+            logger.debug("Failed to parse text as JSON matching pairs: %s", text)
+
+    # 2. Key-value matching like "1C 2A 3D 4B 5E", "1-C, 2-A", "1:C 2:A"
+    pair_matches = re.findall(r"(\d+)\s*[-:=]?\s*([A-Za-z]+)", text)
+    if pair_matches:
+        return {num: letter.upper() for num, letter in pair_matches}
+
+    # 3. Comma/space separated letters: "C, A, D, B, E" or "C A D B E"
+    tokens = [t.strip().upper() for t in re.split(r"[\s,;]+", text) if t.strip()]
+    if tokens and all(len(t) == 1 and t.isalpha() for t in tokens):
+        return {str(i + 1): token for i, token in enumerate(tokens)}
+
+    return {}
+
+
 class GraderComponent:
     """Stateless evaluator producing rubric grading evidence for the Progress Service."""
 
     def __init__(self, agent: Agent = grader_agent) -> None:
         self.agent = agent
+
+    @staticmethod
+    def _grade_matching_exercise(
+        exercise: Exercise,
+        student_answer: str,
+        exercise_id: Any,
+    ) -> GradingResult:
+        """Deterministically evaluates mix-and-match pairs in <1ms."""
+        expected_pairs: dict[str, str] = {}
+        for ref in exercise.reference_answers:
+            parsed = parse_matching_pairs(ref)
+            if parsed:
+                expected_pairs = parsed
+                break
+
+        if (
+            not expected_pairs
+            and isinstance(exercise.metadata, dict)
+            and "pairs" in exercise.metadata
+        ):
+            expected_pairs = {
+                str(k).upper(): str(v).upper() for k, v in exercise.metadata["pairs"].items()
+            }
+
+        student_pairs = parse_matching_pairs(student_answer)
+        if not student_pairs:
+            return GradingResult(
+                exercise_id=exercise_id,
+                scores=RubricScores(
+                    grammatical_correctness=0.0,
+                    semantic_precision=0.0,
+                    pragmatic_appropriateness=0.5,
+                ),
+                passed_gates=False,
+                confidence=1.0,
+                feedback="Please format your answer matching numbers to letters (e.g., 1C 2A 3E 4B 5D).",
+                detected_errors=["ERR_FORMAT_MATCHING"],
+                grader_version="deterministic-matching",
+            )
+
+        total_pairs = len(expected_pairs) or max(len(student_pairs), 1)
+        matched_correct = 0
+
+        for left_key, right_val in expected_pairs.items():
+            if student_pairs.get(left_key) == right_val:
+                matched_correct += 1
+
+        precision = matched_correct / max(1, total_pairs)
+        passed = precision >= 0.80  # 4 out of 5 passes
+
+        if passed:
+            feedback = (
+                f"Outstanding! All {matched_correct}/{total_pairs} pairs matched perfectly!"
+                if matched_correct == total_pairs
+                else f"Great job! You matched {matched_correct}/{total_pairs} pairs correctly."
+            )
+            errors = []
+        else:
+            feedback = (
+                f"Good attempt! You matched {matched_correct}/{total_pairs} pairs correctly. "
+                "Review the remaining vocabulary pairs."
+            )
+            errors = ["ERR_VOCAB_MATCH"]
+
+        return GradingResult(
+            exercise_id=exercise_id,
+            scores=RubricScores(
+                grammatical_correctness=1.0,
+                semantic_precision=precision,
+                pragmatic_appropriateness=1.0,
+            ),
+            passed_gates=passed,
+            confidence=1.0,
+            feedback=feedback,
+            detected_errors=errors,
+            grader_version="deterministic-matching",
+        )
 
     async def grade(
         self,
@@ -77,9 +189,30 @@ class GraderComponent:
         clean_student_ans = answer.strip()
         exercise_id = exercise.id or uuid4()
 
+        # Check for matching exercise evaluation (deterministic <1ms fast path)
+        if getattr(exercise, "exercise_type", "") == "matching" or (
+            isinstance(exercise.options, dict)
+            and "left" in exercise.options
+            and "right" in exercise.options
+        ):
+            return self._grade_matching_exercise(exercise, clean_student_ans, exercise_id)
+
         # 1. Fast Path: Exact reference answer match (bypasses LLM, <5ms)
         accepted = [ans.strip() for ans in exercise.reference_answers if ans]
-        if clean_student_ans in accepted:
+
+        # If exercise has options (MCQ), check if user selected by index or letter (e.g. 1, 2, A, B)
+        resolved_answer = clean_student_ans
+        if exercise.options and isinstance(exercise.options, list) and len(exercise.options) > 0:
+            if clean_student_ans.isdigit():
+                idx = int(clean_student_ans) - 1
+                if 0 <= idx < len(exercise.options):
+                    resolved_answer = exercise.options[idx].strip()
+            elif clean_student_ans.upper() in ("A", "B", "C", "D"):
+                idx = ord(clean_student_ans.upper()) - ord("A")
+                if 0 <= idx < len(exercise.options):
+                    resolved_answer = exercise.options[idx].strip()
+
+        if clean_student_ans in accepted or resolved_answer in accepted:
             return GradingResult(
                 exercise_id=exercise_id,
                 scores=RubricScores(

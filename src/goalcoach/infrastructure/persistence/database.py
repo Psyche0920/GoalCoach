@@ -53,6 +53,6 @@ def create_learner_schema(session_factory: sessionmaker[Session]) -> None:
                     UPDATE learner_states
                     SET state_version = CAST(JSON_EXTRACT(state_json, '$.state_version') AS INTEGER)
                     WHERE JSON_VALID(state_json)
-                      AND JSON_TYPE(JSON_EXTRACT(state_json, '$.state_version')) = 'INTEGER'
+                      AND JSON_EXTRACT(state_json, '$.state_version') IS NOT NULL
                 """)
             )

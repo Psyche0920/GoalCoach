@@ -1,5 +1,8 @@
+import os
 import sqlite3
 from pathlib import Path
+
+os.environ["GOALCOACH_OFFLINE_LLM_FALLBACK"] = "true"
 
 import pytest
 import pytest_asyncio
@@ -25,16 +28,21 @@ def ensure_curriculum_db_initialized() -> None:
 
     need_init = True
     if db_path.exists() and db_path.stat().st_size > 0:
-        try:
-            with sqlite3.connect(db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT count(*) FROM curriculum_concepts")
-                if cursor.fetchone()[0] > 0:
-                    need_init = False
-        except sqlite3.DatabaseError:
+        if sql_path.exists() and sql_path.stat().st_mtime > db_path.stat().st_mtime:
             need_init = True
+        else:
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT count(*) FROM curriculum_concepts")
+                    if cursor.fetchone()[0] > 0:
+                        need_init = False
+            except (sqlite3.Error, OSError):
+                need_init = True
 
     if need_init and sql_path.exists():
+        if db_path.exists():
+            db_path.unlink()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with open(sql_path, encoding="utf-8") as f:
             sql_script = f.read()

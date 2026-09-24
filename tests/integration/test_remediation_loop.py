@@ -589,3 +589,53 @@ async def test_timezone_update_only_changes_daily_boundary(
     assert updated.state.concept_progress == before.concept_progress
     assert updated.state.sessions == before.sessions
     assert updated.state.roadmap_concept_ids == before.roadmap_concept_ids
+
+
+# --- 10. MCQ Options & 1-Click Answering Test ---
+
+
+@pytest.mark.asyncio
+async def test_mcq_options_in_payload_and_1_click_grading(
+    orchestrator: DeterministicOrchestrator,
+    temp_learner_repo: SqliteLearnerRepository,
+) -> None:
+    """Exercises with options populate payload with options and accept 1-based index answers."""
+    learner_id = f"mcq_test_{uuid4().hex[:8]}"
+
+    # Start session on hsk1_c01
+    await orchestrator.handle_event(
+        event_type=EventType.GOAL_CREATED,
+        learner_id=learner_id,
+        payload={"title": "HSK 1", "daily_available_minutes": 20},
+    )
+
+    session_res = await orchestrator.handle_event(
+        event_type=EventType.SESSION_STARTED,
+        learner_id=learner_id,
+        payload={},
+    )
+
+    action = session_res.teaching_action
+    assert action is not None
+    assert action.exercise_payload is not None
+    assert action.exercise_payload["exercise_id"] == "hsk1_c01_e01"
+
+    # Verify options are present in payload
+    options = action.exercise_payload.get("options")
+    assert options == ["Hello", "Thank you", "Goodbye", "Sorry"]
+
+    # Option 1 is "Hello", which is the correct answer to hsk1_c01_e01 ("你好")
+    # Submitting "1" or "A" should be resolved to "Hello" and pass gates!
+    pass_res = await orchestrator.handle_event(
+        event_type=EventType.ANSWER_SUBMITTED,
+        learner_id=learner_id,
+        payload={
+            "exercise_id": "hsk1_c01_e01",
+            "concept_id": "hsk1_c01",
+            "answer": "1",
+        },
+    )
+
+    assert pass_res.grading_result.passed_gates is True
+    assert pass_res.grading_result.scores.grammatical_correctness == 1.0
+    assert pass_res.grading_result.scores.semantic_precision == 1.0

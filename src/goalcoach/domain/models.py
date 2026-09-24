@@ -282,9 +282,15 @@ class Exercise(DomainBaseModel):
     concept_id: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1)
     target_instruction: str = Field(min_length=1)
+    exercise_type: str = Field(
+        default="mcq", description="Type of exercise e.g. mcq, matching, fill_blank"
+    )
     hsk_level: int = Field(default=3, ge=1, le=6)
     reference_answers: list[str] = Field(default_factory=list)
-    metadata: dict[str, str] = Field(default_factory=dict)
+    options: list[str] | dict[str, Any] | None = Field(
+        default=None, description="Optional MCQ choices or matching left/right columns"
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RubricScores(DomainBaseModel):
@@ -390,6 +396,10 @@ class LearnerState(DomainBaseModel):
     goal: LearningGoal | None = None
     goal_changed: bool = False
     needs_replanning: bool = False
+    context_interests: list[str] = Field(default_factory=list)
+    today_checked_in: bool = False
+    last_check_in_date: str | None = None
+    estimated_days_remaining: int | None = None
     roadmap_concept_ids: list[str] = Field(default_factory=list)
     roadmap_adjustments: list[str] = Field(default_factory=list)
     roadmap_coverage_rationale: str = Field(default="")
@@ -419,6 +429,7 @@ class LearnerState(DomainBaseModel):
         """Clear all goal-bound learning evidence for an MVP goal replacement."""
         self.goal_changed = True
         self.needs_replanning = False
+        self.context_interests.clear()
         self.roadmap_concept_ids.clear()
         self.roadmap_adjustments.clear()
         self.roadmap_coverage_rationale = ""

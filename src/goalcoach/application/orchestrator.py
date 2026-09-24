@@ -501,12 +501,12 @@ class DeterministicOrchestrator:
     ) -> OrchestratorResponse:
         """Grade one pending exercise and persist its deterministic state transition."""
         exercise_id = payload["exercise_id"]
-        concept_id = payload["concept_id"]
         answer = payload["answer"]
 
         # 1. Fetch exercise definition from content service
         content_ex = self.content_service.get_exercise(exercise_id)
         if content_ex:
+            concept_id = payload.get("concept_id") or content_ex.concept_id
             ref_answers = list(content_ex.accepted_answers) if content_ex.accepted_answers else []
             ans_val = (
                 content_ex.answer.get("value")
@@ -516,13 +516,20 @@ class DeterministicOrchestrator:
             if ans_val and ans_val not in ref_answers:
                 ref_answers.append(ans_val)
 
+            concept = self.content_service.get_concept(content_ex.concept_id)
+            exercise_level = (
+                concept.hsk_level if concept else (state.goal.target_hsk_level if state.goal else 1)
+            )
             exercise = Exercise(
                 id=content_ex.exercise_id,
                 concept_id=content_ex.concept_id,
+                exercise_type=getattr(content_ex, "exercise_type", "meaning_mcq"),
                 prompt=content_ex.prompt,
                 target_instruction=content_ex.instruction or "",
                 reference_answers=ref_answers,
-                hsk_level=1,
+                options=content_ex.options,
+                hsk_level=exercise_level,
+                metadata=content_ex.metadata_json or {},
             )
         else:
             raise ValueError(
@@ -657,6 +664,56 @@ class DeterministicOrchestrator:
             next_action=derive_next_action(state),
             metadata={"reason": payload.get("reason")},
         )
+
+    @staticmethod
+    def _deterministic_fallback_grade(exercise: Exercise, answer: str) -> GradingResult:
+        from uuid import uuid4
+
+        from goalcoach.domain.models import RubricScores
+
+        clean_answer = answer.strip()
+
+        if getattr(exercise, "exercise_type", "") == "matching" or (
+            isinstance(exercise.options, dict)
+            and "left" in exercise.options
+            and "right" in exercise.options
+        ):
+            from goalcoach.agents.grader_component import GraderComponent
+
+            return GraderComponent._grade_matching_exercise(
+                exercise, clean_answer, exercise.id or uuid4()
+            )
+
+        accepted = [a.strip() for a in exercise.reference_answers]
+        resolved = clean_answer
+
+        if exercise.options and isinstance(exercise.options, list):
+            if clean_answer.isdigit():
+                idx = int(clean_answer) - 1
+                if 0 <= idx < len(exercise.options):
+                    resolved = exercise.options[idx].strip()
+            elif clean_answer.upper() in ("A", "B", "C", "D"):
+                idx = ord(clean_answer.upper()) - ord("A")
+                if 0 <= idx < len(exercise.options):
+                    resolved = exercise.options[idx].strip()
+
+        passed = clean_answer in accepted or resolved in accepted
+        score = 1.0 if passed else 0.4
+
+        return GradingResult(
+            exercise_id=exercise.id or uuid4(),
+            scores=RubricScores(
+                grammatical_correctness=score,
+                semantic_precision=score,
+                pragmatic_appropriateness=score,
+            ),
+            passed_gates=passed,
+            confidence=1.0,
+            feedback="Correct." if passed else "Please try again.",
+            detected_errors=[] if passed else ["ERR_INCORRECT"],
+            grader_version="deterministic-fallback",
+        )
+
 
 __all__ = [
     "DeterministicOrchestrator",

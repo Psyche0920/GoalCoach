@@ -54,6 +54,19 @@ async def test_get_learner_includes_id_in_response(client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/v1/curriculum/concepts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_curriculum_concepts_returns_200(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/curriculum/concepts")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+
+
+# ---------------------------------------------------------------------------
 # Retired duplicate write routes
 # ---------------------------------------------------------------------------
 
@@ -91,7 +104,7 @@ async def test_legacy_answer_route_is_not_a_validation_boundary(client: AsyncCli
 
 
 @pytest.mark.asyncio
-async def test_post_event_learning_loop_router(client: AsyncClient) -> None:
+async def test_post_event_session_started(client: AsyncClient) -> None:
     payload = {
         "event_type": "SESSION_STARTED",
         "learner_id": f"api-session-without-goal-{uuid4().hex}",
@@ -404,14 +417,19 @@ async def test_completed_daily_item_can_be_repeated_without_more_progress(
 
 
 @pytest.mark.asyncio
-async def test_submit_answer_rejects_invalid_json_body(client: AsyncClient) -> None:
+async def test_post_event_rejects_missing_fields(client: AsyncClient) -> None:
+    response = await client.post("/api/v1/events", json={})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_event_rejects_invalid_json_body(client: AsyncClient) -> None:
     response = await client.post(
-        "/api/v1/answers",
+        "/api/v1/events",
         content="not json",
         headers={"Content-Type": "application/json"},
     )
-
-    assert response.status_code == 404
+    assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------

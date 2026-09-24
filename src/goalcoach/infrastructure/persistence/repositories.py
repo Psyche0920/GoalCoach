@@ -39,14 +39,20 @@ class ContentRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
-    def list_concepts(self, hsk_level: int = 1) -> list[CurriculumConcept]:
+    def list_concepts(
+        self,
+        hsk_level: int | None = None,
+        max_hsk_level: int | None = None,
+    ) -> list[CurriculumConcept]:
+        conditions = [CurriculumConcept.is_active.is_(True)]
+        if hsk_level is not None:
+            conditions.append(CurriculumConcept.hsk_level == hsk_level)
+        elif max_hsk_level is not None:
+            conditions.append(CurriculumConcept.hsk_level <= max_hsk_level)
         statement = (
             select(CurriculumConcept)
-            .where(
-                CurriculumConcept.hsk_level == hsk_level,
-                CurriculumConcept.is_active.is_(True),
-            )
-            .order_by(CurriculumConcept.sequence_no)
+            .where(*conditions)
+            .order_by(CurriculumConcept.hsk_level, CurriculumConcept.sequence_no)
         )
         with self._session_factory() as session:
             return list(session.scalars(statement))

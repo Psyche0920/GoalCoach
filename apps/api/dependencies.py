@@ -1,4 +1,4 @@
-"""FastAPI dependency injectors for the two SQLite repositories."""
+"""FastAPI dependency injectors for persistence repositories and worker adapters."""
 
 from __future__ import annotations
 

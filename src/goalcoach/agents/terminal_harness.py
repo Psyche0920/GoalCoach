@@ -82,11 +82,11 @@ def render_error_table(state) -> Table | None:
     return table
 
 
-async def main() -> None:
+async def main(target_level: int = 1) -> None:
     console.print(
         Panel.fit(
             "[bold green]GoalCoach: Closed State-Driven Agentic System[/bold green]\n"
-            "[dim]HSK1 Adaptive Closed Loop Prototype[/dim]",
+            f"[dim]HSK {target_level} Adaptive Closed Loop Learning[/dim]",
             border_style="green",
         )
     )
@@ -117,13 +117,15 @@ async def main() -> None:
     learner_id = "terminal_learner_001"
 
     # Step 1: GOAL_CREATED
-    with console.status("[bold cyan]Configuring Goal & Planning Curriculum...[/bold cyan]"):
+    with console.status(
+        f"[bold cyan]Configuring Goal & Planning Curriculum for HSK {target_level}...[/bold cyan]"
+    ):
         goal_response = await orchestrator.handle_event(
             event_type=EventType.GOAL_CREATED,
             learner_id=learner_id,
             payload={
-                "title": "HSK 1 Complete Goal",
-                "target_hsk_level": 1,
+                "title": f"HSK {target_level} Complete Goal",
+                "target_hsk_level": target_level,
                 "daily_available_minutes": 20,
             },
         )
@@ -163,18 +165,60 @@ async def main() -> None:
             )
         )
 
+        options = exercise_payload.get("options")
+        options_text = ""
+        is_matching = exercise_payload.get("exercise_type") == "matching" or (
+            isinstance(options, dict) and "left" in options and "right" in options
+        )
+        if options and isinstance(options, list):
+            options_lines = [
+                f"  [bold cyan]({i + 1})[/bold cyan] {opt}" for i, opt in enumerate(options)
+            ]
+            options_text = "\n\n" + "\n".join(options_lines)
+        elif is_matching and isinstance(options, dict):
+            left_items = options.get("left", [])
+            right_items = options.get("right", [])
+            header = f"  {'[bold yellow]Chinese Words[/bold yellow]':<35} {'[bold green]Meanings[/bold green]'}"
+            lines = [header, "  " + "-" * 55]
+            max_len = max(len(left_items), len(right_items))
+            for i in range(max_len):
+                if i < len(left_items):
+                    pinyin_part = (
+                        f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                    )
+                    l_str = f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']}{pinyin_part}"
+                else:
+                    l_str = ""
+                r_str = (
+                    f"[bold cyan]({right_items[i]['id']})[/bold cyan] {right_items[i]['meaning']}"
+                    if i < len(right_items)
+                    else ""
+                )
+                lines.append(f"  {l_str:<35} {r_str}")
+            options_text = "\n\n" + "\n".join(lines)
+
         console.print(
             Panel(
                 f"[bold]{exercise_payload.get('instruction', '')}[/bold]\n\n"
-                f"{exercise_payload.get('prompt', '')}",
+                f"{exercise_payload.get('prompt', '')}"
+                f"{options_text}",
                 title="[bold green]Practice[/bold green]",
                 border_style="green",
             )
         )
 
-        console.print(
-            "[dim]Commands: Type your Chinese answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
-        )
+        if is_matching:
+            console.print(
+                "[dim]Commands: Enter your pairs (e.g. 1C 2A 3E 4B 5D), 'help' for guidance, or 'exit' to quit.[/dim]"
+            )
+        elif options:
+            console.print(
+                "[dim]Commands: Choose a number (e.g. 1), type your answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
+            )
+        else:
+            console.print(
+                "[dim]Commands: Type your Chinese answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
+            )
         user_input = Prompt.ask("\n[bold green]Your Input[/bold green]").strip()
 
         if user_input.lower() in ("exit", "quit"):
@@ -196,10 +240,42 @@ async def main() -> None:
             help_action = help_response.teaching_action
             if help_action.exercise_payload:
                 exercise_payload = help_action.exercise_payload
+            help_options = exercise_payload.get("options")
+            if help_options and isinstance(help_options, list):
+                help_lines = [
+                    f"  [bold cyan]({i + 1})[/bold cyan] {opt}"
+                    for i, opt in enumerate(help_options)
+                ]
+                help_prompt_note = "\n\n[bold green]Options:[/bold green]\n" + "\n".join(help_lines)
+            elif help_options and isinstance(help_options, dict) and "left" in help_options:
+                left_items = help_options.get("left", [])
+                right_items = help_options.get("right", [])
+                header = f"  {'[bold yellow]Chinese Words[/bold yellow]':<35} {'[bold green]Meanings[/bold green]'}"
+                lines = [header, "  " + "-" * 55]
+                max_len = max(len(left_items), len(right_items))
+                for i in range(max_len):
+                    if i < len(left_items):
+                        pinyin_part = (
+                            f" ({left_items[i]['pinyin']})" if left_items[i].get("pinyin") else ""
+                        )
+                        l_str = f"[bold cyan]({left_items[i]['id']})[/bold cyan] {left_items[i]['word']}{pinyin_part}"
+                    else:
+                        l_str = ""
+                    r_str = (
+                        f"[bold cyan]({right_items[i]['id']})[/bold cyan] {right_items[i]['meaning']}"
+                        if i < len(right_items)
+                        else ""
+                    )
+                    lines.append(f"  {l_str:<35} {r_str}")
+                help_prompt_note = "\n\n[bold green]Pairs to Match:[/bold green]\n" + "\n".join(
+                    lines
+                )
+
             console.print(
                 Panel(
                     f"[bold yellow]Adapted Modality:[/bold yellow] {help_action.action_kind.value}\n\n"
-                    f"{help_action.content}",
+                    f"{help_action.content}"
+                    f"{help_prompt_note}",
                     title=f"[bold magenta]Coach Guidance ({concept_id})[/bold magenta]",
                     border_style="magenta",
                 )
@@ -252,5 +328,32 @@ async def main() -> None:
             console.print(err_table)
 
 
+def run_cli() -> None:
+    """CLI entrypoint for GoalCoach interactive terminal harness."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="GoalCoach Interactive Terminal Study Harness")
+    parser.add_argument(
+        "-l",
+        "--level",
+        type=int,
+        choices=[1, 2, 3, 4, 5, 6],
+        default=None,
+        help="Target HSK level (1 to 6)",
+    )
+    args, _ = parser.parse_known_args()
+
+    target_level = args.level
+    if target_level is None:
+        level_input = Prompt.ask(
+            "[bold cyan]Select Target HSK Level (1-6)[/bold cyan]",
+            choices=["1", "2", "3", "4", "5", "6"],
+            default="1",
+        )
+        target_level = int(level_input)
+
+    asyncio.run(main(target_level=target_level))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_cli()

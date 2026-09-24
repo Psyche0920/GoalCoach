@@ -16,12 +16,23 @@ def repository() -> ContentRepository:
 
 
 def test_lists_seeded_concepts_in_learning_order(repository: ContentRepository) -> None:
-    concepts = repository.list_concepts()
+    # HSK 1 filtered list
+    hsk1_concepts = repository.list_concepts(hsk_level=1)
+    assert len(hsk1_concepts) == 20
+    assert hsk1_concepts[0].concept_id == "hsk1_c01"
+    assert hsk1_concepts[-1].concept_id == "hsk1_c20"
+    assert hsk1_concepts[0].vocabulary_focus == ["你好", "您好", "谢谢", "再见"]
 
-    assert len(concepts) == 20
-    assert concepts[0].concept_id == "hsk1_c01"
-    assert concepts[-1].concept_id == "hsk1_c20"
-    assert concepts[0].vocabulary_focus == ["你好", "您好", "谢谢", "再见"]
+    # All concepts unlocked across HSK levels 1-6
+    all_concepts = repository.list_concepts()
+    assert len(all_concepts) >= 120
+    levels = {c.hsk_level for c in all_concepts}
+    assert {1, 2, 3, 4, 5, 6}.issubset(levels)
+
+    # HSK 2 specific query
+    hsk2_concepts = repository.list_concepts(hsk_level=2)
+    assert len(hsk2_concepts) > 0
+    assert all(c.hsk_level == 2 for c in hsk2_concepts)
 
 
 def test_loads_teaching_cards_and_exercises(repository: ContentRepository) -> None:
@@ -49,13 +60,7 @@ def test_finds_remedial_exercises_by_exact_error_tag(
 def test_loads_all_prerequisite_relationships(repository: ContentRepository) -> None:
     prerequisites = repository.get_prerequisites()
 
-    assert sum(len(required_ids) for required_ids in prerequisites.values()) == 125
-    hsk1_ids = {f"hsk1_c{index:02d}" for index in range(1, 21)}
-    hsk1_prerequisites = {
-        concept_id: frozenset(required_id for required_id in required_ids if required_id in hsk1_ids)
-        for concept_id, required_ids in prerequisites.items()
-        if concept_id in hsk1_ids
-    }
-    assert sum(len(required_ids) for required_ids in hsk1_prerequisites.values()) == 18
+    assert sum(len(required_ids) for required_ids in prerequisites.values()) == 120
+    assert sum(len(reqs) for cid, reqs in prerequisites.items() if cid.startswith("hsk1_")) == 19
     assert prerequisites["hsk1_c02"] == frozenset({"hsk1_c01"})
-    assert prerequisites["hsk1_c20"] == frozenset({"hsk1_c11"})
+    assert prerequisites["hsk1_c20"] == frozenset({"hsk1_c19"})

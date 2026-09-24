@@ -239,10 +239,13 @@ async def get_learner_roadmap(
 
 @router.get("/api/v1/curriculum/concepts")
 async def list_curriculum_concepts(
+    level: int | None = Query(default=None),
+    hsk_level: int | None = Query(default=None),
     content_repo: ContentRepository = Depends(get_content_repo),
 ) -> list[dict[str, Any]]:
     """List all active curriculum concepts."""
-    concepts = content_repo.list_concepts()
+    target_level = level if level is not None else hsk_level
+    concepts = content_repo.list_concepts(hsk_level=target_level)
     return [serialize_concept(c) for c in concepts]
 
 

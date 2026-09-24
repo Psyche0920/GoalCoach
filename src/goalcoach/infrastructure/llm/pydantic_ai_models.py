@@ -15,7 +15,13 @@ from typing import Any
 import httpx
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+
+try:
+    from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+except ImportError:
+    from pydantic_ai.exceptions import ModelHTTPError as ModelAPIError  # type: ignore[no-redef]
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    ModelHTTPError = ModelAPIError  # type: ignore[misc]
 
 try:
     from pydantic_ai.models.openai import OpenAIChatModel as OpenAIModel
@@ -126,7 +132,7 @@ async def run_with_fallback(
     prompt: str,
     deps: Any = None,
     *,
-    component: str,
+    component: str = "agent",
     prompt_version: str = "v1",
 ) -> tuple[Any, str]:
     """Run the primary model and optionally use a configured local fallback."""

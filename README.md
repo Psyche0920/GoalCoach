@@ -271,7 +271,7 @@ Deterministic unit and API tests run offline. Tests that exercise a configured r
 ├── .github/workflows/ci.yml       # GitHub Actions CI pipeline (lint, format, test, DB bootstrap)
 ├── apps/
 │   ├── api/                       # FastAPI backend (routes, dependencies, event gateway)
-│   └── web/                       # React 18 + Vite SPA
+│   └── web/                       # React 18 + Vite SPA modern learning interface
 ├── data/
 │   └── database1/                 # Grounded HSK 1 curriculum SQLite database
 ├── docs/

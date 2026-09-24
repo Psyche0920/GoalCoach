@@ -93,4 +93,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return application
 
 
+def get_learner_repository(request: Request) -> SqlAlchemyLearnerRepository:
+    """Resolve the request-scoped learner persistence boundary."""
+    from typing import cast
+    return cast(SqlAlchemyLearnerRepository, request.app.state.learner_repository)
+
+
 app = create_app()
