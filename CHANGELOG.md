@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated `PLANNING_SYSTEM_PROMPT` and `PlanningWorker.create_plan` in `src/goalcoach/agents/planning_agent.py` to enforce bite-sized durations (3–5 minutes) per planned exercise item.
   - Added duration clamping (`max(3, min(item.estimated_minutes, 5))`) in `PlanningWorker` to prevent single exercises from absorbing the entire daily budget (e.g. 40 minutes) in a single step, ensuring plans contain multiple manageable items.
   - Rebalanced deterministic planning fallback (`_deterministic_fallback`) to 5 min for remedial, 3 min for review, and 5 min for new concepts.
+- **Smart Mix-and-Match Exercise Placement**:
+  - Positioned synthesized matching exercises at Index 0 for pure vocabulary concepts (`concept_type == 'vocabulary'`) and Index 1 (immediately after introductory `_e01` MCQ) for general vocabulary units in `src/goalcoach/infrastructure/persistence/content_service.py`, ensuring immediate web UI accessibility without breaking integration test suites.
 
 ### Fixed
 - **Synthesized Matching Exercise API Validation**:
