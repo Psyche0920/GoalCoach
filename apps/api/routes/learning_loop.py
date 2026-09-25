@@ -90,7 +90,8 @@ def validate_curriculum_references(
 
     if event_type == EventType.ANSWER_SUBMITTED:
         exercise_id = str(payload["exercise_id"])
-        exercise = content_repo.get_exercise(exercise_id)
+        content_service = ContentService(content_repo)
+        exercise = content_service.get_exercise(exercise_id)
         if exercise is None:
             raise HTTPException(
                 status_code=422, detail=f"Unknown curriculum exercise: {exercise_id}"

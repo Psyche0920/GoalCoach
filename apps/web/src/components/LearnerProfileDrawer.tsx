@@ -33,6 +33,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
   const masteredPercent = Math.round(Math.max(0, Math.min(100, masteredProgress)));
   const learnedPercent = Math.round(Math.max(0, Math.min(100, learnedProgress)));
   const [goalText, setGoalText] = useState(goal?.title || 'Learn practical HSK 1 Chinese');
+  const [targetHskLevel, setTargetHskLevel] = useState<number>(goal?.targetHskLevel || 1);
   const [minutes, setMinutes] = useState<number>(goal?.dailyAvailableMinutes || 15);
   const [timezone, setTimezone] = useState(goal?.timezone || 'UTC');
   const [saving, setSaving] = useState(false);
@@ -41,6 +42,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setGoalText(goal?.title || 'Learn practical HSK 1 Chinese');
+    setTargetHskLevel(goal?.targetHskLevel || 1);
     setMinutes(goal?.dailyAvailableMinutes || 20);
     setTimezone(goal?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     setFormError(null);
@@ -63,7 +65,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
     try {
       await onUpdateGoal({
         title: normalizedGoal,
-        targetHskLevel: 1,
+        targetHskLevel,
         dailyAvailableMinutes: minutes,
         timezone,
       });
@@ -151,6 +153,26 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
               />
               <span className="text-xs font-black uppercase text-zinc-500">min / day</span>
             </div>
+          </div>
+
+          {/* Target HSK Milestone */}
+          <div>
+            <label htmlFor="target-hsk-level" className="mb-2 block text-xs font-black uppercase tracking-wider text-zinc-500">
+              Target HSK Milestone
+            </label>
+            <select
+              id="target-hsk-level"
+              value={targetHskLevel}
+              onChange={(event) => { setTargetHskLevel(Number(event.currentTarget.value)); setFormError(null); }}
+              className="w-full rounded-2xl border-2 border-zinc-200 bg-zinc-50 p-4 text-sm font-bold outline-none focus:border-emerald-500"
+            >
+              {[1, 2, 3, 4, 5, 6].map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  HSK {lvl} {lvl === 1 ? '· Beginner' : lvl === 2 ? '· Elementary' : lvl === 3 ? '· Intermediate' : lvl === 4 ? '· Upper-Intermediate' : lvl === 5 ? '· Advanced' : '· Mastery'}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[10px] font-bold text-zinc-400">Curriculum concepts and planning will unlock up to this level.</p>
           </div>
 
         </div>

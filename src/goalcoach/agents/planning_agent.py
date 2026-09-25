@@ -102,8 +102,11 @@ Key Pedagogical Rules:
 2. Introduce Feasible New Topics:
    - Schedule NEW concepts only if their prerequisites are satisfied. A prerequisite is satisfied if the learner has mastery >= 0.50 OR completed remediation today.
    - If a concept has already been studied or remediated today (listed in Remediated Today / Studied Today), do not schedule it again today; advance to subsequent concepts.
-3. Strict Budget Allocation:
+3. Strict Budget Allocation & Bite-Sized Micro-Learning:
+   - Each item in `ordered_items` is an ultra-concise micro-learning unit.
+   - Set `estimated_minutes` for each individual item to 3–5 minutes (never exceed 5 minutes for a single item).
    - The sum of `estimated_minutes` across `ordered_items` must not exceed `daily_allocation_minutes`.
+   - Schedule multiple distinct items (e.g., 3 to 6 items) to match the daily time budget; never absorb the entire budget into a single item.
    - Categorize each item kind strictly as 'review', 'remedial', or 'new'.
 4. Curriculum Fidelity:
    - Only output valid concept_id strings provided by the curriculum tool.
@@ -320,6 +323,7 @@ class PlanningWorker:
             "1. If the learner has no mastery, schedule 'new' concepts unlocked by prerequisites (start with the first concept).\n"
             "2. Do NOT schedule concepts that have already been studied today.\n"
             "3. If the learner has errors or needs_replanning is True, prioritize 'remedial' items on weak concepts.\n"
+            "4. Bite-Sized Pacing: Each item's estimated_minutes MUST be between 3 and 5 minutes (never exceed 5 minutes for a single item). Schedule multiple distinct items to cover the daily time budget.\n"
             "Generate today's optimal PlanUpdate conforming to the schema. "
             f"Select concepts from the curriculum catalog within the active level window (up to HSK {active_level}). "
             "The roadmap must cover multiple future sessions; only ordered_items is constrained by today's time budget."
@@ -408,6 +412,10 @@ class PlanningWorker:
             )
 
             if validated_items:
+                # Clamp item duration to bite-sized range (3-5 minutes)
+                for item in validated_items:
+                    item.estimated_minutes = max(3, min(item.estimated_minutes, 5))
+
                 # Ensure budget not exceeded
                 running_sum = 0
                 budgeted_items: list[PlanItem] = []
@@ -416,9 +424,10 @@ class PlanningWorker:
                         budgeted_items.append(item)
                         running_sum += item.estimated_minutes
                     elif running_sum < available_minutes:
-                        remaining = available_minutes - running_sum
-                        item.estimated_minutes = remaining
-                        budgeted_items.append(item)
+                        remaining = min(5, available_minutes - running_sum)
+                        if remaining >= 3:
+                            item.estimated_minutes = remaining
+                            budgeted_items.append(item)
                         break
 
                 if budgeted_items:
@@ -525,8 +534,8 @@ class PlanningWorker:
         ]
 
         candidates = [
-            *((concept_id, PlanItemKind.REMEDIAL, 10) for concept_id in weak_ids),
-            *((concept_id, PlanItemKind.REVIEW, 5) for concept_id in due_ids),
+            *((concept_id, PlanItemKind.REMEDIAL, 5) for concept_id in weak_ids),
+            *((concept_id, PlanItemKind.REVIEW, 3) for concept_id in due_ids),
             *((concept_id, PlanItemKind.NEW, 5) for concept_id in new_ids),
         ]
         for concept_id, kind, requested_minutes in candidates:

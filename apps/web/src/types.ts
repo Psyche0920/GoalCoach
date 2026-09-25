@@ -106,7 +106,9 @@ export interface TeachingAction {
     prompt?: string;
     instruction?: string;
     type?: string;
+    exercise_type?: string;
     target?: string;
+    options?: string[] | { left: Array<{ id: string; word: string; pinyin?: string }>; right: Array<{ id: string; meaning: string }> };
   };
   metadata?: Record<string, unknown>;
 }

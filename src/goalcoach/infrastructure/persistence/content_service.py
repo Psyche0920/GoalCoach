@@ -91,6 +91,10 @@ class ContentService:
             if matching_ex:
                 existing_ids = {e.exercise_id for e in repo_exercises}
                 if matching_ex.exercise_id not in existing_ids:
+                    if concept.concept_type == "vocabulary":
+                        return [matching_ex] + repo_exercises
+                    if len(repo_exercises) > 1:
+                        return repo_exercises[:1] + [matching_ex] + repo_exercises[1:]
                     return repo_exercises + [matching_ex]
         return repo_exercises
 

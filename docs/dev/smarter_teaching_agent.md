@@ -19,7 +19,7 @@ The mix-and-match feature dynamically synthesizes vocabulary matching exercises 
 | [`src/goalcoach/domain/models.py`] | Lines **226–240** (`Exercise` class) | Extended `options` on `Exercise` to accept dictionary structure `dict[str, Any]` (containing `"left"` and `"right"` columns) in addition to list options. |
 | [`apps/web/src/types.ts`] | Lines **103**, **116** (`Exercise` & `ExerciseType`) | Added `'matching'` to `ExerciseType` union and typed `options` with `{ left: Array<{ id: string; word: string; pinyin?: string }>; right: Array<{ id: string; meaning: string }> }`. |
 | [`src/goalcoach/infrastructure/persistence/content_service.py`] | Lines **60–68** (`get_exercise`) | Supported dynamically resolved exercises ending in `_match_auto` so runtime answer submission can retrieve synthesized exercises for grading. |
-| [`src/goalcoach/infrastructure/persistence/content_service.py`] | Lines **70–86** (`get_exercises_for_concept`) | Restricts matching exercise generation **strictly to vocabulary concepts** or concepts with `len(vocabulary_focus) >= 3`. Prepends the synthesized matching exercise to the exercise queue. |
+| [`src/goalcoach/infrastructure/persistence/content_service.py`] | Lines **74–96** (`get_exercises_for_concept`) | Restricts matching exercise generation **strictly to vocabulary concepts** or concepts with `len(vocabulary_focus) >= 3`. Adds the synthesized matching exercise to the exercise queue while preserving canonical exercise sequencing. |
 | [`src/goalcoach/infrastructure/persistence/content_service.py`] | Lines **96–107** (`get_or_synthesize_matching_exercise`) | Queries existing matching exercises from the repository or delegates to `synthesize_matching_exercise()`. |
 | [`src/goalcoach/infrastructure/persistence/content_service.py`] | Lines **108–265** (`synthesize_matching_exercise`) | Core synthesis engine: <br>• Lines **125–133** (`_is_clean_vocab_word`): Filters out grammar templates, placeholders (`A`, `B`, `+`, `...`, `~`), and punctuation.<br>• Lines **135–149** (`_is_valid_english_meaning`): Ensures meanings contain ASCII alphabetic characters, do not equal the Chinese word, and are not predominantly Hanzi.<br>• Lines **151–161**: Collects vocabulary cards while skipping cards marked `grammar`, `pattern`, `rule`, or `structure`.<br>• Lines **163–193**: Resolves `vocabulary_focus` words against cards; searches same-level cards if concept cards lack English definitions.<br>• Lines **195–214**: Backfills from same-level vocabulary cards to reach required pair count.<br>• Lines **218–264**: Constructs randomized left/right pair maps, shorthand answers (`1C 2A 3D...`), and builds `ContentExercise`. |
 | [`src/goalcoach/agents/grader_component.py`] | Lines **71–98** (`parse_matching_pairs`) | Multi-format input parser: parses shorthand (`1C 2A 3D 4B 5E`), hyphenated (`1-C, 2-A`), colon-separated (`1:C 2:A`), comma-separated letter sequences (`C, A, D, B, E`), or JSON dictionaries into normalized `{left_id: right_id}`. |
@@ -58,3 +58,49 @@ Previously, the learning engine was artificially restricted to HSK level 1 throu
 | [`tests/unit/test_matching_exercise.py`] | Lines **232–265** | Unit tests verifying `resolve_active_level` unlocks progressively from HSK 1 to HSK 2 to HSK 3 upon mastery. |
 
 ---
+
+## 3. Bite-Size Teaching (Ultra-Concise Micro-Pedagogy & Grounded Relevance)
+
+To eliminate cognitive overload, generic lectures, and cold "naked exercises" upon repeated errors, the pedagogical loop was re-engineered for ultra-concise, grounded, and relevant micro-teaching:
+
+### Responsible Files & Exact Lines
+
+| File | Responsible Lines | Description & Responsibility |
+| :--- | :--- | :--- |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **170–176** (`_select_candidate_exercise`) | Pre-selects the candidate upcoming practice exercise *before* the LLM prompt is constructed, ensuring the explanation has full context of what the learner will practice. |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **191–209** (`teach_concept` prompt) | Injects target practice prompt, type, and options directly into the LLM prompt, enforcing: *"Ground your explanation or guidance directly to help the student succeed on this upcoming practice task."* |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **210–213** (`teach_concept` prompt constraints) | Enforces strict English medium and ultra-concise word budgets: under 60 words for fresh explanations; under 40 words for hints and retries. |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **49–100** (`TEACHING_SYSTEM_PROMPT`) | Empathetic "Coach Baobao" persona: bans naked exercises on retries, enforces Markdown table format (`| Character | Pinyin | Meaning |`), and deconstructs grammar patterns step-by-step. |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **344–362** (`_attach_selected_exercise`) | Preserves `options` and `exercise_type` on `TeachingAction.exercise_payload` so client interfaces can render interactive options. |
+
+---
+
+## 4. Full-Stack Web Frontend & API Integration
+
+Previously, frontend UI components hardcoded level 1 and rendered exercises as raw text input fields, dropping options and matching pairs. The full-stack integration connects the rich backend features to the web interface.
+
+### Responsible Files & Exact Lines
+
+| File | Responsible Lines | Description & Responsibility |
+| :--- | :--- | :--- |
+| [`apps/web/src/types.ts`] | Lines **103–111** (`TeachingAction.exercisePayload`) | Extended payload typing to include `exercise_type?: string` and `options?: string[] \| { left: Array<{ id: string; word: string; pinyin?: string }>; right: Array<{ id: string; meaning: string }> }`. |
+| [`apps/web/src/components/TeachingAgentModal.tsx`] | Lines **146–173** (MCQ 1-Click Cards) | Detects `listOptions` and renders clickable option buttons with `(1)`, `(2)`, `(3)`, `(4)` badges for 1-click answering without typing raw Hanzi. |
+| [`apps/web/src/components/TeachingAgentModal.tsx`] | Lines **175–255** (Mix & Match Columns) | Renders side-by-side 2-column pairing interface (`Chinese Words` with pinyin on left, `Meanings` on right) with interactive pair toggling (`1C 2A 3E`) and live badge indicators. |
+| [`apps/api/routes/learning_loop.py`] | Lines **90–98** (`validate_curriculum_references`) | Validates submitted exercises via `ContentService(content_repo).get_exercise()`, accepting dynamically synthesized `_match_auto` matching exercises without 422 errors. |
+| [`apps/web/src/components/LearnerProfileDrawer.tsx`] | Lines **36**, **68**, **158–176** | Added Target HSK Milestone selector dropdown (HSK 1 through 6) and passed `targetHskLevel` to goal updates instead of hardcoding level 1. |
+| [`apps/web/src/App.tsx`] | Lines **226–232** (`handleUpdateGoal`) | Dispatches dynamic `target_hsk_level` from user selection in `GOAL_CREATED` events. |
+
+---
+
+## 5. Bite-Sized Micro-Learning Pacing & Exercise Duration (3–5 Mins)
+
+Previously, plans risked allocating an entire daily time budget (e.g. 40 minutes) to a single exercise item, causing one exercise to immediately exhaust the daily plan. Pacing was rebalanced to true micro-learning:
+
+### Responsible Files & Exact Lines
+
+| File | Responsible Lines | Description & Responsibility |
+| :--- | :--- | :--- |
+| [`src/goalcoach/agents/planning_agent.py`] | Lines **104–110** (`PLANNING_SYSTEM_PROMPT`) | Added Rule 3 requirement: each item's `estimated_minutes` is 3–5 minutes (max 5 minutes), scheduling multiple distinct items to cover the daily budget. |
+| [`src/goalcoach/agents/planning_agent.py`] | Lines **323–328** (`create_plan` prompt) | Added Rule 4 prompt directive enforcing 3–5 minute bite-sized item durations and multi-item schedule creation. |
+| [`src/goalcoach/agents/planning_agent.py`] | Lines **415–427** (`budgeted_items` clamping) | Clamped all planned items via `max(3, min(item.estimated_minutes, 5))` and capped remaining minutes to 5 min so no single item absorbs more than 5 minutes. |
+| [`src/goalcoach/agents/planning_agent.py`] | Lines **536–540**, **572** (`_deterministic_fallback`) | Set fallback durations to 5 min for remedial, 3 min for review, and 5 min for new concepts. |

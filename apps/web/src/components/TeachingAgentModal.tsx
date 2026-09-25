@@ -49,15 +49,52 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
   onSubmitAnswer,
 }) => {
   const [answer, setAnswer] = useState('');
+  const [selectedLeft, setSelectedLeft] = useState<string | null>(null);
+  const [matchedPairs, setMatchedPairs] = useState<Record<string, string>>({});
   const [helpQuery, setHelpQuery] = useState('I do not understand this yet. Please explain it differently.');
 
   useEffect(() => {
     setAnswer('');
+    setSelectedLeft(null);
+    setMatchedPairs({});
   }, [action?.exercisePayload?.exercise_id]);
 
   if (!isOpen) return null;
 
   const exercise = action?.exercisePayload;
+  const isMatching = exercise?.exercise_type === 'matching' || (
+    Boolean(exercise?.options) &&
+    typeof exercise?.options === 'object' &&
+    !Array.isArray(exercise?.options) &&
+    'left' in (exercise!.options as object) &&
+    'right' in (exercise!.options as object)
+  );
+  const matchingOptions = isMatching
+    ? (exercise?.options as { left: Array<{ id: string; word: string; pinyin?: string }>; right: Array<{ id: string; meaning: string }> })
+    : null;
+  const listOptions = Array.isArray(exercise?.options) && exercise.options.length > 0
+    ? exercise.options
+    : null;
+
+  const handleSelectLeft = (leftId: string) => {
+    if (gradingResult) return;
+    setSelectedLeft(selectedLeft === leftId ? null : leftId);
+  };
+
+  const handleSelectRight = (rightId: string) => {
+    if (gradingResult) return;
+    if (selectedLeft) {
+      const next = { ...matchedPairs, [selectedLeft]: rightId };
+      setMatchedPairs(next);
+      setSelectedLeft(null);
+      const str = Object.entries(next)
+        .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+        .map(([l, r]) => `${l}${r}`)
+        .join(' ');
+      setAnswer(str);
+    }
+  };
+
   const countsTowardProgress = action?.metadata?.progress_eligible !== false;
   const progressNotice = typeof action?.metadata?.progress_notice === 'string'
     ? action.metadata.progress_notice
@@ -102,10 +139,134 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
                 }}
               >
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-800">Try it yourself</p>
-                {exercise.instruction && <p className="text-sm text-zinc-600">{exercise.instruction}</p>}
+                {exercise.instruction && <p className="text-sm font-medium text-zinc-600">{exercise.instruction}</p>}
                 <p className="text-xl font-black leading-8 text-slate-950">{exercise.prompt}</p>
+
+                {/* Multiple-choice option buttons (1-click answering) */}
+                {listOptions && (
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    {listOptions.map((opt, idx) => {
+                      const optNum = String(idx + 1);
+                      const isSelected = answer.trim() === opt || answer.trim() === optNum;
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          disabled={loading || gradingResult !== null}
+                          onClick={() => {
+                            setAnswer(opt);
+                          }}
+                          className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left text-sm font-bold transition-all ${
+                            isSelected
+                              ? 'border-emerald-600 bg-emerald-100 text-emerald-950 shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-800 hover:border-emerald-300 hover:bg-emerald-50/50'
+                          }`}
+                        >
+                          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                            {idx + 1}
+                          </span>
+                          <span className="flex-1">{opt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Mix and Match 2-column layout */}
+                {matchingOptions && (
+                  <div className="space-y-3">
+                    <p className="text-xs font-bold text-emerald-900">
+                      Tap a Chinese word on the left, then tap its matching meaning on the right:
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {/* Left Column: Chinese Words */}
+                      <div className="space-y-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Chinese Words</span>
+                        {matchingOptions.left.map((item) => {
+                          const isPicked = selectedLeft === item.id;
+                          const currentMatch = matchedPairs[item.id];
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => handleSelectLeft(item.id)}
+                              disabled={loading || gradingResult !== null}
+                              className={`flex w-full items-center justify-between rounded-xl border-2 px-3 py-2.5 text-left transition-all ${
+                                isPicked
+                                  ? 'border-emerald-600 bg-emerald-100 text-emerald-950 ring-2 ring-emerald-400'
+                                  : currentMatch
+                                  ? 'border-indigo-300 bg-indigo-50 text-indigo-950'
+                                  : 'border-slate-200 bg-white hover:border-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-black text-slate-700">
+                                  {item.id}
+                                </span>
+                                <span className="font-bold text-slate-900">{item.word}</span>
+                                {item.pinyin && <span className="text-xs text-slate-500">({item.pinyin})</span>}
+                              </div>
+                              {currentMatch && (
+                                <span className="rounded-md bg-indigo-200 px-1.5 py-0.5 text-[10px] font-black text-indigo-900">
+                                  → {currentMatch}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Right Column: Meanings */}
+                      <div className="space-y-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Meanings</span>
+                        {matchingOptions.right.map((item) => {
+                          const matchedLeftId = Object.entries(matchedPairs).find(([, r]) => r === item.id)?.[0];
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => handleSelectRight(item.id)}
+                              disabled={loading || gradingResult !== null}
+                              className={`flex w-full items-center justify-between rounded-xl border-2 px-3 py-2.5 text-left transition-all ${
+                                matchedLeftId
+                                  ? 'border-indigo-300 bg-indigo-50 text-indigo-950'
+                                  : selectedLeft
+                                  ? 'border-emerald-400 bg-white hover:bg-emerald-50'
+                                  : 'border-slate-200 bg-white hover:border-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-black text-slate-700">
+                                  {item.id}
+                                </span>
+                                <span className="text-sm font-semibold text-slate-900">{item.meaning}</span>
+                              </div>
+                              {matchedLeftId && (
+                                <span className="rounded-md bg-indigo-200 px-1.5 py-0.5 text-[10px] font-black text-indigo-900">
+                                  {matchedLeftId}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input value={answer} onChange={(event) => setAnswer(event.currentTarget.value)} className="min-w-0 flex-1 rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 outline-none focus:border-emerald-500" placeholder="Type your answer…" />
+                  <input
+                    value={answer}
+                    onChange={(event) => setAnswer(event.currentTarget.value)}
+                    className="min-w-0 flex-1 rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 outline-none focus:border-emerald-500"
+                    placeholder={
+                      isMatching
+                        ? "Matching pairs (e.g. 1C 2A 3E)..."
+                        : listOptions
+                        ? "Click an option above or type here..."
+                        : "Type your answer…"
+                    }
+                  />
                   <button disabled={!answer.trim() || loading || gradingResult !== null} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-emerald-950 shadow-[0_4px_0_#15803d] active:translate-y-0.5 active:shadow-none disabled:opacity-50"><Send className="h-4 w-4" />Check</button>
                 </div>
               </form>
