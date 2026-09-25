@@ -223,9 +223,11 @@ export function App() {
       throw new Error('Daily study time must be a whole number between 5 and 120 minutes.');
     }
 
+    const targetHskLevel = updatedGoal.targetHskLevel ?? goalForDisplay?.targetHskLevel ?? 1;
+
     const data = await dispatchLearningEvent('GOAL_CREATED', {
       title,
-      target_hsk_level: 1,
+      target_hsk_level: targetHskLevel,
       daily_available_minutes: dailyMinutes,
       timezone,
     });
