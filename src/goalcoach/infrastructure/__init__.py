@@ -1,4 +1,4 @@
-"""Adapters for persistence, models, and retrieval.
+"""Adapters for persistence and provider-neutral model integrations.
 
-TODO(implementation): add SQLite repositories first, then provider-neutral LLM adapters.
+SQLite repositories and provider-neutral LLM adapters live in this package.
 """

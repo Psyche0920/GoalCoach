@@ -6,12 +6,15 @@ import logging
 import math
 from datetime import datetime, timedelta
 
+from goalcoach.application.progress_reducer import reduce_concept_progress
 from goalcoach.domain.enums import PlanItemKind
 from goalcoach.domain.models import (
     ConceptMastery,
+    ConceptProgress,
     ErrorRecord,
     GradingResult,
     LearnerState,
+    LearningEvent,
     utc_now,
 )
 from goalcoach.infrastructure.persistence.learner_repository import SqliteLearnerRepository
@@ -36,6 +39,7 @@ class ProgressService:
         result: GradingResult,
         concept_id: str,
         at: datetime | None = None,
+        time_spent_seconds: int = 0,
     ) -> LearnerState:
         """Deterministically mutates LearnerState based on grading outcome.
 
@@ -97,25 +101,13 @@ class ProgressService:
             if is_remedial_item and concept_id not in state.today_remediated_concept_ids:
                 state.today_remediated_concept_ids.append(concept_id)
 
-            # Resolve / decay errors for concept_id without violating ge=1 validation invariant
-            if is_remedial_item:
-                # In remediation: all errors for this concept are cleanly resolved and purged
-                state.error_profile = [e for e in state.error_profile if e.concept_id != concept_id]
-            else:
-                # Standard pass: decrement occurrences by 1, purging if down to 0
-                remaining_errors: list[ErrorRecord] = []
-                for err in state.error_profile:
-                    if err.concept_id == concept_id:
-                        if err.occurrences > 1:
-                            err.occurrences -= 1
-                            remaining_errors.append(err)
-                        # If occurrences == 1, omitted to purge cleanly
-                    else:
-                        remaining_errors.append(err)
-                state.error_profile = remaining_errors
-
-            has_recurring = any(e.occurrences >= 2 for e in state.error_profile)
-            if not has_recurring:
+            # A correct answer resets the whole remediation counter for this
+            # concept to zero (one pass clears all unresolved remediation for
+            # the concept). The lifelong error history (``error_profile``) is
+            # NEVER decremented or cleared.
+            if concept_id in state.remediation_counters:
+                state.remediation_counters.pop(concept_id, None)
+            if not any(value >= 2 for value in state.remediation_counters.values()):
                 state.needs_replanning = False
         else:
             mastery.mastery_score = max(0.0, min(1.0, round(mastery.mastery_score - 0.10, 4)))
@@ -136,26 +128,156 @@ class ProgressService:
             for code in error_codes:
                 self._record_error(state, code=code, concept_id=concept_id, at=now)
 
-            # Check repeated error threshold (occurrences >= 2 for the concept) exclusively on failure
-            for err in state.error_profile:
-                if err.concept_id == concept_id and err.occurrences >= 2:
+            # The remediation threshold (>= 2) is tracked independently of the
+            # lifelong error history: ``remediation_counters`` accumulates
+            # unresolved errors until a fix is scheduled, then resets. Inside a
+            # REMEDIAL (fix) item a wrong answer must NOT re-trigger
+            # needs_replanning (that would create a fix -> fail -> replan ->
+            # fix infinite loop), so the counter is only incremented outside it.
+            in_remedial_item = False
+            if state.active_plan:
+                for item in state.active_plan.items:
+                    if (
+                        item.concept_id == concept_id
+                        and not item.completed
+                        and item.kind == PlanItemKind.REMEDIAL
+                    ):
+                        in_remedial_item = True
+                        break
+            if not in_remedial_item:
+                current_counter = state.remediation_counters.get(concept_id, 0) + 1
+                state.remediation_counters[concept_id] = current_counter
+                if current_counter >= 2:
                     state.needs_replanning = True
                     logger.info(
-                        "Threshold reached for error %s on concept %s (occurrences: %d); set needs_replanning=True",
-                        err.code,
+                        "Remediation threshold reached for concept %s (counter: %d); "
+                        "set needs_replanning=True",
                         concept_id,
-                        err.occurrences,
+                        current_counter,
                     )
-                    break
 
         mastery.last_reviewed_at = now
         state.mastery[concept_id] = mastery
+
+        self._apply_learning_evidence(
+            state=state,
+            result=result,
+            concept_id=concept_id,
+            at=now,
+            time_spent_seconds=time_spent_seconds,
+        )
 
         if concept_id not in state.today_studied_concept_ids:
             state.today_studied_concept_ids.append(concept_id)
 
         state.updated_at = now
         return state
+
+    @staticmethod
+    def _apply_learning_evidence(
+        state: LearnerState,
+        result: GradingResult,
+        concept_id: str,
+        at: datetime,
+        time_spent_seconds: int = 0,
+    ) -> None:
+        """Project a graded plan interaction into roadmap progress.
+
+        ``mastery`` drives adaptive scheduling while ``concept_progress`` drives
+        the learner-facing roadmap. A grading event is authoritative evidence
+        for both projections, so they must be updated in the same transaction.
+        """
+        active_item = next(
+            (
+                item
+                for item in (state.active_plan.items if state.active_plan else [])
+                if item.concept_id == concept_id and not item.completed
+            ),
+            None,
+        )
+        is_spaced_review = active_item is not None and active_item.kind in {
+            PlanItemKind.REVIEW,
+            PlanItemKind.REMEDIAL,
+        }
+        scores = result.scores
+        quality = (
+            scores.grammatical_correctness
+            + scores.semantic_precision
+            + scores.pragmatic_appropriateness
+        ) / 3.0
+        event = LearningEvent(
+            learner_id=str(state.learner_id),
+            plan_item_id=str(active_item.id) if active_item else "teaching_agent",
+            concept_ids=[concept_id],
+            event_type="review" if is_spaced_review else "attempt",
+            started_at=at,
+            last_active_at=at,
+            active_seconds=time_spent_seconds,
+            estimated_minutes=max(time_spent_seconds / 60.0, 0.0),
+            engagement_score=quality,
+            grading_result=result.model_dump(mode="json"),
+        )
+        current = state.concept_progress.get(
+            concept_id,
+            ConceptProgress(learner_id=str(state.learner_id), concept_id=concept_id),
+        )
+        current.exposed = True
+        state.concept_progress[concept_id] = reduce_concept_progress(
+            current,
+            event,
+            completes_atomic_unit=not is_spaced_review,
+            is_spaced_review=is_spaced_review,
+        )
+        # ``ConceptMastery`` is the scheduling authority; ``ConceptProgress`` is
+        # its learner-facing projection. Keep the shared mastery value identical.
+        projection = state.concept_progress[concept_id]
+        authority = state.mastery[concept_id]
+        projection.mastery_score = authority.mastery_score
+        projection.retention_at_review = authority.retention_score
+        projection.decay_lambda = authority.decay_lambda
+        projection.last_reviewed_at = authority.last_reviewed_at
+        projection.next_review_at = authority.next_review_at
+
+    @staticmethod
+    def build_learning_event(
+        state: LearnerState,
+        result: GradingResult,
+        concept_id: str,
+        *,
+        at: datetime,
+        time_spent_seconds: int,
+    ) -> LearningEvent:
+        """Build the durable audit event matching a grading state transition."""
+        active_item = next(
+            (
+                item
+                for item in (state.active_plan.items if state.active_plan else [])
+                if item.concept_id == concept_id and not item.completed
+            ),
+            None,
+        )
+        is_review = active_item is not None and active_item.kind in {
+            PlanItemKind.REVIEW,
+            PlanItemKind.REMEDIAL,
+        }
+        scores = result.scores
+        quality = (
+            scores.grammatical_correctness
+            + scores.semantic_precision
+            + scores.pragmatic_appropriateness
+        ) / 3.0
+        return LearningEvent(
+            learner_id=str(state.learner_id),
+            plan_item_id=str(active_item.id) if active_item else "teaching_agent",
+            concept_ids=[concept_id],
+            event_type="review" if is_review else "attempt",
+            started_at=at,
+            last_active_at=at,
+            active_seconds=time_spent_seconds,
+            estimated_minutes=max(time_spent_seconds / 60.0, 0.0),
+            engagement_score=quality,
+            grading_result=result.model_dump(mode="json"),
+        )
 
     def _record_error(
         self,

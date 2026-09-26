@@ -9,25 +9,27 @@ Implements PRD Section 10:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from pydantic_ai import Agent
 
 from goalcoach.domain.models import (
-    AnswerSubmission,
     Exercise,
     GradingResult,
     RubricScores,
 )
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
+    LLMUnavailableError,
     get_openrouter_model,
     get_output_retries,
     run_with_fallback,
 )
-
-logger = logging.getLogger(__name__)
 
 GRADER_SYSTEM_PROMPT = """You are the GoalCoach Chinese Grading Evaluator.
 Assess the learner's submission against the exercise prompt, instruction, and reference answers.
@@ -66,25 +68,151 @@ grader_agent = Agent(
 )
 
 
+def parse_matching_pairs(text: str) -> dict[str, str]:
+    """Parse various matching input formats into a normalized dict of {left_id: right_id}."""
+    text = text.strip()
+    if not text:
+        return {}
+
+    # 1. JSON parsing
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            data = json.loads(text)
+            if "pairs" in data and isinstance(data["pairs"], dict):
+                return {str(k).upper(): str(v).upper() for k, v in data["pairs"].items()}
+            return {str(k).upper(): str(v).upper() for k, v in data.items()}
+        except (json.JSONDecodeError, TypeError, KeyError, AttributeError):
+            logger.debug("Failed to parse text as JSON matching pairs: %s", text)
+
+    # 2. Key-value matching like "1C 2A 3D 4B 5E", "1-C, 2-A", "1:C 2:A"
+    pair_matches = re.findall(r"(\d+)\s*[-:=]?\s*([A-Za-z]+)", text)
+    if pair_matches:
+        return {num: letter.upper() for num, letter in pair_matches}
+
+    # 3. Comma/space separated letters: "C, A, D, B, E" or "C A D B E"
+    tokens = [t.strip().upper() for t in re.split(r"[\s,;]+", text) if t.strip()]
+    if tokens and all(len(t) == 1 and t.isalpha() for t in tokens):
+        return {str(i + 1): token for i, token in enumerate(tokens)}
+
+    return {}
+
+
 class GraderComponent:
     """Stateless evaluator producing rubric grading evidence for the Progress Service."""
 
     def __init__(self, agent: Agent = grader_agent) -> None:
         self.agent = agent
 
+    @staticmethod
+    def _grade_matching_exercise(
+        exercise: Exercise,
+        student_answer: str,
+        exercise_id: Any,
+    ) -> GradingResult:
+        """Deterministically evaluates mix-and-match pairs in <1ms."""
+        expected_pairs: dict[str, str] = {}
+        for ref in exercise.reference_answers:
+            parsed = parse_matching_pairs(ref)
+            if parsed:
+                expected_pairs = parsed
+                break
+
+        if (
+            not expected_pairs
+            and isinstance(exercise.metadata, dict)
+            and "pairs" in exercise.metadata
+        ):
+            expected_pairs = {
+                str(k).upper(): str(v).upper() for k, v in exercise.metadata["pairs"].items()
+            }
+
+        student_pairs = parse_matching_pairs(student_answer)
+        if not student_pairs:
+            return GradingResult(
+                exercise_id=exercise_id,
+                scores=RubricScores(
+                    grammatical_correctness=0.0,
+                    semantic_precision=0.0,
+                    pragmatic_appropriateness=0.5,
+                ),
+                passed_gates=False,
+                confidence=1.0,
+                feedback="Please format your answer matching numbers to letters (e.g., 1C 2A 3E 4B 5D).",
+                detected_errors=["ERR_FORMAT_MATCHING"],
+                grader_version="deterministic-matching",
+            )
+
+        total_pairs = len(expected_pairs) or max(len(student_pairs), 1)
+        matched_correct = 0
+
+        for left_key, right_val in expected_pairs.items():
+            if student_pairs.get(left_key) == right_val:
+                matched_correct += 1
+
+        precision = matched_correct / max(1, total_pairs)
+        passed = precision >= 0.80  # 4 out of 5 passes
+
+        if passed:
+            feedback = (
+                f"Outstanding! All {matched_correct}/{total_pairs} pairs matched perfectly!"
+                if matched_correct == total_pairs
+                else f"Great job! You matched {matched_correct}/{total_pairs} pairs correctly."
+            )
+            errors = []
+        else:
+            feedback = (
+                f"Good attempt! You matched {matched_correct}/{total_pairs} pairs correctly. "
+                "Review the remaining vocabulary pairs."
+            )
+            errors = ["ERR_VOCAB_MATCH"]
+
+        return GradingResult(
+            exercise_id=exercise_id,
+            scores=RubricScores(
+                grammatical_correctness=1.0,
+                semantic_precision=precision,
+                pragmatic_appropriateness=1.0,
+            ),
+            passed_gates=passed,
+            confidence=1.0,
+            feedback=feedback,
+            detected_errors=errors,
+            grader_version="deterministic-matching",
+        )
+
     async def grade(
         self,
         exercise: Exercise,
-        answer: str | AnswerSubmission,
+        answer: str,
     ) -> GradingResult:
         """Evaluates submission against exercise rubrics with fast-path short-circuiting."""
-        raw_answer = answer.answer if isinstance(answer, AnswerSubmission) else str(answer)
-        clean_student_ans = raw_answer.strip()
+        clean_student_ans = answer.strip()
         exercise_id = exercise.id or uuid4()
+
+        # Check for matching exercise evaluation (deterministic <1ms fast path)
+        if getattr(exercise, "exercise_type", "") == "matching" or (
+            isinstance(exercise.options, dict)
+            and "left" in exercise.options
+            and "right" in exercise.options
+        ):
+            return self._grade_matching_exercise(exercise, clean_student_ans, exercise_id)
 
         # 1. Fast Path: Exact reference answer match (bypasses LLM, <5ms)
         accepted = [ans.strip() for ans in exercise.reference_answers if ans]
-        if clean_student_ans in accepted:
+
+        # If exercise has options (MCQ), check if user selected by index or letter (e.g. 1, 2, A, B)
+        resolved_answer = clean_student_ans
+        if exercise.options and isinstance(exercise.options, list) and len(exercise.options) > 0:
+            if clean_student_ans.isdigit():
+                idx = int(clean_student_ans) - 1
+                if 0 <= idx < len(exercise.options):
+                    resolved_answer = exercise.options[idx].strip()
+            elif clean_student_ans.upper() in ("A", "B", "C", "D"):
+                idx = ord(clean_student_ans.upper()) - ord("A")
+                if 0 <= idx < len(exercise.options):
+                    resolved_answer = exercise.options[idx].strip()
+
+        if clean_student_ans in accepted or resolved_answer in accepted:
             return GradingResult(
                 exercise_id=exercise_id,
                 scores=RubricScores(
@@ -97,6 +225,7 @@ class GraderComponent:
                 feedback="Perfect! Your answer matches the accepted standard response.",
                 detected_errors=[],
                 grader_version="deterministic-fast-path",
+                metadata={"provider": "deterministic", "fallback_used": False},
             )
 
         # 2. Heuristic check for common known errors if LLM fails
@@ -110,9 +239,25 @@ class GraderComponent:
         )
 
         try:
-            result, _ = await run_with_fallback(self.agent, prompt, deps=None)
+            result, provider = await run_with_fallback(
+                self.agent,
+                prompt,
+                deps=None,
+                component="grader_component",
+            )
             llm_result: GradingResult = result.output
             llm_result.exercise_id = exercise_id
+            llm_result.metadata.update(
+                {
+                    "provider": provider,
+                    "fallback_used": provider.startswith("ollama:"),
+                    "notice": (
+                        "The primary model was unavailable; the configured fallback model was used."
+                        if provider.startswith("ollama:")
+                        else None
+                    ),
+                }
+            )
 
             # Deterministic gating guardrails:
             # If critical errors are detected, passed_gates must be False
@@ -136,57 +281,39 @@ class GraderComponent:
                 llm_result.passed_gates = False
 
             return llm_result
-        except Exception as exc:
-            logger.warning(
-                "GraderComponent LLM execution failed (%s); running heuristic evaluation.", exc
+        except LLMUnavailableError as exc:
+            return self._deterministic_fallback(
+                exercise_id,
+                notice=f"LLM unavailable; conservative deterministic grading fallback used: {exc}",
             )
+        return self._deterministic_fallback(
+            exercise_id,
+            notice="Grader returned an invalid rubric result; deterministic fallback used.",
+        )
 
-        return self._heuristic_fallback(exercise, clean_student_ans, exercise_id)
-
-    def _heuristic_fallback(
-        self,
-        exercise: Exercise,
-        answer: str,
-        exercise_id: Any,
-    ) -> GradingResult:
-        """Deterministic heuristic evaluator when offline or when LLM fails."""
-        # Simple substring matching or particle checks
-        passed = False
-        detected_errors: list[str] = []
-        feedback = "Good try, but please review the sentence structure."
-
-        # Concept specific heuristic checks
-        if "question_ma" in exercise.concept_id or "ma" in exercise.concept_id:
-            if "吗" not in answer and "ma" not in answer.lower():
-                detected_errors.append("ERR_QUESTION_MA")
-                feedback = (
-                    "Remember to add the question particle 吗 at the end of a yes/no question!"
-                )
-            else:
-                passed = True
-                feedback = "Good job using the question particle 吗!"
-        elif any(ref in answer for ref in exercise.reference_answers):
-            passed = True
-            feedback = "Well done! Your response conveys the intended meaning."
-        elif len(answer) >= 2:
-            # Partial credit
-            passed = False
-            detected_errors.append(f"ERR_{exercise.concept_id.upper()}")
-            feedback = f"Check your grammar for concept {exercise.concept_id}."
-
-        score = 0.85 if passed else 0.40
+    @staticmethod
+    def _deterministic_fallback(exercise_id: object, *, notice: str) -> GradingResult:
+        """Fail closed when a non-exact answer cannot be evaluated by an LLM."""
         return GradingResult(
-            exercise_id=exercise_id,
+            exercise_id=str(exercise_id),
             scores=RubricScores(
-                grammatical_correctness=score,
-                semantic_precision=score,
-                pragmatic_appropriateness=score,
+                grammatical_correctness=0.0,
+                semantic_precision=0.0,
+                pragmatic_appropriateness=0.0,
             ),
-            passed_gates=passed,
-            confidence=0.80,
-            feedback=feedback,
-            detected_errors=detected_errors,
-            grader_version="deterministic-heuristic-fallback",
+            passed_gates=False,
+            confidence=0.0,
+            feedback=(
+                "This answer could not be evaluated by the language model. "
+                "It was not counted as correct; please retry when model service is available."
+            ),
+            detected_errors=["ERR_GRADING_LLM_UNAVAILABLE"],
+            grader_version="deterministic-fail-closed-fallback",
+            metadata={
+                "provider": "deterministic",
+                "fallback_used": True,
+                "notice": notice,
+            },
         )
 
 

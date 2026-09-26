@@ -1,12 +1,8 @@
 import React from 'react';
 import { 
   Compass, 
-  RotateCcw, 
   TrendingUp,
-  BookOpen, 
-  MessageSquare, 
-  Target,
-  Settings
+  BookOpen,
 } from 'lucide-react';
 import { PandaMascot } from './PandaMascot.tsx';
 import { GoalCoachLogo } from './GoalCoachLogo.tsx';
@@ -15,25 +11,23 @@ import { LearnerState, NextAction } from '../types.ts';
 interface SidebarProps {
   activeTab: 'plan' | 'curriculum' | 'retention';
   setActiveTab: (tab: 'plan' | 'curriculum' | 'retention') => void;
-  onOpenChat: () => void;
   onOpenProfile?: () => void;
   learnerState: LearnerState | null;
-  overallProgress: number;
+  goalCompletion: number;
   nextAction: NextAction;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
-  onOpenChat,
   onOpenProfile,
   learnerState,
-  overallProgress,
+  goalCompletion,
   nextAction,
 }) => {
-  const overallPercent = Math.round(overallProgress > 1 ? Math.min(100, overallProgress) : Math.max(0, overallProgress) * 100);
+  const overallPercent = Math.round(Math.max(0, Math.min(100, goalCompletion)));
   return (
-    <aside className="w-68 shrink-0 hidden lg:flex flex-col border-r-2 border-zinc-200 bg-white min-h-screen px-5 py-6 select-none">
+    <aside className="w-68 shrink-0 hidden lg:flex flex-col border-r border-slate-200/80 bg-white/85 backdrop-blur-xl min-h-screen px-5 py-6 select-none shadow-[10px_0_35px_rgba(15,23,42,0.03)]">
       {/* Brand Header with Bamboo Panda Logo (Clickable to open profile) */}
       <div className="px-2 mb-8">
         <GoalCoachLogo 
@@ -56,7 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }`}
         >
           <Compass className="w-5 h-5" />
-          <span>Daily Plan</span>
+          <span>Today</span>
         </button>
 
         <button
@@ -69,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }`}
         >
           <BookOpen className="w-5 h-5" />
-          <span>Curriculum</span>
+          <span>Roadmap</span>
         </button>
 
         <button
@@ -85,14 +79,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span>Progress</span>
         </button>
 
-        <button
-          id="sidebar-btn-coach"
-          onClick={onOpenChat}
-          className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs font-black uppercase tracking-wider text-zinc-900 hover:bg-zinc-100 border-2 border-zinc-200 transition-all shadow-[0_3px_0_#e4e4e7] active:translate-y-0.5 active:shadow-none cursor-pointer"
-        >
-          <MessageSquare className="w-5 h-5 text-emerald-600" />
-          <span>Coach Bǎobao</span>
-        </button>
       </nav>
 
       {/* Mini Mascot Card at Sidebar Bottom (Click to open profile) */}

@@ -1,7 +1,16 @@
-"""Named GoalCoach agent and worker components."""
+"""GoalCoach's state-aware reasoning agents and isolated grader component."""
 
-from .grader_component import GraderComponent
-from .planning_agent import PlanningWorker
-from .teaching_agent import TeachingWorker
+from goalcoach.agents.grader_component import GraderComponent
+from goalcoach.agents.planning_agent import PlanningWorker
+from goalcoach.agents.teaching_agent import TeachingWorker
 
-__all__ = ["GraderComponent", "PlanningWorker", "TeachingWorker"]
+TeachingAgent = TeachingWorker
+GradingAgent = GraderComponent
+
+__all__ = [
+    "GraderComponent",
+    "GradingAgent",
+    "PlanningWorker",
+    "TeachingAgent",
+    "TeachingWorker",
+]

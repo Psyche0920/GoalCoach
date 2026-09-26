@@ -110,10 +110,9 @@ Always execute the test suite before submitting changes:
 # 1. Fast Unit Tests (domain math, reducers, pure logic)
 uv run pytest tests/unit/ -v
 
-# 2. Integration Tests (closed loop, remediation, persistence, vector retrieval)
+# 2. Integration Tests (closed loop, remediation, persistence)
 GOALCOACH_ENVIRONMENT="testing" \
 GOALCOACH_LLM_API_KEY="ci-mock-token" \
-GOALCOACH_ENABLE_VECTOR_RETRIEVAL="true" \
 uv run pytest tests/integration/ -v
 
 # 3. Complete Test Run

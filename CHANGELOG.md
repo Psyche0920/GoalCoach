@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.4] - 2026-09-25
+
+### Added
+- **Full-Stack Teaching Agent & Interactive Exercise Web Integration**:
+  - Enriched `TeachingAction.exercisePayload` in `apps/web/src/types.ts` with `exercise_type` and `options` (`string[]` or paired `left`/`right` dictionary).
+  - Added interactive Multiple-Choice Question (MCQ) & synthesized distractor cards to `TeachingAgentModal.tsx` (`apps/web/src/components/TeachingAgentModal.tsx`), supporting 1-click option selection with `(1)`, `(2)`, `(3)`, `(4)` badge buttons.
+  - Added two-column interactive Mix-and-Match layout to `TeachingAgentModal.tsx` (`apps/web/src/components/TeachingAgentModal.tsx`), enabling tap-to-pair Chinese words and English meanings with live state tracking and standard shorthand (`1C 2A 3E`) grading output.
+  - Added Target HSK Milestone selector dropdown (Levels 1–6) to `LearnerProfileDrawer.tsx` (`apps/web/src/components/LearnerProfileDrawer.tsx`) and wired dynamic milestone selection into `handleUpdateGoal` in `apps/web/src/App.tsx`.
+
+### Changed
+- **Bite-Sized Micro-Learning Exercise Pacing (3–5 Minutes)**:
+  - Updated `PLANNING_SYSTEM_PROMPT` and `PlanningWorker.create_plan` in `src/goalcoach/agents/planning_agent.py` to enforce bite-sized durations (3–5 minutes) per planned exercise item.
+  - Added duration clamping (`max(3, min(item.estimated_minutes, 5))`) in `PlanningWorker` to prevent single exercises from absorbing the entire daily budget (e.g. 40 minutes) in a single step, ensuring plans contain multiple manageable items.
+  - Rebalanced deterministic planning fallback (`_deterministic_fallback`) to 5 min for remedial, 3 min for review, and 5 min for new concepts.
+- **Smart Mix-and-Match Exercise Placement**:
+  - Positioned synthesized matching exercises at Index 0 for pure vocabulary concepts (`concept_type == 'vocabulary'`) and Index 1 (immediately after introductory `_e01` MCQ) for general vocabulary units in `src/goalcoach/infrastructure/persistence/content_service.py`, ensuring immediate web UI accessibility without breaking integration test suites.
+
+### Fixed
+- **Synthesized Matching Exercise API Validation**:
+  - Fixed `validate_curriculum_references` in `apps/api/routes/learning_loop.py` to query `ContentService(content_repo).get_exercise()` instead of `content_repo.get_exercise()`, preventing HTTP 422 errors on submitting answers for dynamically generated `_match_auto` exercises.
+
+---
+
+## [0.1.3] - 2026-09-22
+
+### Added
+- **Multi-Level Curriculum Access Across HSK 1–6**:
+  - Unlocked all 126 active curriculum concepts in Database #1 spanning HSK levels 1 through 6.
+  - Added query parameter `level: int | None = Query(default=None, ge=1, le=6)` to `GET /api/v1/curriculum/concepts` in `apps/api/routes/learning_loop.py`.
+  - Added automated multi-level test cases in `tests/integration/test_content_repository.py` and `tests/unit/test_api_learning.py`.
+
+- **Mix-and-Match (Matching) Exercise Engine**:
+  - Added `'matching'` exercise type to domain `Exercise` model (`src/goalcoach/domain/models.py`) and web frontend types (`apps/web/src/types.ts`).
+  - Implemented dynamic synthesis (`synthesize_matching_exercise` and `get_or_synthesize_matching_exercise`) in `ContentService` (`src/goalcoach/infrastructure/persistence/content_service.py`) creating 5-pair matching exercises from concept teaching cards with level-matched backfill.
+  - Implemented deterministic `<1ms` fast-path evaluation in `GraderComponent` (`src/goalcoach/agents/grader_component.py`) supporting flexible input formats (`1C 2A 3D...`, `1-C, 2-A...`, `C, A, D...`, JSON) with 80% passing threshold and `ERR_VOCAB_MATCH` tagging.
+  - Enhanced `terminal_harness.py` (`src/goalcoach/agents/terminal_harness.py`) to format matching exercises with clear, aligned two-column panels.
+  - Integrated synthesized matching exercises into `ContentService.get_exercises_for_concept` (`src/goalcoach/infrastructure/persistence/content_service.py`) for vocabulary acquisition.
+  - Streamlined `TEACHING_SYSTEM_PROMPT` (`src/goalcoach/agents/teaching_agent.py`) to produce ultra-concise, bite-sized lessons (<60 words for explanations, <40 words for hints/retries) and explicitly scaffold mix-and-match pair matching.
+  - Added comprehensive test suite `tests/unit/test_matching_exercise.py`.
+
+- **Progressive Reachable HSK Level Window & Curriculum Sequencing**:
+  - Implemented `resolve_active_level(state, content_service)` in `src/goalcoach/agents/planning_agent.py` to dynamically determine the learner's active reachable HSK proficiency window based on verified concept mastery ($\ge 0.50$).
+  - Updated `get_curriculum_catalog` agent tool in `src/goalcoach/agents/planning_agent.py` to constrain catalog concepts to the active reachable level window (`max_hsk_level=active_level`).
+  - Added active level guidance to `PlanningWorker.create_plan` prompt in `src/goalcoach/agents/planning_agent.py` and guardrail filtering (`valid_active_ids`) preventing premature jumping into higher HSK levels before earlier levels are mastered.
+  - Aligned deterministic fallback `_heuristic_fallback` in `src/goalcoach/agents/planning_agent.py` to schedule unmastered concepts within the active level window.
+  - Added comprehensive progressive unlock tests in `tests/unit/test_matching_exercise.py`.
+
+### Changed
+- **Content Persistence & Service Layer Generalization**:
+  - Generalized `ContentRepository.list_concepts(hsk_level: int | None = None)` in `src/goalcoach/infrastructure/persistence/repositories.py` to retrieve all concepts stably ordered by `(hsk_level, sequence_no)` or filter by any level.
+  - Generalized `ContentService.list_all_concepts(hsk_level: int | None = None)` in `src/goalcoach/infrastructure/persistence/content_service.py`.
+- **Target-Aware Adaptive Planning & Grading**:
+  - Parameterized `planning_agent.py` (`PLANNING_SYSTEM_PROMPT`, `get_curriculum_catalog` tool, and `_heuristic_fallback`) to dynamically load concepts matching the learner's target HSK level (`state.goal.target_hsk_level`).
+  - Updated `orchestrator.py` to dynamically resolve `exercise.hsk_level` from the parent curriculum concept rather than forcing level 1.
+  - Synchronized progress summary calculations in learner aggregate and completion endpoints with the learner's target level.
+
+---
+
 ## [0.1.2] - 2026-09-21
 
 ### Removed

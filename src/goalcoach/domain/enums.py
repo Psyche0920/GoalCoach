@@ -8,8 +8,10 @@ class EventType(StrEnum):
 
     GOAL_CREATED = "GOAL_CREATED"
     SESSION_STARTED = "SESSION_STARTED"
+    SESSION_ENDED = "SESSION_ENDED"
     HELP_REQUESTED = "HELP_REQUESTED"
     ANSWER_SUBMITTED = "ANSWER_SUBMITTED"
+    REPLAN_REQUESTED = "REPLAN_REQUESTED"
 
 
 class TeachingActionKind(StrEnum):
@@ -40,18 +42,18 @@ class PlanStatus(StrEnum):
     INVALID = "invalid"
 
 
-class RetrievalMode(StrEnum):
-    """Strategies for querying curriculum concepts and exercises from the content store."""
+class StudyEntrySource(StrEnum):
+    """Authoritative origin of a teaching turn and its progress eligibility."""
 
-    EXACT = "exact"
-    STRUCTURED = "structured"
-    SEMANTIC = "semantic"
+    PLANNED = "planned"
+    DAILY_REVIEW = "daily_review"
+    ROADMAP = "roadmap"
 
 
 __all__ = [
     "EventType",
     "PlanItemKind",
     "PlanStatus",
-    "RetrievalMode",
+    "StudyEntrySource",
     "TeachingActionKind",
 ]
