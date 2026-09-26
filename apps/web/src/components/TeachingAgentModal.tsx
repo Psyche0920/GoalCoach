@@ -99,6 +99,9 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
   const progressNotice = typeof action?.metadata?.progress_notice === 'string'
     ? action.metadata.progress_notice
     : null;
+  const sessionTree = action?.metadata?.session_tree as any;
+  const currentNodeId = action?.metadata?.current_node_id as string | undefined;
+  const branchTaken = action?.metadata?.branch_taken as 'left' | 'right' | undefined;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-3 backdrop-blur-sm sm:p-5">
@@ -122,6 +125,20 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
               {countsTowardProgress ? <CheckCircle2 className="h-5 w-5" /> : <BookOpenText className="h-5 w-5" />}
               <span>{progressNotice ?? (countsTowardProgress ? 'This planned lesson counts toward progress.' : 'Free practice · progress and study time stay unchanged.')}</span>
             </div>
+
+            {sessionTree && currentNodeId && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-200/60 bg-emerald-50/80 px-4 py-2.5 text-xs font-bold text-emerald-950">
+                <span className="flex items-center gap-1.5 font-black uppercase tracking-wider text-emerald-800">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Adaptive Exercise Path: Node {currentNodeId}
+                </span>
+                {branchTaken && (
+                  <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${branchTaken === 'left' ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-200 text-amber-900'}`}>
+                    {branchTaken === 'left' ? '⚡ Advanced (Left)' : '🌱 Remedial / Scaffolded (Right)'}
+                  </span>
+                )}
+              </div>
+            )}
 
             <section className="rounded-3xl border border-indigo-100 bg-indigo-50/70 p-4 sm:p-5">
               <h3 className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wider text-indigo-800"><Lightbulb className="h-4 w-4" />Coach’s explanation</h3>

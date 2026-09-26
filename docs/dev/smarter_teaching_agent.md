@@ -104,3 +104,37 @@ Previously, plans risked allocating an entire daily time budget (e.g. 40 minutes
 | [`src/goalcoach/agents/planning_agent.py`] | Lines **323–328** (`create_plan` prompt) | Added Rule 4 prompt directive enforcing 3–5 minute bite-sized item durations and multi-item schedule creation. |
 | [`src/goalcoach/agents/planning_agent.py`] | Lines **415–427** (`budgeted_items` clamping) | Clamped all planned items via `max(3, min(item.estimated_minutes, 5))` and capped remaining minutes to 5 min so no single item absorbs more than 5 minutes. |
 | [`src/goalcoach/agents/planning_agent.py`] | Lines **536–540**, **572** (`_deterministic_fallback`) | Set fallback durations to 5 min for remedial, 3 min for review, and 5 min for new concepts. |
+
+---
+
+## 6. Adaptive Session Planner & Decision Tree Diagram (Branching DAG)
+
+**Date:** 2026-09-26  
+**Scope:** Enhances the Teaching Agent by embedding an adaptive `SessionPlanner` that organizes a multi-exercise practice session around a single HSK concept into a structured decision tree diagram (Branching DAG).
+- **Core Adaptive Traversal Principle:**
+  - **Left Branch (`on_correct`):** If the learner answers correctly, step up difficulty or advance cognitive demand (e.g., Character Recognition MCQ $\to$ Pattern Association / Fill-in-the-Blank $\to$ Sentence Reordering / Active Production).
+  - **Right Branch (`on_incorrect`):** If the learner makes a mistake, route to scaffolded reinforcement (e.g., contrast example, simpler MCQ, or vocabulary matching) at the same or lower difficulty before advancing or concluding.
+- **Architectural Decision (Structured LLM Call vs Agent vs Tool):**
+  - **Why not a separate Agent?** Avoids multi-agent chaining and keeps the one-reasoning-worker-per-event invariant intact.
+  - **Why not an Agent Tool?** Avoids double-LLM roundtrips and prompt instruction drift in `TeachingAgent`.
+  - **Why a dedicated LLM call?** Enables one-shot structured Pydantic output (`SessionTree`), strict grounding against real Database #1 exercise IDs, and instant $O(1)$ deterministic graph traversal during turn-by-turn answer evaluation.
+- **Deterministic Heuristic Fallback:**
+  - If the LLM is unavailable or offline, `deterministic_build_session_tree()` sorts verified exercises by `(difficulty, exercise_order, type_priority)` and constructs a standard 3-tier adaptive diamond tree.
+
+### Responsible Files & Exact Lines
+
+| File | Responsible Lines | Description & Responsibility |
+| :--- | :--- | :--- |
+| [`src/goalcoach/domain/models.py`] | Lines **320–342** (`SessionTreeNode` & `SessionTree`) | Defined domain models for the adaptive session graph: <br>• `SessionTreeNode`: holds `node_id`, `exercise_id`, `difficulty`, `pedagogical_purpose`, `on_correct` (Left branch), `on_incorrect` (Right branch), and `is_terminal`.<br>• `SessionTree`: holds `concept_id`, `root_node_id`, and `nodes: dict[str, SessionTreeNode]`. |
+| [`src/goalcoach/domain/models.py`] | Lines **365–367** (`ActiveLearningSession`) | Extended session state with `session_tree: SessionTree \| None`, `current_node_id: str \| None`, and `completed_node_ids: list[str]`. |
+| [`src/goalcoach/agents/session_planner.py`] | Lines **1–315** (Entire file) | Implemented `SessionPlanner` component: <br>• Lines **30–45** (`SessionPlannerDeps`): Injects concept ID and candidate exercises.<br>• Lines **48–66** (`SESSION_PLANNER_SYSTEM_PROMPT`): Enforces strict grounding (no hallucinated exercise IDs) and binary branching rules.<br>• Lines **69–185** (`deterministic_build_session_tree`): Programmatically builds a 3-tier adaptive tree using exercise difficulty and canonical order.<br>• Lines **188–255** (`SessionPlanner.plan_session_tree`): Runs structured PydanticAI agent with automatic deterministic fallback. |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **155–178** (`TeachingWorker.__init__` & `plan_session_tree`) | Equipped `TeachingWorker` with `session_planner = SessionPlanner()` and exposed `plan_session_tree()`. |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **180–195** (`TeachingWorker.teach_concept`) | Added optional `target_exercise_id` parameter to teach specific tree nodes rather than blindly re-selecting candidate exercises. |
+| [`src/goalcoach/agents/teaching_agent.py`] | Lines **389–405** (Removed) | Removed deprecated backwards-compatibility helper `_attach_curriculum_exercise`. |
+| [`src/goalcoach/application/orchestrator.py`] | Lines **67–79** (`TeachingWorkerPort`) | Updated teaching worker contract to accept `target_exercise_id`. |
+| [`src/goalcoach/application/orchestrator.py`] | Lines **381–410** (`_handle_session_started`) | Plans or resumes the adaptive session tree on `SESSION_STARTED`, serves the root exercise, and attaches `session_tree` and `current_node_id` metadata. |
+| [`src/goalcoach/application/orchestrator.py`] | Lines **616–685** (`_handle_answer_submitted`) | Evaluates grading results, navigates the tree: <br>• Correct: branches left to `curr_node.on_correct`.<br>• Incorrect: branches right to `curr_node.on_incorrect`.<br>• If next node exists: updates `current_node_id`, pre-generates next `TeachingAction`, and returns it in `OrchestratorResponse`.<br>• If terminal exit: completes the plan item in `active_plan` and resets session tree. |
+| [`apps/web/src/components/TeachingAgentModal.tsx`] | Lines **102–104**, **125–136** | Added visual badges: renders active node ID (`Node root`, `Node step_pass`, etc.) and live branch indicator (`⚡ Advanced (Left)` / `🌱 Remedial / Scaffolded (Right)`). |
+| [`tests/unit/test_session_planner.py`] | Lines **1–190** (Entire file) | Comprehensive test suite testing deterministic tree construction, DB grounding, left-branch (pass) traversal, and right-branch (mistake-recovery) traversal. |
+| [`tests/integration/test_remediation_loop.py`] | Lines **132–141** | Refactored `test_help_replacement_explicitly_excludes_current_exercise` to use canonical candidate selection and attachment. |
+

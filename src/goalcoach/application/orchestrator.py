@@ -75,6 +75,7 @@ class TeachingWorkerPort(Protocol):
         failed_attempts: int = 0,
         learner_query: str | None = None,
         excluded_exercise_id: str | None = None,
+        target_exercise_id: str | None = None,
     ) -> TeachingAction: ...
 
 
@@ -377,12 +378,41 @@ class DeterministicOrchestrator:
         ):
             failed_attempts = 1
 
+        # Plan or resume adaptive session tree for this concept
+        target_exercise_id: str | None = None
+        if state.active_session is not None and hasattr(self.teaching_worker, "plan_session_tree"):
+            if (
+                state.active_session.session_tree is None
+                or state.active_session.session_tree.concept_id != concept_id
+            ):
+                try:
+                    tree = await self.teaching_worker.plan_session_tree(
+                        concept_id=concept_id,
+                        content_service=self.content_service,
+                        state=state,
+                    )
+                    state.active_session.session_tree = tree
+                    state.active_session.current_node_id = tree.root_node_id
+                    state.active_session.completed_node_ids = []
+                    root_node = tree.nodes.get(tree.root_node_id)
+                    if root_node:
+                        target_exercise_id = root_node.exercise_id
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Session tree planning failed (%s); using default exercise.", exc)
+            elif state.active_session.current_node_id:
+                curr_node = state.active_session.session_tree.nodes.get(
+                    state.active_session.current_node_id
+                )
+                if curr_node:
+                    target_exercise_id = curr_node.exercise_id
+
         # Invoke Teaching Agent
         teaching_action = await self.teaching_worker.teach_concept(
             concept_id=concept_id,
             state=state,
             content_service=self.content_service,
             failed_attempts=failed_attempts,
+            target_exercise_id=target_exercise_id,
         )
         teaching_action.metadata.update(
             {
@@ -395,6 +425,13 @@ class DeterministicOrchestrator:
                 ),
             }
         )
+        if state.active_session is not None and state.active_session.session_tree is not None:
+            teaching_action.metadata.update(
+                {
+                    "session_tree": state.active_session.session_tree.model_dump(mode="json"),
+                    "current_node_id": state.active_session.current_node_id,
+                }
+            )
         if state.active_session is not None:
             state.active_session.current_turn_progress_eligible = progress_eligible
             state.active_session.current_entry_source = entry_source
@@ -576,18 +613,66 @@ class DeterministicOrchestrator:
                 result=grading_result,
                 time_spent_seconds=time_spent_seconds,
             )
-        elif state.active_session is not None:
-            state.active_session.pending_concept_id = None
-            state.active_session.pending_exercise_id = None
+        # Adaptive session tree traversal:
+        next_teaching_action: TeachingAction | None = None
+        session_finished = True
 
-        # If answer passed, mark item completed in active plan
-        if progress_eligible and grading_result.passed_gates and state.active_plan:
-            for item in state.active_plan.items:
-                if item.concept_id == concept_id and not item.completed:
-                    item.completed = True
-                    break
-            if all(item.completed for item in state.active_plan.items):
-                state.active_plan.status = PlanStatus.EXHAUSTED
+        if state.active_session is not None and state.active_session.session_tree is not None:
+            tree = state.active_session.session_tree
+            curr_node_id = state.active_session.current_node_id
+            curr_node = tree.nodes.get(curr_node_id) if curr_node_id else None
+
+            if curr_node:
+                if curr_node_id not in state.active_session.completed_node_ids:
+                    state.active_session.completed_node_ids.append(curr_node_id)
+                # If correct -> go left (on_correct), if incorrect -> go right (on_incorrect)
+                next_node_id = curr_node.on_correct if grading_result.passed_gates else curr_node.on_incorrect
+
+                if next_node_id and next_node_id in tree.nodes and not curr_node.is_terminal:
+                    session_finished = False
+                    state.active_session.current_node_id = next_node_id
+                    next_node = tree.nodes[next_node_id]
+                    state.active_session.pending_concept_id = concept_id
+                    state.active_session.pending_exercise_id = next_node.exercise_id
+
+                    # Generate teaching action for the next exercise in the tree
+                    next_teaching_action = await self.teaching_worker.teach_concept(
+                        concept_id=concept_id,
+                        state=state,
+                        content_service=self.content_service,
+                        failed_attempts=0 if grading_result.passed_gates else 1,
+                        target_exercise_id=next_node.exercise_id,
+                    )
+                    next_teaching_action.metadata.update(
+                        {
+                            "entry_source": (
+                                state.active_session.current_entry_source.value
+                                if state.active_session
+                                else StudyEntrySource.PLANNED.value
+                            ),
+                            "progress_eligible": progress_eligible,
+                            "session_tree": tree.model_dump(mode="json"),
+                            "current_node_id": next_node_id,
+                            "branch_taken": "left" if grading_result.passed_gates else "right",
+                        }
+                    )
+                    record_teaching_turn(state, next_teaching_action)
+
+        if session_finished:
+            # If answer passed, mark item completed in active plan
+            if progress_eligible and grading_result.passed_gates and state.active_plan:
+                for item in state.active_plan.items:
+                    if item.concept_id == concept_id and not item.completed:
+                        item.completed = True
+                        break
+                if all(item.completed for item in state.active_plan.items):
+                    state.active_plan.status = PlanStatus.EXHAUSTED
+
+            if state.active_session is not None:
+                state.active_session.pending_concept_id = None
+                state.active_session.pending_exercise_id = None
+                state.active_session.current_node_id = None
+                state.active_session.session_tree = None
 
         # 4. Replanning gate: ProgressService marks the state only. Planning runs
         # on the next SESSION_STARTED or explicit REPLAN_REQUESTED event, keeping
@@ -603,6 +688,7 @@ class DeterministicOrchestrator:
         return OrchestratorResponse(
             event_type=EventType.ANSWER_SUBMITTED,
             learner_id=state.learner_id,
+            teaching_action=next_teaching_action,
             grading_result=grading_result,
             plan_update=plan_update,
             daily_plan=state.active_plan,

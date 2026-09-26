@@ -132,13 +132,14 @@ def test_help_replacement_explicitly_excludes_current_exercise(
         history_summary="Explained the concept with a contrasting example.",
     )
 
-    replaced = TeachingWorker._attach_curriculum_exercise(
-        action,
+    selected = TeachingWorker._select_candidate_exercise(
+        action.concept_id,
         content_service,
         state=LearnerState(),
         is_remedial=True,
         excluded_exercise_id="hsk1_c01_e01",
     )
+    replaced = TeachingWorker._attach_selected_exercise(action, selected)
 
     assert replaced.exercise_payload is not None
     assert replaced.exercise_payload["exercise_id"] != "hsk1_c01_e01"

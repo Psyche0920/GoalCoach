@@ -20,9 +20,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
+from goalcoach.agents.session_planner import SessionPlanner
 from goalcoach.application.agent_history import format_agent_history
 from goalcoach.domain.enums import TeachingActionKind
-from goalcoach.domain.models import LearnerState, TeachingAction
+from goalcoach.domain.models import LearnerState, SessionTree, TeachingAction
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     LLMUnavailableError,
     get_openrouter_model,
@@ -154,8 +155,26 @@ def get_concept_details(ctx: RunContext[TeachingDeps], concept_id: str) -> dict[
 class TeachingWorker:
     """Wrapper class managing the execution, fallback, and exercise attachment for teaching."""
 
-    def __init__(self, agent: Agent = teaching_agent) -> None:
+    def __init__(
+        self,
+        agent: Agent = teaching_agent,
+        session_planner: SessionPlanner | None = None,
+    ) -> None:
         self.agent = agent
+        self.session_planner = session_planner or SessionPlanner()
+
+    async def plan_session_tree(
+        self,
+        concept_id: str,
+        content_service: ContentService,
+        state: LearnerState | None = None,
+    ) -> SessionTree:
+        """Plan an adaptive exercise tree diagram for the session."""
+        return await self.session_planner.plan_session_tree(
+            concept_id=concept_id,
+            content_service=content_service,
+            state=state,
+        )
 
     async def teach_concept(
         self,
@@ -165,15 +184,22 @@ class TeachingWorker:
         failed_attempts: int = 0,
         learner_query: str | None = None,
         excluded_exercise_id: str | None = None,
+        target_exercise_id: str | None = None,
     ) -> TeachingAction:
         """Invokes the Teaching Agent with deterministic heuristic fallback."""
-        candidate_exercise = self._select_candidate_exercise(
-            concept_id,
-            content_service,
-            state=state,
-            is_remedial=(failed_attempts > 0),
-            excluded_exercise_id=excluded_exercise_id,
-        )
+        if target_exercise_id:
+            candidate_exercise = content_service.get_exercise(target_exercise_id)
+        else:
+            candidate_exercise = None
+
+        if candidate_exercise is None:
+            candidate_exercise = self._select_candidate_exercise(
+                concept_id,
+                content_service,
+                state=state,
+                is_remedial=(failed_attempts > 0),
+                excluded_exercise_id=excluded_exercise_id,
+            )
 
         deps = TeachingDeps(
             state=state,
@@ -359,24 +385,6 @@ class TeachingWorker:
         )
         action.exercise_payload = payload
         return action
-
-    @staticmethod
-    def _attach_curriculum_exercise(
-        action: TeachingAction,
-        content_service: ContentService,
-        state: LearnerState | None = None,
-        is_remedial: bool = False,
-        excluded_exercise_id: str | None = None,
-    ) -> TeachingAction:
-        """Backwards compatibility helper."""
-        selected = TeachingWorker._select_candidate_exercise(
-            action.concept_id,
-            content_service,
-            state=state,
-            is_remedial=is_remedial,
-            excluded_exercise_id=excluded_exercise_id,
-        )
-        return TeachingWorker._attach_selected_exercise(action, selected)
 
     @staticmethod
     def _deterministic_fallback(

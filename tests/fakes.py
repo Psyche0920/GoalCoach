@@ -67,12 +67,16 @@ class FakeTeachingWorker:
         failed_attempts: int = 0,
         learner_query: str | None = None,
         excluded_exercise_id: str | None = None,
+        target_exercise_id: str | None = None,
     ) -> TeachingAction:
         exercises = content_service.get_exercises_for_concept(concept_id, limit=10)
-        exercise = next(
-            (item for item in exercises if item.exercise_id != excluded_exercise_id),
-            exercises[0],
-        )
+        if target_exercise_id:
+            exercise = next((e for e in exercises if e.exercise_id == target_exercise_id), exercises[0])
+        else:
+            exercise = next(
+                (item for item in exercises if item.exercise_id != excluded_exercise_id),
+                exercises[0],
+            )
         action_kind = (
             TeachingActionKind.EXPLANATION
             if failed_attempts == 0

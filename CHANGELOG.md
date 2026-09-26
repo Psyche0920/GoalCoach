@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.5] - 2026-09-26
+
+### Added
+- **Adaptive Session Planner & Exercise Flow Tree Diagram**:
+  - Implemented `SessionPlanner` component in `src/goalcoach/agents/session_planner.py` generating structured Pydantic `SessionTree` graphs containing connected `SessionTreeNode` entries.
+  - Implemented strict database grounding: candidate exercises are fetched from SQLite Database #1 (`ContentService.get_exercises_for_concept`), preventing hallucinated exercise IDs.
+  - Implemented adaptive branching logic:
+    - **Left Branch (`on_correct`):** Steps up difficulty or transitions from recognition to application/production.
+    - **Right Branch (`on_incorrect`):** Provides scaffolded reinforcement, contrast examples, or simpler exercises.
+  - Implemented `deterministic_build_session_tree` heuristic fallback: builds a 3-tier adaptive diamond tree using exercise difficulty and canonical sequence order when the LLM is offline or times out.
+  - Added domain models `SessionTreeNode` and `SessionTree` to `src/goalcoach/domain/models.py`.
+  - Extended `ActiveLearningSession` in `src/goalcoach/domain/models.py` with `session_tree`, `current_node_id`, and `completed_node_ids`.
+  - Integrated `session_planner` and `target_exercise_id` into `TeachingWorker` (`src/goalcoach/agents/teaching_agent.py`).
+  - Integrated adaptive tree lifecycle into `DeterministicOrchestrator` (`src/goalcoach/application/orchestrator.py`):
+    - `_handle_session_started`: Plans or resumes concept session trees and serves the root exercise.
+    - `_handle_answer_submitted`: Evaluates rubric gates, traverses left or right according to pass/fail outcome, pre-generates the next turn's `TeachingAction`, and completes the plan item upon reaching terminal nodes.
+  - Added real-time adaptive exercise path indicator and branching badges (`⚡ Advanced (Left)` / `🌱 Remedial / Scaffolded (Right)`) to `TeachingAgentModal.tsx` (`apps/web/src/components/TeachingAgentModal.tsx`).
+  - Added unit and integration test suite `tests/unit/test_session_planner.py` verifying tree generation, database exercise grounding, and bidirectional graph traversal.
+
+### Removed & Refactored
+- **Legacy Attachment Helper Cleanup**:
+  - Removed deprecated static method `TeachingWorker._attach_curriculum_exercise` in `src/goalcoach/agents/teaching_agent.py`.
+  - Refactored `test_help_replacement_explicitly_excludes_current_exercise` in `tests/integration/test_remediation_loop.py` to use canonical `_select_candidate_exercise` and `_attach_selected_exercise`.
+
+---
+
 ## [0.1.4] - 2026-09-25
 
 ### Added

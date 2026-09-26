@@ -315,6 +315,32 @@ class GradingResult(DomainBaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+# --- 4b. Adaptive Session Planning Tree ---
+
+
+class SessionTreeNode(DomainBaseModel):
+    """A node in the adaptive session exercise flow tree diagram."""
+
+    node_id: str = Field(min_length=1, max_length=64)
+    exercise_id: str = Field(min_length=1, max_length=128)
+    exercise_type: str = Field(default="meaning_mcq")
+    difficulty: int = Field(default=1, ge=1, le=5)
+    pedagogical_purpose: str = Field(default="")
+    on_correct: str | None = Field(default=None)  # Left branch: next node_id or None for completion
+    on_incorrect: str | None = Field(default=None)  # Right branch: next node_id or None for remediation
+    is_terminal: bool = False
+
+
+class SessionTree(DomainBaseModel):
+    """An adaptive tree diagram of connected exercises planned for a concept session."""
+
+    concept_id: str = Field(min_length=1, max_length=128)
+    root_node_id: str = Field(min_length=1, max_length=64)
+    nodes: dict[str, SessionTreeNode] = Field(default_factory=dict)
+    rationale: str = Field(default="")
+    max_depth: int = Field(default=3, ge=1, le=10)
+
+
 # --- 5. Session & State Aggregate ---
 
 
@@ -336,6 +362,9 @@ class ActiveLearningSession(DomainBaseModel):
     current_entry_source: StudyEntrySource = StudyEntrySource.PLANNED
     pending_concept_id: str | None = Field(default=None, max_length=128)
     pending_exercise_id: str | None = Field(default=None, max_length=128)
+    session_tree: SessionTree | None = None
+    current_node_id: str | None = None
+    completed_node_ids: list[str] = Field(default_factory=list)
 
 
 class SessionSummary(DomainBaseModel):
