@@ -29,7 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        session_factory = create_session_factory(resolved_settings.resolved_database_url)
+        session_factory = create_session_factory(resolved_settings.database_url)
         content_session_factory = create_session_factory(resolved_settings.content_database_url)
         try:
             create_learner_schema(session_factory)
