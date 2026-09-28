@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,7 +30,25 @@ class ContentService:
 
     def get_concept(self, concept_id: str) -> CurriculumConcept | None:
         """Fetch a single curriculum concept by ID, slug, or title."""
-        return self._repo.get_concept(concept_id)
+        start = perf_counter()
+        concept = self._repo.get_concept(concept_id)
+        duration_ms = (perf_counter() - start) * 1000
+        logger.debug(
+            "Content query get_concept(%s) -> %s (%.2fms)",
+            concept_id,
+            "found" if concept else "not_found",
+            duration_ms,
+            extra={
+                "extra": {
+                    "event": "content_query",
+                    "method": "get_concept",
+                    "concept_id": concept_id,
+                    "found": concept is not None,
+                    "duration_ms": round(duration_ms, 3),
+                }
+            },
+        )
+        return concept
 
     def list_all_concepts(
         self,
@@ -54,8 +73,26 @@ class ContentService:
 
     def get_prerequisites(self, concept_id: str) -> list[str]:
         """Fetch all direct prerequisite concept IDs for a target concept."""
+        start = perf_counter()
         all_prereqs = self._repo.get_prerequisites()
-        return sorted(all_prereqs.get(concept_id, frozenset()))
+        prereqs = sorted(all_prereqs.get(concept_id, frozenset()))
+        duration_ms = (perf_counter() - start) * 1000
+        logger.debug(
+            "Content query get_prerequisites(%s) -> %d items (%.2fms)",
+            concept_id,
+            len(prereqs),
+            duration_ms,
+            extra={
+                "extra": {
+                    "event": "content_query",
+                    "method": "get_prerequisites",
+                    "concept_id": concept_id,
+                    "count": len(prereqs),
+                    "duration_ms": round(duration_ms, 3),
+                }
+            },
+        )
+        return prereqs
 
     def get_all_prerequisites(self) -> Mapping[str, frozenset[str]]:
         """Return the complete prerequisite dependency graph."""
@@ -63,12 +100,43 @@ class ContentService:
 
     def get_exercise(self, exercise_id: str) -> ContentExercise | None:
         """Lookup an exercise by its unique content ID or synthesize if auto matching."""
+        start = perf_counter()
         repo_ex = self._repo.get_exercise(exercise_id)
         if repo_ex is not None:
+            duration_ms = (perf_counter() - start) * 1000
+            logger.debug(
+                "Content query get_exercise(%s) -> found (%.2fms)",
+                exercise_id,
+                duration_ms,
+                extra={
+                    "extra": {
+                        "event": "content_query",
+                        "method": "get_exercise",
+                        "exercise_id": exercise_id,
+                        "found": True,
+                        "duration_ms": round(duration_ms, 3),
+                    }
+                },
+            )
             return repo_ex
         if exercise_id.endswith("_match_auto"):
             concept_id = exercise_id[:-11]
             return self.synthesize_matching_exercise(concept_id)
+        duration_ms = (perf_counter() - start) * 1000
+        logger.debug(
+            "Content query get_exercise(%s) -> not_found (%.2fms)",
+            exercise_id,
+            duration_ms,
+            extra={
+                "extra": {
+                    "event": "content_query",
+                    "method": "get_exercise",
+                    "exercise_id": exercise_id,
+                    "found": False,
+                    "duration_ms": round(duration_ms, 3),
+                }
+            },
+        )
         return None
 
     def get_exercises_for_concept(

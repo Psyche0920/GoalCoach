@@ -145,6 +145,22 @@ async def run_with_fallback(
     started_at = perf_counter()
     primary_retries = _TransientRetry(settings.llm_max_retries)
 
+    logger.debug(
+        "Invoking model inference: component=%s provider=openrouter model=%s prompt_len=%d",
+        component,
+        primary_model.model_name,
+        len(prompt),
+        extra={
+            "extra": {
+                "event": "llm_inference_started",
+                "component": component,
+                "gen_ai.system": "openrouter",
+                "gen_ai.request.model": primary_model.model_name,
+                "prompt_length": len(prompt),
+            }
+        },
+    )
+
     try:
         while True:
             try:
@@ -214,6 +230,15 @@ async def run_with_fallback(
             "Primary model %s failure (%s); trying configured Ollama fallback.",
             failure_kind,
             err,
+            extra={
+                "extra": {
+                    "event": "llm_fallback_engaged",
+                    "primary_provider": "openrouter",
+                    "primary_model": primary_model.model_name,
+                    "failure_kind": failure_kind,
+                    "fallback_provider": "ollama",
+                }
+            },
         )
         fallback_model = get_ollama_fallback_model()
         fallback_started_at = perf_counter()

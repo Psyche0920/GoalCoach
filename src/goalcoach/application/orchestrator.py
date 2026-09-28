@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
+from time import perf_counter
 from typing import Any, Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pydantic import Field
+
+from goalcoach.infrastructure.logging.context import bind_context, reset_context
+
+logger = logging.getLogger("goalcoach.application.orchestrator")
 
 from goalcoach.application.agent_history import (
     SessionLifecycleError,
@@ -143,13 +149,52 @@ class DeterministicOrchestrator:
         if isinstance(event_type, str):
             event_type = EventType(event_type)
 
+        concept_id = payload.get("concept_id")
+        tokens = bind_context(
+            learner_id=str(learner_id),
+            concept_id=str(concept_id) if concept_id else None,
+        )
+        route_start = perf_counter()
+
         inbound = InboundEvent(
             event_type=event_type,
             learner_id=learner_id,
             payload=payload,
             timestamp=utc_now(),
         )
-        return await self.dispatch(inbound)
+
+        try:
+            logger.info(
+                "Event %s received for learner %s",
+                event_type.value,
+                str(learner_id),
+                extra={
+                    "extra": {
+                        "event_type": event_type.value,
+                        "payload_keys": sorted(payload.keys()),
+                    }
+                },
+            )
+            response = await self.dispatch(inbound)
+            routing_latency_us = int((perf_counter() - route_start) * 1_000_000)
+            logger.info(
+                "Event %s resolved -> next_action: %s (replanned=%s, %dus)",
+                response.event_type.value,
+                response.next_action,
+                response.replanned,
+                routing_latency_us,
+                extra={
+                    "extra": {
+                        "event_type": response.event_type.value,
+                        "next_action": response.next_action,
+                        "replanned": response.replanned,
+                        "routing_latency_us": routing_latency_us,
+                    }
+                },
+            )
+            return response
+        finally:
+            reset_context(tokens)
 
     async def dispatch(self, event: InboundEvent) -> OrchestratorResponse:
         """Dispatch event according to its type."""

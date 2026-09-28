@@ -332,6 +332,8 @@ def run_cli() -> None:
     """CLI entrypoint for GoalCoach interactive terminal harness."""
     import argparse
 
+    from goalcoach.infrastructure.logging import configure_logging
+
     parser = argparse.ArgumentParser(description="GoalCoach Interactive Terminal Study Harness")
     parser.add_argument(
         "-l",
@@ -341,7 +343,16 @@ def run_cli() -> None:
         default=None,
         help="Target HSK level (1 to 6)",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Display live development log stream in console",
+    )
     args, _ = parser.parse_known_args()
+
+    configure_logging(log_to_file=True, log_to_stream=args.verbose)
 
     target_level = args.level
     if target_level is None:
