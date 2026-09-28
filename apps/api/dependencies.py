@@ -44,7 +44,7 @@ def get_learner_repo(request: Request) -> SqliteLearnerRepository:
     )
 
     settings = Settings()
-    factory = create_session_factory(settings.database_url)
+    factory = create_session_factory(settings.resolved_database_url)
     create_learner_schema(factory)
     return SqliteLearnerRepository(factory)
 

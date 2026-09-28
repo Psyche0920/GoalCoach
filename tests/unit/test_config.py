@@ -25,3 +25,12 @@ def test_planning_item_minutes_loads_from_environment(monkeypatch: pytest.Monkey
 def test_planning_item_minutes_rejects_invalid_values(invalid_minutes: int) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, planning_item_minutes=invalid_minutes)
+
+
+def test_supabase_password_builds_postgres_url_with_escaped_credentials() -> None:
+    settings = Settings(_env_file=None, supabase_db_password="secret/p@ss")
+
+    assert settings.resolved_database_url == (
+        "postgresql+psycopg://postgres:secret%2Fp%40ss@"
+        "db.yiklbqnojmijxtvlryqr.supabase.co:5432/postgres?sslmode=require"
+    )

@@ -193,6 +193,13 @@ GOALCOACH_CONTENT_DATABASE_URL=sqlite:///./data/database1/goalcoach_hsk1_learnin
 # Keep prerequisite data/query interfaces available, but do not gate planning unless enabled.
 GOALCOACH_ENABLE_PREREQUISITES=false
 
+# Supabase learner persistence (optional; leave DATABASE_URL as SQLite when developing offline)
+GOALCOACH_SUPABASE_URL=https://yiklbqnojmijxtvlryqr.supabase.co
+GOALCOACH_SUPABASE_DB_PASSWORD=your-database-password
+GOALCOACH_SUPABASE_DB_USER=postgres.yiklbqnojmijxtvlryqr
+GOALCOACH_SUPABASE_DB_HOST=aws-0-eu-west-2.pooler.supabase.com
+GOALCOACH_SUPABASE_DB_PORT=6543
+
 # Hosted Model (Primary)
 GOALCOACH_LLM_BASE_URL=https://openrouter.ai/api/v1
 GOALCOACH_LLM_API_KEY=your-api-key-here
@@ -203,6 +210,12 @@ GOALCOACH_ENABLE_OLLAMA_FALLBACK=false
 GOALCOACH_FALLBACK_LLM_BASE_URL=http://localhost:11434/v1
 GOALCOACH_FALLBACK_LLM_MODEL=hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M
 ```
+
+When `GOALCOACH_SUPABASE_DB_PASSWORD` is set and `GOALCOACH_DATABASE_URL` retains its SQLite
+default, the API connects learner state to the project's Postgres pooler. Apply the learner
+schema once in the Supabase SQL Editor using
+[`supabase/migrations/20260928000000_create_learner_persistence.sql`](supabase/migrations/20260928000000_create_learner_persistence.sql).
+The bundled curriculum remains local SQLite content and is not uploaded to Supabase.
 
 ---
 
