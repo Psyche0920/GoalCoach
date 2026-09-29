@@ -62,12 +62,15 @@ export function App() {
     return fallback;
   };
 
+  const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+  const apiUrl = (path: string): string => `${API_BASE}${path}`;
+
   const dispatchLearningEvent = async (
     eventType: LearningLoopResponse['eventType'],
     payload: Record<string, unknown>,
     attempt = 0,
   ): Promise<LearningLoopResponse> => {
-    const response = await fetch('/api/v1/events', {
+    const response = await fetch(apiUrl('/api/v1/events'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ event_type: eventType, learner_id: learnerId, payload }),
@@ -89,7 +92,7 @@ export function App() {
   };
 
   const refreshAuthoritativeState = async (): Promise<void> => {
-    const response = await fetch(`/api/v1/learners/${learnerId}`);
+    const response = await fetch(apiUrl(`/api/v1/learners/${learnerId}`));
     if (!response.ok) return;
     const body = await response.json() as {
       state?: LearnerState;
@@ -101,7 +104,7 @@ export function App() {
 
   const refreshRoadmap = async (): Promise<void> => {
     const requestId = ++roadmapRequestId.current;
-    const learnerResponse = await fetch(`/api/v1/learners/${learnerId}`);
+    const learnerResponse = await fetch(apiUrl(`/api/v1/learners/${learnerId}`));
     if (!learnerResponse.ok) {
       throw new Error(await parseApiError(learnerResponse, 'The roadmap could not be loaded.'));
     }
@@ -112,7 +115,7 @@ export function App() {
     if (!learnerBody.state) {
       throw new Error('The roadmap could not be loaded.');
     }
-    const response = await fetch(`/api/v1/learners/${learnerId}/roadmap`);
+    const response = await fetch(apiUrl(`/api/v1/learners/${learnerId}/roadmap`));
     if (!response.ok) throw new Error(await parseApiError(response, 'The roadmap could not be loaded.'));
     const body = await response.json() as {
       roadmap?: CurriculumConcept[];
@@ -142,7 +145,7 @@ export function App() {
     data: LearningLoopResponse,
   ): Promise<void> => {
     if (!data.state) return;
-    const response = await fetch(`/api/v1/learners/${learnerId}/roadmap`);
+    const response = await fetch(apiUrl(`/api/v1/learners/${learnerId}/roadmap`));
     if (!response.ok) return;
     const body = await response.json() as {
       roadmap?: CurriculumConcept[];
@@ -180,7 +183,7 @@ export function App() {
   useEffect(() => {
     async function init() {
       try {
-        const res = await fetch(`/api/v1/learners/${learnerId}`);
+        const res = await fetch(apiUrl(`/api/v1/learners/${learnerId}`));
         if (res.ok) {
           const data = await res.json();
           setNextAction(data.nextAction);
