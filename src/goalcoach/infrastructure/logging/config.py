@@ -17,7 +17,7 @@ _CONFIGURED = False
 
 def configure_logging(
     settings: Settings | None = None,
-    log_to_file: bool = False,
+    log_to_file: bool | None = None,
     file_path: str | None = None,
     log_to_stream: bool = True,
 ) -> None:
@@ -61,8 +61,9 @@ def configure_logging(
         stream_handler.addFilter(SecretScrubbingFilter())
         handlers.append(stream_handler)
 
-    # Build rotating file handler if requested
-    if log_to_file:
+    # Build rotating file handler if requested (defaults to resolved_settings.log_to_file)
+    should_log_to_file = log_to_file if log_to_file is not None else resolved_settings.log_to_file
+    if should_log_to_file:
         target_path = Path(file_path or resolved_settings.log_file_path)
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
