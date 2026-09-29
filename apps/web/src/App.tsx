@@ -82,8 +82,11 @@ export function App() {
         await refreshAuthoritativeState();
         return dispatchLearningEvent(eventType, payload, attempt + 1);
       }
-      await refreshAuthoritativeState();
-      throw new Error(`${detail} The latest state has been reloaded; try again.`);
+      if (detail === staleStateDetail) {
+        await refreshAuthoritativeState();
+        throw new Error(`${detail} The latest state has been reloaded; try again.`);
+      }
+      throw new Error(detail);
     }
     if (!response.ok) {
       throw new Error(await parseApiError(response, 'GoalCoach could not complete this request.'));
