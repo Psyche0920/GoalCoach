@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
@@ -188,6 +189,7 @@ class GraderComponent:
         """Evaluates submission against exercise rubrics with fast-path short-circuiting."""
         clean_student_ans = answer.strip()
         exercise_id = exercise.id or uuid4()
+        start_time = perf_counter()
 
         # Check for matching exercise evaluation (deterministic <1ms fast path)
         if getattr(exercise, "exercise_type", "") == "matching" or (
@@ -195,7 +197,24 @@ class GraderComponent:
             and "left" in exercise.options
             and "right" in exercise.options
         ):
-            return self._grade_matching_exercise(exercise, clean_student_ans, exercise_id)
+            res = self._grade_matching_exercise(exercise, clean_student_ans, exercise_id)
+            duration_ms = (perf_counter() - start_time) * 1000
+            logger.info(
+                "Grader resolved via %s for exercise %s (%.2fms)",
+                res.grader_version,
+                str(exercise_id),
+                duration_ms,
+                extra={
+                    "extra": {
+                        "eval_path": "fast_path",
+                        "exercise_id": str(exercise_id),
+                        "passed_gates": res.passed_gates,
+                        "latency_ms": round(duration_ms, 3),
+                        "grader_version": res.grader_version,
+                    }
+                },
+            )
+            return res
 
         # 1. Fast Path: Exact reference answer match (bypasses LLM, <5ms)
         accepted = [ans.strip() for ans in exercise.reference_answers if ans]
@@ -213,6 +232,21 @@ class GraderComponent:
                     resolved_answer = exercise.options[idx].strip()
 
         if clean_student_ans in accepted or resolved_answer in accepted:
+            duration_ms = (perf_counter() - start_time) * 1000
+            logger.info(
+                "Grader resolved via deterministic-fast-path for exercise %s (%.2fms)",
+                str(exercise_id),
+                duration_ms,
+                extra={
+                    "extra": {
+                        "eval_path": "fast_path",
+                        "exercise_id": str(exercise_id),
+                        "passed_gates": True,
+                        "latency_ms": round(duration_ms, 3),
+                        "grader_version": "deterministic-fast-path",
+                    }
+                },
+            )
             return GradingResult(
                 exercise_id=exercise_id,
                 scores=RubricScores(
@@ -280,6 +314,29 @@ class GraderComponent:
             ):
                 llm_result.passed_gates = False
 
+            duration_ms = (perf_counter() - start_time) * 1000
+            logger.info(
+                "Grader evaluated via LLM rubric for exercise %s (passed=%s, %.2fms)",
+                str(exercise_id),
+                llm_result.passed_gates,
+                duration_ms,
+                extra={
+                    "extra": {
+                        "eval_path": "llm_rubric",
+                        "exercise_id": str(exercise_id),
+                        "provider": provider,
+                        "passed_gates": llm_result.passed_gates,
+                        "rubric_scores": {
+                            "grammatical_correctness": llm_result.scores.grammatical_correctness,
+                            "semantic_precision": llm_result.scores.semantic_precision,
+                            "pragmatic_appropriateness": llm_result.scores.pragmatic_appropriateness,
+                        },
+                        "detected_errors": llm_result.detected_errors,
+                        "confidence": llm_result.confidence,
+                        "latency_ms": round(duration_ms, 2),
+                    }
+                },
+            )
             return llm_result
         except LLMUnavailableError as exc:
             return self._deterministic_fallback(

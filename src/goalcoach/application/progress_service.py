@@ -60,6 +60,10 @@ class ProgressService:
 
         # 1. Retrieve or initialize ConceptMastery
         mastery = state.mastery.get(concept_id)
+        prior_mastery = mastery.mastery_score if mastery is not None else 0.0
+        prior_retention = mastery.retention_score if mastery is not None else 1.0
+        prior_interval = mastery.interval_days if mastery is not None else 1.0
+
         if mastery is None:
             mastery = ConceptMastery(
                 concept_id=concept_id,
@@ -149,11 +153,18 @@ class ProgressService:
                 state.remediation_counters[concept_id] = current_counter
                 if current_counter >= 2:
                     state.needs_replanning = True
-                    logger.info(
-                        "Remediation threshold reached for concept %s (counter: %d); "
-                        "set needs_replanning=True",
+                    logger.warning(
+                        "Remediation threshold exceeded for concept %s (counter: %d); set needs_replanning=True",
                         concept_id,
                         current_counter,
+                        extra={
+                            "extra": {
+                                "event": "remediation_threshold_exceeded",
+                                "concept_id": concept_id,
+                                "counter": current_counter,
+                                "reason": "repeated errors triggered replan",
+                            }
+                        },
                     )
 
         mastery.last_reviewed_at = now
@@ -165,6 +176,38 @@ class ProgressService:
             concept_id=concept_id,
             at=now,
             time_spent_seconds=time_spent_seconds,
+        )
+
+        scores = result.scores
+        quality = (
+            scores.grammatical_correctness
+            + scores.semantic_precision
+            + scores.pragmatic_appropriateness
+        ) / 3.0
+
+        logger.info(
+            "Progress state mutated for concept %s (mastery: %.2f -> %.2f, R: %.2f, S: %.1fd)",
+            concept_id,
+            prior_mastery,
+            mastery.mastery_score,
+            mastery.retention_score,
+            mastery.interval_days,
+            extra={
+                "extra": {
+                    "event": "progress_state_mutated",
+                    "concept_id": concept_id,
+                    "prior_mastery": round(prior_mastery, 4),
+                    "new_mastery": round(mastery.mastery_score, 4),
+                    "prior_retention": round(prior_retention, 4),
+                    "retention_r": round(mastery.retention_score, 4),
+                    "prior_interval_days": round(prior_interval, 2),
+                    "stability_s": round(mastery.interval_days, 2),
+                    "quality": round(quality, 4),
+                    "passed_gates": result.passed_gates,
+                    "next_review_days": round(mastery.interval_days, 2),
+                    "needs_replanning_toggled": state.needs_replanning,
+                }
+            },
         )
 
         if concept_id not in state.today_studied_concept_ids:

@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
-from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass
 from typing import Any
-from uuid import uuid4
+
+from goalcoach.infrastructure.logging.context import (
+    bind_request_id,
+    current_request_id,
+    reset_request_id,
+)
 
 logger = logging.getLogger("goalcoach.agent_telemetry")
-
-_request_id: ContextVar[str | None] = ContextVar("goalcoach_request_id", default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,21 +32,6 @@ class AgentTelemetryEvent:
     validation_succeeded: bool
     fallback_used: bool
     failure_kind: str | None = None
-
-
-def bind_request_id(request_id: str) -> Token[str | None]:
-    """Bind an API correlation ID to the current asynchronous request context."""
-    return _request_id.set(request_id)
-
-
-def reset_request_id(token: Token[str | None]) -> None:
-    """Restore the previous correlation context."""
-    _request_id.reset(token)
-
-
-def current_request_id() -> str:
-    """Return the API request ID, or a local execution ID outside HTTP requests."""
-    return _request_id.get() or str(uuid4())
 
 
 def token_usage(result: Any) -> tuple[int | None, int | None]:
