@@ -25,6 +25,7 @@ from goalcoach.domain.models import (
     GradingResult,
     RubricScores,
 )
+from goalcoach.infrastructure.llm.json_sanitizer import extract_and_sanitize_json
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     LLMUnavailableError,
     get_openrouter_model,
@@ -58,12 +59,32 @@ If there is a mistake, tag specific codes in `detected_errors`, such as:
 - `ERR_ASPECT_LE`: Incorrect completed action aspect marker 了.
 - `ERR_VOCABULARY`: Incorrect vocabulary selection.
 
-Provide encouraging, targeted, and factual English feedback addressing the learner's mistake.
+Provide encouraging, targeted, and factual feedback addressing the learner's mistake.
+
+Language Requirements (STRICT):
+- Instructional Medium: English ONLY unless the learners ask you to teach in other languages.
+
+Output Format:
+You MUST respond with a single valid JSON object adhering strictly to this schema:
+{
+  "exercise_id": "<exercise_id_string>",
+  "scores": {
+    "grammatical_correctness": <float between 0.0 and 1.0>,
+    "semantic_precision": <float between 0.0 and 1.0>,
+    "pragmatic_appropriateness": <float between 0.0 and 1.0>
+  },
+  "passed_gates": <true or false>,
+  "confidence": <float between 0.0 and 1.0>,
+  "feedback": "<concise helpful feedback in English>",
+  "detected_errors": ["<error_tag>", ...],
+  "evidence": "<brief explanation or null>"
+}
+Do not include any conversational filler outside the JSON object.
 """
 
 grader_agent = Agent(
     model=get_openrouter_model(),
-    output_type=GradingResult,
+    output_type=str,
     output_retries=get_output_retries(),
     system_prompt=GRADER_SYSTEM_PROMPT,
 )
@@ -272,81 +293,110 @@ class GraderComponent:
             "Grade this response adhering strictly to the rubric and gating rules."
         )
 
-        try:
-            result, provider = await run_with_fallback(
-                self.agent,
-                prompt,
-                deps=None,
-                component="grader_component",
-            )
-            llm_result: GradingResult = result.output
-            llm_result.exercise_id = exercise_id
-            llm_result.metadata.update(
-                {
-                    "provider": provider,
-                    "fallback_used": provider.startswith("ollama:"),
-                    "notice": (
-                        "The primary model was unavailable; the configured fallback model was used."
-                        if provider.startswith("ollama:")
-                        else None
-                    ),
-                }
-            )
+        max_validation_retries = get_output_retries()
+        current_prompt = prompt
+        llm_result: GradingResult | None = None
+        last_error: Exception | None = None
+        provider = "unknown"
 
-            # Deterministic gating guardrails:
-            # If critical errors are detected, passed_gates must be False
-            critical_prefixes = (
-                "ERR_QUESTION_MA",
-                "ERR_WORD_ORDER",
-                "ERR_MODAL_HUI",
-                "ERR_SEMANTIC",
-                "ERR_VOCABULARY",
-                "ERR_PRAGMATIC",
-                "ERR_GRAMMAR",
-            )
-            has_critical_error = any(
-                any(crit in err.upper() for crit in critical_prefixes)
-                for err in llm_result.detected_errors
-            )
-            if has_critical_error or (
-                llm_result.scores.grammatical_correctness < 0.70
-                or llm_result.scores.semantic_precision < 0.70
-            ):
-                llm_result.passed_gates = False
+        for attempt in range(max_validation_retries + 1):
+            try:
+                result, provider = await run_with_fallback(
+                    self.agent,
+                    current_prompt,
+                    deps=None,
+                    component="grader_component",
+                )
+                if isinstance(result.output, GradingResult):
+                    llm_result = result.output
+                else:
+                    data = extract_and_sanitize_json(str(result.output))
+                    data.setdefault("exercise_id", exercise_id)
+                    llm_result = GradingResult.model_validate(data)
+                break
+            except LLMUnavailableError as exc:
+                return self._deterministic_fallback(
+                    exercise_id,
+                    notice=f"LLM unavailable; conservative deterministic grading fallback used: {exc}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                logger.warning(
+                    "Grader output validation attempt %d/%d failed (%s); retrying...",
+                    attempt + 1,
+                    max_validation_retries + 1,
+                    exc,
+                )
+                current_prompt = (
+                    f"{prompt}\n\n"
+                    f"CRITICAL: Your previous response was invalid: {exc}. "
+                    "You must output ONLY a valid JSON object matching the requested schema."
+                )
 
-            duration_ms = (perf_counter() - start_time) * 1000
-            logger.info(
-                "Grader evaluated via LLM rubric for exercise %s (passed=%s, %.2fms)",
-                str(exercise_id),
-                llm_result.passed_gates,
-                duration_ms,
-                extra={
-                    "extra": {
-                        "eval_path": "llm_rubric",
-                        "exercise_id": str(exercise_id),
-                        "provider": provider,
-                        "passed_gates": llm_result.passed_gates,
-                        "rubric_scores": {
-                            "grammatical_correctness": llm_result.scores.grammatical_correctness,
-                            "semantic_precision": llm_result.scores.semantic_precision,
-                            "pragmatic_appropriateness": llm_result.scores.pragmatic_appropriateness,
-                        },
-                        "detected_errors": llm_result.detected_errors,
-                        "confidence": llm_result.confidence,
-                        "latency_ms": round(duration_ms, 2),
-                    }
-                },
-            )
-            return llm_result
-        except LLMUnavailableError as exc:
+        if llm_result is None:
             return self._deterministic_fallback(
                 exercise_id,
-                notice=f"LLM unavailable; conservative deterministic grading fallback used: {exc}",
+                notice=f"Grader returned an invalid rubric result; deterministic fallback used: {last_error}",
             )
-        return self._deterministic_fallback(
-            exercise_id,
-            notice="Grader returned an invalid rubric result; deterministic fallback used.",
+
+        llm_result.exercise_id = exercise_id
+        llm_result.metadata.update(
+            {
+                "provider": provider,
+                "fallback_used": provider.startswith("ollama:"),
+                "notice": (
+                    "The primary model was unavailable; the configured fallback model was used."
+                    if provider.startswith("ollama:")
+                    else None
+                ),
+            }
         )
+
+        # Deterministic gating guardrails:
+        # If critical errors are detected, passed_gates must be False
+        critical_prefixes = (
+            "ERR_QUESTION_MA",
+            "ERR_WORD_ORDER",
+            "ERR_MODAL_HUI",
+            "ERR_SEMANTIC",
+            "ERR_VOCABULARY",
+            "ERR_PRAGMATIC",
+            "ERR_GRAMMAR",
+        )
+        has_critical_error = any(
+            any(crit in err.upper() for crit in critical_prefixes)
+            for err in llm_result.detected_errors
+        )
+        if has_critical_error or (
+            llm_result.scores.grammatical_correctness < 0.70
+            or llm_result.scores.semantic_precision < 0.70
+        ):
+            llm_result.passed_gates = False
+
+        duration_ms = (perf_counter() - start_time) * 1000
+        logger.info(
+            "Grader evaluated via LLM rubric for exercise %s (passed=%s, %.2fms)",
+            str(exercise_id),
+            llm_result.passed_gates,
+            duration_ms,
+            extra={
+                "extra": {
+                    "eval_path": "llm_rubric",
+                    "exercise_id": str(exercise_id),
+                    "provider": provider,
+                    "passed_gates": llm_result.passed_gates,
+                    "rubric_scores": {
+                        "grammatical_correctness": llm_result.scores.grammatical_correctness,
+                        "semantic_precision": llm_result.scores.semantic_precision,
+                        "pragmatic_appropriateness": llm_result.scores.pragmatic_appropriateness,
+                    },
+                    "detected_errors": llm_result.detected_errors,
+                    "confidence": llm_result.confidence,
+                    "latency_ms": round(duration_ms, 2),
+                }
+            },
+        )
+        return llm_result
 
     @staticmethod
     def _deterministic_fallback(exercise_id: object, *, notice: str) -> GradingResult:

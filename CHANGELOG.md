@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.5] - 2026-09-30
+
+### Added
+- **Heterogeneous LLM JSON Output Extractor & Sanitizer**:
+  - Implemented `extract_and_sanitize_json` in `src/goalcoach/infrastructure/llm/json_sanitizer.py` to extract, unescape, and recursively unwrap JSON outputs across diverse LLMs and inference providers (handling markdown fences, conversational preambles/suffixes, escaped quotes, and stringified nested structures).
+  - Added unit test suite `tests/unit/test_json_sanitizer.py` covering clean JSON, code blocks, conversational prefixes/suffixes, escaped quotes, nested stringified fields, and double-encoded payloads.
+
+### Changed
+- **Adaptive Freeform Grader Execution Flow**:
+  - Configured `grader_agent` in `src/goalcoach/agents/grader_component.py` with `output_type=str` and enhanced `GRADER_SYSTEM_PROMPT` to strictly output a clean JSON object conforming to the grading schema.
+  - Replaced rigid Pydantic tool-call validation in `GraderComponent.grade` with a bounded retry loop that sanitizes model text via `extract_and_sanitize_json` before validating into `GradingResult`, preventing premature fallbacks on open-source models (e.g. `qwen/qwen3.5-9b`).
+
+### Removed
+- **Unreachable and Legacy Code Cleanup**:
+  - Removed unreachable dead code at lines 346–349 of `src/goalcoach/agents/grader_component.py`.
+  - Removed deprecated `TeachingWorker._attach_curriculum_exercise` in `src/goalcoach/agents/teaching_agent.py` and updated `tests/integration/test_remediation_loop.py` to use active candidate selection and exercise attachment methods.
+  - Removed non-existent `audio_url` attribute access from `get_concept_teaching_cards` in `src/goalcoach/agents/teaching_agent.py`.
+
+---
+
 ## [0.1.4] - 2026-09-25
 
 ### Added
