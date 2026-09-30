@@ -428,6 +428,7 @@ export interface LearnerState {
   sessions: SessionSummary[];
   todayMistakeExerciseIds?: string[];
   todayStudiedConceptIds?: string[];
+  needsReplanning?: boolean;
   updatedAt: string;
   stateVersion?: number;
   conceptProgress?: Record<string, ConceptProgress>;

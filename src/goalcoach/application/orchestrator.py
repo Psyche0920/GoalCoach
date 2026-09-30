@@ -398,11 +398,7 @@ class DeterministicOrchestrator:
                 active_item = first_uncompleted
             if active_item is None:
                 raise SessionLifecycleError("Today's planned learning is complete")
-            progress_eligible = (
-                not active_item.completed
-                and first_uncompleted is not None
-                and str(active_item.id) == str(first_uncompleted.id)
-            )
+            progress_eligible = not active_item.completed
             concept_id = active_item.concept_id
         else:
             if not requested_concept_id:
