@@ -35,5 +35,5 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "auto"
     log_to_file: bool = True
-    log_file_path: str = "./logs/goalcoach.log"
+    log_file_path: str = "./logs/goalcoach.jsonl"
     log_slow_query_threshold_ms: float = 25.0

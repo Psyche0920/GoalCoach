@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.5] - 2026-09-30
+
+### Added
+- **3-Tier Hybrid Autonomous Testing Architecture**:
+  - Implemented end-to-end testing suite combining in-process ASGI swarm fuzzing, deterministic Playwright browser automation, autonomous AI exploratory evaluation, and embedded DuckDB telemetry triaging (`docs/dev/testing_agent_plan.md`).
+- **Tier 1: In-Process Synthetic Learner Swarm (`tests/harness/`)**:
+  - Added [`SyntheticLearner`](tests/harness/synthetic_learner.py) async ASGI test client executing 10–100 turns/second directly against `apps.api.main:create_app` without TCP socket overhead.
+  - Implemented 4 autonomous personas in `tests/harness/test_synthetic_swarm.py`:
+    - **Novice Persona**: Linear concept progression, fast-path evaluation validation (<10ms).
+    - **Struggling Persona**: Deliberate mistake injection, DSR stability decay, and automated replanning triggers.
+    - **Time-Warp Persona**: Simulated multi-day timestamp jumps ($\Delta t = 1, 7, 30\text{ days}$) testing spaced repetition retrievability decay.
+    - **Adversarial Persona**: Boundary input fuzzing (4,000-char strings, Unicode anomalies) and concurrent multi-persona SQLite WAL write-lock contention.
+- **Tier 2A: Deterministic Playwright Browser Agent (`tests/e2e/`)**:
+  - Created [`TestServerRunner`](tests/harness/server_runner.py) to manage ephemeral Uvicorn and Vite daemons, process groups, and startup health polling with diagnostic log tailing.
+  - Added session and autouse fixtures in `tests/e2e/conftest.py` ensuring zero database pollution (isolated ephemeral SQLite databases per test run), automated default goal seeding, and zero-tolerance browser console error interception (`console.error` and `pageerror`).
+  - Added `tests/e2e/test_ui_smoke.py` validating UI boot, tab navigation (Today, Roadmap, Progress), and `LearnerProfileDrawer` settings persistence.
+  - Added `tests/e2e/test_learning_flow_e2e.py` validating the complete learner loop: building plan, opening `TeachingAgentModal`, selecting exercise options, submitting for evaluation, continuing lessons, and validating `/api/tts` audio generation.
+- **Tier 2B: Autonomous Exploratory AI Browser Evaluator (`scripts/ai_browser_evaluator.py`)**:
+  - Implemented autonomous visual/cognitive QA evaluator using Playwright to inspect DOM accessibility snapshots, capture screenshots in `logs/ai_eval/`, audit UX layout, and output `logs/ai_eval/eval_report.json`.
+- **Tier 3: Embedded DuckDB Telemetry Analysis (`scripts/analyze_telemetry.py`)**:
+  - Implemented serverless log auditing using embedded DuckDB SQL against `logs/goalcoach.jsonl`.
+  - Added anomaly detection flagging fast-path grading misses (`eval_path != 'fast_path'`), slow database queries (`duration_ms > 25.0`), unhandled errors, and generating structured incident reports in `logs/test_incident_report.json`.
+- **Master Test Cycle CLI Orchestrator (`scripts/run_agent_test_cycle.py`)**:
+  - Added unified orchestrator sequentially executing Tier 1 Swarm -> Tier 2 Playwright E2E -> Tier 3 DuckDB Telemetry with exit code 0 gating.
+  - Added `--headed` and `--slowmo` flags (defaults to 800ms in headed mode) for human-speed visible browser testing.
+- **Dev Dependencies**:
+  - Added `duckdb>=1.1.0`, `playwright>=1.49.0`, and `pytest-playwright>=0.5.0` to `pyproject.toml` and `uv.lock`.
+
+### Changed
+- **Frontend Testability & WSL Mount Resilience**:
+  - Added `data-testid` attributes to `DailyPlanView.tsx` (`build-plan-btn`, `lesson-card-btn`) and `TeachingAgentModal.tsx` (`exercise-answer-input`, `exercise-option`, `exercise-check-btn`, `continue-lesson-btn`).
+  - Added `type="text"` to exercise answer input in `TeachingAgentModal.tsx`.
+  - Added `server.watch = { usePolling: true }` in `apps/web/vite.config.ts` to ensure reliable hot-reloading and asset updates across WSL `/mnt/c/` filesystem mounts.
+- **Telemetry Configuration**:
+  - Standardized default telemetry log destination to `./logs/goalcoach.jsonl` in `src/goalcoach/infrastructure/config.py`.
+
+---
+
 ## [0.1.4] - 2026-09-25
 
 ### Added

@@ -152,6 +152,7 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
                         <button
                           key={opt}
                           type="button"
+                          data-testid="exercise-option"
                           disabled={loading || gradingResult !== null}
                           onClick={() => {
                             setAnswer(opt);
@@ -256,6 +257,8 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
 
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <input
+                    type="text"
+                    data-testid="exercise-answer-input"
                     value={answer}
                     onChange={(event) => setAnswer(event.currentTarget.value)}
                     className="min-w-0 flex-1 rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 outline-none focus:border-emerald-500"
@@ -267,7 +270,7 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
                         : "Type your answer…"
                     }
                   />
-                  <button disabled={!answer.trim() || loading || gradingResult !== null} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-emerald-950 shadow-[0_4px_0_#15803d] active:translate-y-0.5 active:shadow-none disabled:opacity-50"><Send className="h-4 w-4" />Check</button>
+                  <button data-testid="exercise-check-btn" disabled={!answer.trim() || loading || gradingResult !== null} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-emerald-950 shadow-[0_4px_0_#15803d] active:translate-y-0.5 active:shadow-none disabled:opacity-50"><Send className="h-4 w-4" />Check</button>
                 </div>
               </form>
             )}
@@ -276,7 +279,7 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
               <div className={`rounded-2xl p-4 text-sm font-bold ${gradingResult.passedGates ? 'bg-emerald-50 text-emerald-900' : 'bg-amber-50 text-amber-950'}`}>
                 <p>{gradingResult.feedback}</p>
                 {replanned && <p className="mt-2">Your daily plan was adjusted because this error has repeated.</p>}
-                <button type="button" disabled={loading} onClick={() => void onContinue()} className="mt-3 rounded-xl bg-zinc-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50">
+                <button data-testid="continue-lesson-btn" type="button" disabled={loading} onClick={() => void onContinue()} className="mt-3 rounded-xl bg-zinc-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50">
                   {gradingResult.passedGates ? 'Continue to next lesson' : 'Try a new teaching approach'}
                 </button>
               </div>

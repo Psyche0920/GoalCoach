@@ -53,7 +53,7 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-emerald-100 text-emerald-700"><Target className="h-8 w-8" /></div>
         <h2 className="mt-5 text-2xl font-extrabold">Ready to build your day?</h2>
         <p className="mt-2 text-sm text-slate-500">Your coach will turn your goal into a short, focused learning path.</p>
-        <button type="button" onClick={onRegeneratePlan} className="primary-action mt-6">Build today’s plan</button>
+        <button data-testid="build-plan-btn" type="button" onClick={onRegeneratePlan} className="primary-action mt-6">Build today’s plan</button>
       </section>
     );
   }
@@ -84,6 +84,7 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
           return (
             <li key={item.id}>
               <button
+                data-testid="lesson-card-btn"
                 type="button"
                 disabled={!canOpen}
                 onClick={() => onStartStudy({
