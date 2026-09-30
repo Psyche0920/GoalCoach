@@ -38,6 +38,14 @@ export function App() {
   const [appError, setAppError] = useState<string | null>(null);
   const activityStartedAt = useRef<number | null>(null);
   const roadmapRequestId = useRef(0);
+  const teachingRequestInFlight = useRef(false);
+  const lastLessonSelection = useRef<LessonSelection>({ entrySource: 'planned' });
+
+  const clearTeachingTurn = (): void => {
+    setTeachingAction(null);
+    setAgentGradingResult(null);
+    activityStartedAt.current = null;
+  };
 
   const acceptLearnerState = (incoming: LearnerState) => {
     setLearnerState((current) => {
@@ -77,16 +85,14 @@ export function App() {
     });
     if (response.status === 409) {
       const detail = await parseApiError(response, 'Your learning state changed in another request.');
-      const staleStateDetail = 'Your learning state changed in another request. Reload and try again.';
-      if (detail === staleStateDetail && attempt === 0) {
+      const errorCode = response.headers.get('X-GoalCoach-Error');
+      if (errorCode === 'STATE_CONFLICT' && attempt === 0 && eventType !== 'ANSWER_SUBMITTED') {
         await refreshAuthoritativeState();
         return dispatchLearningEvent(eventType, payload, attempt + 1);
       }
-      if (detail === staleStateDetail) {
-        await refreshAuthoritativeState();
-        throw new Error(`${detail} The latest state has been reloaded; try again.`);
-      }
-      throw new Error(detail);
+      clearTeachingTurn();
+      await refreshAuthoritativeState();
+      throw new Error(`${detail} Please resume your lesson to continue.`);
     }
     if (!response.ok) {
       throw new Error(await parseApiError(response, 'GoalCoach could not complete this request.'));
@@ -100,9 +106,11 @@ export function App() {
     const body = await response.json() as {
       state?: LearnerState;
       progressSummary?: ProgressSummary;
+      nextAction?: NextAction;
     };
     if (body.state) acceptLearnerState(body.state);
     if (body.progressSummary) acceptProgress(body.progressSummary);
+    if (body.nextAction) setNextAction(body.nextAction);
   };
 
   const refreshRoadmap = async (): Promise<void> => {
@@ -248,6 +256,10 @@ export function App() {
   const handleStartAgentSession = async (
     selection: LessonSelection = { entrySource: 'planned' },
   ): Promise<void> => {
+    if (teachingRequestInFlight.current) return;
+    teachingRequestInFlight.current = true;
+    lastLessonSelection.current = selection;
+    clearTeachingTurn();
     setIsTeachingOpen(true);
     setTeachingLoading(true);
     setTeachingError(null);
@@ -280,12 +292,14 @@ export function App() {
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'The lesson could not be started.');
     } finally {
+      teachingRequestInFlight.current = false;
       setTeachingLoading(false);
     }
   };
 
   const handleTeachingHelp = async (query: string): Promise<void> => {
-    if (!teachingAction) return;
+    if (!teachingAction || teachingRequestInFlight.current) return;
+    teachingRequestInFlight.current = true;
     setTeachingLoading(true);
     setTeachingError(null);
     setAgentGradingResult(null);
@@ -302,17 +316,20 @@ export function App() {
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'Coach help is temporarily unavailable.');
     } finally {
+      teachingRequestInFlight.current = false;
       setTeachingLoading(false);
     }
   };
 
   const handleAgentAnswer = async (answer: string): Promise<void> => {
+    if (teachingRequestInFlight.current || agentGradingResult) return;
     const exerciseId = teachingAction?.exercisePayload?.exercise_id;
     const conceptId = teachingAction?.exercisePayload?.concept_id || teachingAction?.conceptId;
     if (!exerciseId || !conceptId) {
       setTeachingError('This lesson does not contain a gradable curriculum exercise.');
       return;
     }
+    teachingRequestInFlight.current = true;
     setTeachingLoading(true);
     setTeachingError(null);
     try {
@@ -329,15 +346,18 @@ export function App() {
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'Your answer could not be checked.');
     } finally {
+      teachingRequestInFlight.current = false;
       setTeachingLoading(false);
     }
   };
 
   const handleCloseAgentSession = async (): Promise<void> => {
+    if (teachingRequestInFlight.current) return;
     if (!learnerState?.activeSession) {
       setIsTeachingOpen(false);
       return;
     }
+    teachingRequestInFlight.current = true;
     setTeachingLoading(true);
     setTeachingError(null);
     try {
@@ -352,6 +372,7 @@ export function App() {
     } catch (error) {
       setTeachingError(error instanceof Error ? error.message : 'The study session could not be closed.');
     } finally {
+      teachingRequestInFlight.current = false;
       setTeachingLoading(false);
     }
   };
@@ -454,6 +475,12 @@ export function App() {
         error={teachingError}
         gradingResult={agentGradingResult}
         replanned={agentReplanned}
+        recoveryLabel={nextAction === 'plan' ? 'Retry planning' : nextAction === 'complete' ? 'Return to plan' : 'Resume lesson'}
+        onRecover={() => nextAction === 'complete'
+          ? handleCloseAgentSession()
+          : handleStartAgentSession(nextAction === 'plan'
+            ? { entrySource: 'planned' }
+            : lastLessonSelection.current)}
         onClose={handleCloseAgentSession}
         onContinue={() => handleStartAgentSession()}
         onRequestHelp={handleTeachingHelp}

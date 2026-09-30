@@ -58,7 +58,7 @@ If there is a mistake, tag specific codes in `detected_errors`, such as:
 - `ERR_ASPECT_LE`: Incorrect completed action aspect marker 了.
 - `ERR_VOCABULARY`: Incorrect vocabulary selection.
 
-Provide encouraging, targeted, and factual feedback addressing the learner's mistake.
+Provide encouraging, targeted, and factual English feedback addressing the learner's mistake.
 """
 
 grader_agent = Agent(

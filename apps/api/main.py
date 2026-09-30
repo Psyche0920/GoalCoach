@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,8 @@ from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqlAlchemyLearnerRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -61,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _request: Request,
         exc: AgentOutputError,
     ) -> JSONResponse:
+        logger.error("Agent output rejected: %s", exc)
         return JSONResponse(status_code=502, content={"detail": str(exc)})
 
     # Middleware: Enable CORS for React frontend

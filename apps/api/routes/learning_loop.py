@@ -134,9 +134,12 @@ async def dispatch_learning_event(
             learner_id=req.learner_id,
         )
     except SessionLifecycleError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=409, detail=str(exc), headers={"X-GoalCoach-Error": "SESSION_INVALID"}
+        ) from exc
     except StaleLearnerStateError as exc:
         raise HTTPException(
             status_code=409,
             detail="Your learning state changed in another request. Reload and try again.",
+            headers={"X-GoalCoach-Error": "STATE_CONFLICT"},
         ) from exc

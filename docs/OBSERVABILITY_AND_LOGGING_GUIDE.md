@@ -23,27 +23,23 @@ The CLI harness supports two logging modes:
 
 ---
 
-### Option B: FastAPI Backend Server
+### Option B: Web UI & FastAPI Backend Integration
 1. **Start the API server**:
    ```bash
    uv run uvicorn apps.api.main:app --port 8000
    ```
-   *On server start, the application lifespan initializes the structured logging system according to typed environment settings.*
+   *On server start, the application lifespan initializes the structured logging system. Because `log_to_file: bool = True` is enabled by default in `Settings`, the rotating file handler automatically records all incoming UI requests.*
 
-2. **Send a request**:
+2. **Start the React web frontend**:
    ```bash
-   curl -i http://localhost:8000/health
+   npm --prefix apps/web run dev
    ```
-   **Response Headers**:
-   ```http
-   HTTP/1.1 200 OK
-   x-request-id: 9a5b3f2e1c8d4e0a9b2c3d4e5f6a7b8c
-   x-response-time-ms: 1.15
-   ```
-   **Console Output**:
-   ```text
-   [15:55:01.234] [INFO   ] [apps.api.access] HTTP GET /health 200 (1.15ms) [request_id=9a5b3f2e1c8d4e0a9b2c3d4e5f6a7b8c]
-   ```
+   *The frontend starts on `http://localhost:3000` and proxies `/api` and `/health` requests to the FastAPI backend at `http://127.0.0.1:8000`.*
+
+3. **Interact with the Web UI**:
+   - Open `http://localhost:3000` in your browser.
+   - Any action performed in the UI (initiating a study session, answering exercises in the modal, requesting hints, or loading the roadmap) triggers backend API requests.
+   - All events are automatically recorded to both the console and `./logs/goalcoach.log`.
 
 ---
 
@@ -60,9 +56,9 @@ uv run pytest tests/unit/test_observability.py -v
 | Destination | Mode / Environment | Description |
 | :--- | :--- | :--- |
 | **Console (`stdout`)** | Dev / `--verbose` / `uvicorn` | Human-readable colorized output: `[TIME] [LEVEL] [logger] message [context]`. |
-| **`./logs/goalcoach.log`** | CLI / File logging | High-speed, machine-readable **NDJSON** (1 JSON object per line). Automatically rotates at 10 MB with 5 backups. |
+| **`./logs/goalcoach.log`** | Web UI / API / CLI | High-speed, machine-readable **NDJSON** (1 JSON object per line). Automatically created on startup and rotates at 10 MB with 5 backups. |
 
-To inspect or stream the log file live in another terminal window:
+To inspect or stream the log file live in another terminal window while using the Web UI or CLI:
 ```bash
 tail -f ./logs/goalcoach.log
 ```

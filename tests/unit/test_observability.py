@@ -311,6 +311,7 @@ def test_settings_observability_defaults() -> None:
     settings = Settings(_env_file=None)
     assert settings.log_level == "INFO"
     assert settings.log_format == "auto"
+    assert settings.log_to_file is True
     assert settings.log_slow_query_threshold_ms == 25.0
     assert "./logs/goalcoach.log" in settings.log_file_path
 

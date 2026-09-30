@@ -32,7 +32,12 @@ def _planning_context(concept_count: int = 12) -> object:
     content_service = SimpleNamespace(list_all_concepts=lambda: concepts)
     deps = SimpleNamespace(
         content_service=content_service,
-        state=SimpleNamespace(roadmap_concept_ids=[], remediation_counters={}),
+        state=SimpleNamespace(
+            roadmap_concept_ids=[],
+            remediation_counters={},
+            today_studied_concept_ids=[],
+            today_remediated_concept_ids=[],
+        ),
         allow_roadmap_changes=True,
     )
     return SimpleNamespace(deps=deps)

@@ -9,6 +9,8 @@ interface TeachingAgentModalProps {
   error: string | null;
   gradingResult: GradingResult | null;
   replanned: boolean;
+  recoveryLabel: string;
+  onRecover: () => Promise<void>;
   onClose: () => Promise<void>;
   onContinue: () => Promise<void>;
   onRequestHelp: (query: string) => Promise<void>;
@@ -43,6 +45,8 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
   error,
   gradingResult,
   replanned,
+  recoveryLabel,
+  onRecover,
   onClose,
   onContinue,
   onRequestHelp,
@@ -108,13 +112,18 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
             <p className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-emerald-700"><Sparkles className="h-4 w-4" />Your private coach</p>
             <h2 className="mt-1 text-2xl font-black text-slate-950">{action?.actionKind?.replaceAll('_', ' ') || 'Preparing your lesson'}</h2>
           </div>
-          <button type="button" onClick={() => void onClose()} aria-label="Close lesson" className="rounded-xl p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950">
+          <button type="button" disabled={loading} onClick={() => void onClose()} aria-label="Close lesson" className="rounded-xl p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {loading && <p className="mt-6 rounded-2xl bg-zinc-100 p-4 text-sm font-bold text-zinc-600">Adapting the lesson to your goal and progress…</p>}
         {error && <p role="alert" className="mt-6 rounded-2xl bg-rose-50 p-4 text-sm font-bold text-rose-800">{error}</p>}
+        {error && !action && !loading && (
+          <button type="button" onClick={() => void onRecover()} className="mt-4 rounded-xl bg-zinc-950 px-4 py-3 font-bold text-white">
+            {recoveryLabel}
+          </button>
+        )}
 
         {action && !loading && (
           <div className="mt-6 space-y-5">

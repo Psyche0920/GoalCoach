@@ -68,6 +68,35 @@ class PlanningDeps:
     allow_roadmap_changes: bool
 
 
+@dataclass(frozen=True, slots=True)
+class RemediationPolicy:
+    """Keep mandatory remediation consistent across generation and validation."""
+
+    required_concept_ids: tuple[str, ...]
+
+    @classmethod
+    def from_state(cls, state: LearnerState, roadmap_ids: list[str]) -> RemediationPolicy:
+        return cls(
+            tuple(
+                concept_id
+                for concept_id, count in sorted(
+                    state.remediation_counters.items(), key=lambda item: item[1], reverse=True
+                )
+                if count >= 2 and concept_id in roadmap_ids
+            )
+        )
+
+    def permits_repeat(self, item: PlanItem) -> bool:
+        return item.kind == PlanItemKind.REMEDIAL and item.concept_id in self.required_concept_ids
+
+    def has_required_first_item(self, items: list[PlanItem]) -> bool:
+        return not self.required_concept_ids or bool(
+            items
+            and items[0].kind == PlanItemKind.REMEDIAL
+            and items[0].concept_id == self.required_concept_ids[0]
+        )
+
+
 class AgentPlanUpdate(BaseModel):
     """Strict model-facing output contract; persisted state retains safe defaults."""
 
@@ -97,11 +126,11 @@ Your responsibility is to decide what the learner should study next based on the
 
 Key Pedagogical Rules:
 1. Prioritize Review & Remediation:
-   - If `needs_replanning` is True or recurring error tags exist, prioritize REMEDIAL items for the weak concepts and postpone introducing new topics.
+   - Mandatory REMEDIAL concepts take precedence over new work and same-day repetition restrictions. Put the first mandatory concept first. Historical error tags alone do not mean remediation is still required.
    - Schedule REVIEW items for concepts due for spaced review or with low retention.
 2. Introduce Feasible New Topics:
-   - Schedule NEW concepts only if their prerequisites are satisfied. A prerequisite is satisfied if the learner has mastery >= 0.50 OR completed remediation today.
-   - If a concept has already been studied or remediated today (listed in Remediated Today / Studied Today), do not schedule it again today; advance to subsequent concepts.
+   - When prerequisite enforcement is enabled, schedule NEW concepts only if their prerequisites are satisfied (mastery >= 0.50 OR completed remediation today). When disabled, prerequisites do not gate scheduling.
+   - Do not repeat concepts studied or remediated today, except mandatory REMEDIAL concepts explicitly listed in the learner context. Put the first mandatory concept first.
 3. Strict Budget Allocation & Bite-Sized Micro-Learning:
    - Each item in `ordered_items` is an ultra-concise micro-learning unit.
    - Set `estimated_minutes` for each individual item to 3–5 minutes (never exceed 5 minutes for a single item).
@@ -113,6 +142,7 @@ Key Pedagogical Rules:
 5. Adaptation Rationale:
    - Provide a clear, transparent explanation in `adaptation_rationale` explaining why this plan was chosen.
 6. Dynamic Roadmap:
+   - When roadmap changes are disallowed and a persisted roadmap exists, return that exact roadmap and adapt only today's items. The following coverage rules govern creation or allowed roadmap changes.
    - `roadmap_concept_ids` is the learner's multi-session curriculum path. It is NOT today's plan.
    - Produce a goal-complete, multi-stage roadmap. Do not limit roadmap length to today's time
      budget or copy only `ordered_items`. Do not include the full catalog by default.
@@ -163,11 +193,12 @@ def validate_planning_output(
             "field=roadmap_concept_ids: contains unknown or duplicate concept IDs. "
             "Return valid unique IDs."
         )
-    if not ctx.deps.allow_roadmap_changes and valid_roadmap != ctx.deps.state.roadmap_concept_ids:
+    if not ctx.deps.allow_roadmap_changes and ctx.deps.state.roadmap_concept_ids:
         # The long-term roadmap is persisted learner state. Requiring the model
         # to echo it byte-for-byte wastes output retries and makes the daily
         # plan needlessly brittle.
         output.roadmap_concept_ids = list(ctx.deps.state.roadmap_concept_ids)
+        valid_roadmap = output.roadmap_concept_ids
     if not output.roadmap_coverage_rationale.strip():
         raise ModelRetry(
             "field=roadmap_coverage_rationale: required. Explain goal capabilities and roadmap coverage."
@@ -178,21 +209,20 @@ def validate_planning_output(
             "field=ordered_items[].concept_id: every daily concept must also appear in "
             "roadmap_concept_ids."
         )
-    required_remedial = sorted(
-        (
-            (concept_id, count)
-            for concept_id, count in ctx.deps.state.remediation_counters.items()
-            if count >= 2 and concept_id in valid_roadmap
-        ),
-        key=lambda item: item[1],
-        reverse=True,
+    policy = RemediationPolicy.from_state(ctx.deps.state, valid_roadmap)
+    if not policy.has_required_first_item(output.ordered_items):
+        raise ModelRetry(
+            "field=ordered_items[0]: return kind='remedial' with concept_id="
+            f"{policy.required_concept_ids[0]}; mandatory remediation may repeat today."
+        )
+    unavailable = set(ctx.deps.state.today_studied_concept_ids) | set(
+        ctx.deps.state.today_remediated_concept_ids
     )
-    if required_remedial:
-        first = output.ordered_items[0]
-        if first.kind != PlanItemKind.REMEDIAL or first.concept_id != required_remedial[0][0]:
+    for item in output.ordered_items:
+        if item.concept_id in unavailable and not policy.permits_repeat(item):
             raise ModelRetry(
-                "field=ordered_items[0].kind, ordered_items[0].concept_id: the first Daily Plan "
-                "item must remediate the highest-priority unresolved concept."
+                f"field=ordered_items: {item.concept_id} was already studied today; "
+                "only mandatory remedial items may repeat."
             )
     return output
 
@@ -251,7 +281,7 @@ def get_concept_prerequisites(ctx: RunContext[PlanningDeps], concept_id: str) ->
 
 
 class PlanningWorker:
-    """Wrapper class managing the execution, validation, and deterministic fallback for planning."""
+    """Execute and validate agent-authored plans before persistence."""
 
     def __init__(
         self,
@@ -273,7 +303,7 @@ class PlanningWorker:
         *,
         allow_roadmap_changes: bool = False,
     ) -> PlanUpdate:
-        """Invokes the Planning Agent with fallback to deterministic heuristic rules."""
+        """Request a valid Agent plan or leave the current plan unchanged on failure."""
         deps = PlanningDeps(
             state=state,
             content_service=content_service,
@@ -304,6 +334,12 @@ class PlanningWorker:
         studied_summary = ", ".join(state.today_studied_concept_ids) or "None"
         history_summary = format_agent_history(state)
         active_level = resolve_active_level(state, content_service)
+        roadmap_ids = (
+            state.roadmap_concept_ids
+            if not allow_roadmap_changes and state.roadmap_concept_ids
+            else [concept.concept_id for concept in content_service.list_all_concepts()]
+        )
+        remediation_policy = RemediationPolicy.from_state(state, roadmap_ids)
 
         prompt = (
             f"Learner Goal: {state.goal.title if state.goal else 'HSK1'}\n"
@@ -312,17 +348,20 @@ class PlanningWorker:
             f"Needs Replanning: {state.needs_replanning}\n"
             f"Prerequisite Enforcement Enabled: {self.enable_prerequisites}\n"
             f"Roadmap Changes Allowed: {allow_roadmap_changes}\n"
+            f"Persisted Roadmap: {state.roadmap_concept_ids}\n"
+            f"Mandatory REMEDIAL concepts in priority order: {remediation_policy.required_concept_ids}\n"
             f"Remediated Today: {remediated_summary}\n"
             f"Studied Today: {studied_summary}\n"
             f"Current Mastery: {mastery_summary}\n"
-            f"Active Errors: {error_summary}\n"
+            f"Unresolved Remediation Counters: {state.remediation_counters}\n"
+            f"Historical Errors (may already be resolved): {error_summary}\n"
             f"Recent Cross-Session Learning History:\n{history_summary}\n"
-            f"Today Studied Concepts (do not repeat today): {state.today_studied_concept_ids}\n"
+            f"Today Studied Concepts: {state.today_studied_concept_ids}\n"
             f"Today Remediated Concepts: {state.today_remediated_concept_ids}\n"
             "Rules for planning:\n"
-            "1. If the learner has no mastery, schedule 'new' concepts unlocked by prerequisites (start with the first concept).\n"
-            "2. Do NOT schedule concepts that have already been studied today.\n"
-            "3. If the learner has errors or needs_replanning is True, prioritize 'remedial' items on weak concepts.\n"
+            "1. Apply mandatory remediation first. Then select feasible review/new work from the roadmap within the time budget.\n"
+            "2. Do not repeat studied/remediated concepts today EXCEPT mandatory REMEDIAL concepts. Put the first mandatory concept first, with kind='remedial'.\n"
+            "3. Use unresolved counters to identify mandatory remediation; historical errors alone do not require another remedial item.\n"
             "4. Bite-Sized Pacing: Each item's estimated_minutes MUST be between 3 and 5 minutes (never exceed 5 minutes for a single item). Schedule multiple distinct items to cover the daily time budget.\n"
             "Generate today's optimal PlanUpdate conforming to the schema. "
             f"Select concepts from the curriculum catalog within the active level window (up to HSK {active_level}). "
@@ -362,12 +401,20 @@ class PlanningWorker:
             if not allow_roadmap_changes and state.roadmap_concept_ids:
                 proposed_roadmap_ids = list(state.roadmap_concept_ids)
                 plan_update.roadmap_concept_ids = proposed_roadmap_ids
+            remediation_policy = RemediationPolicy.from_state(state, proposed_roadmap_ids)
+            unavailable = set(state.today_studied_concept_ids) | set(
+                state.today_remediated_concept_ids
+            )
             validated_items = [
                 item
                 for item in plan_update.ordered_items
                 if item.concept_id in valid_active_ids
-                and item.concept_id not in state.today_studied_concept_ids
+                and (item.concept_id not in unavailable or remediation_policy.permits_repeat(item))
             ]
+            if len(validated_items) != len(plan_update.ordered_items):
+                raise AgentOutputError(
+                    "Planning Agent returned unavailable daily concepts; plan was not saved."
+                )
             daily_ids = list(dict.fromkeys(item.concept_id for item in validated_items))
             if not proposed_roadmap_ids or not set(daily_ids).issubset(set(proposed_roadmap_ids)):
                 raise AgentOutputError(
@@ -384,25 +431,10 @@ class PlanningWorker:
                 raise AgentOutputError(
                     "Planning Agent omitted the required roadmap coverage rationale."
                 )
-            required_remedial = sorted(
-                (
-                    (concept_id, count)
-                    for concept_id, count in state.remediation_counters.items()
-                    if count >= 2 and concept_id in proposed_roadmap_ids
-                ),
-                key=lambda item: item[1],
-                reverse=True,
-            )
-            if required_remedial:
-                first = validated_items[0] if validated_items else None
-                if (
-                    first is None
-                    or first.kind != PlanItemKind.REMEDIAL
-                    or first.concept_id != required_remedial[0][0]
-                ):
-                    raise AgentOutputError(
-                        "Planning Agent did not prioritize the required remediation item."
-                    )
+            if not remediation_policy.has_required_first_item(validated_items):
+                raise AgentOutputError(
+                    "Planning Agent did not prioritize the required remediation item."
+                )
             plan_update.roadmap_concept_ids = proposed_roadmap_ids
             plan_update.metadata.update(
                 {
@@ -466,18 +498,10 @@ class PlanningWorker:
                         return plan_update
 
         except LLMUnavailableError as exc:
-            return self._deterministic_fallback(
-                state,
-                content_service,
-                available_minutes,
-                notice=f"LLM unavailable; deterministic planning fallback used: {exc}",
-            )
-        return self._deterministic_fallback(
-            state,
-            content_service,
-            available_minutes,
-            notice="Planning Agent returned no valid items; deterministic fallback used.",
-        )
+            raise AgentOutputError(
+                "Planning Agent could not produce a valid plan. Retry planning."
+            ) from exc
+        raise AgentOutputError("Planning Agent returned no valid daily items. Retry planning.")
 
     def _deterministic_fallback(
         self,

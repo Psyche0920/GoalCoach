@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ["GOALCOACH_OFFLINE_LLM_FALLBACK"] = "true"
 
@@ -14,8 +15,54 @@ from apps.api.dependencies import (
     get_teaching_worker,
 )
 from apps.api.main import create_app
+from goalcoach.agents.planning_agent import AgentPlanUpdate, PlanningDeps
+from goalcoach.domain.enums import PlanItemKind
+from goalcoach.domain.models import PlanItem
 from goalcoach.infrastructure.config import Settings
 from tests.fakes import FakeGraderComponent, FakePlanningWorker, FakeTeachingWorker
+
+
+@pytest.fixture
+def planning_model_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep workflow tests offline while exercising the real planning worker."""
+
+    async def run(
+        agent: object, prompt: str, deps: PlanningDeps, *, component: str
+    ) -> tuple[SimpleNamespace, str]:
+        state = deps.state
+        roadmap = state.roadmap_concept_ids or [
+            concept.concept_id
+            for concept in deps.content_service.list_all_concepts(max_hsk_level=1)
+        ]
+        required = [
+            cid
+            for cid, count in sorted(
+                state.remediation_counters.items(), key=lambda item: item[1], reverse=True
+            )
+            if count >= 2 and cid in roadmap
+        ]
+        unavailable = set(state.today_studied_concept_ids) | set(state.today_remediated_concept_ids)
+        candidates = required + [
+            cid for cid in roadmap if cid not in unavailable and cid not in required
+        ]
+        output = AgentPlanUpdate(
+            daily_allocation_minutes=20,
+            ordered_items=[
+                PlanItem(
+                    concept_id=cid,
+                    kind=PlanItemKind.REMEDIAL if cid in required else PlanItemKind.NEW,
+                    objective=f"Practice {cid}",
+                    estimated_minutes=5,
+                )
+                for cid in candidates[:4]
+            ],
+            adaptation_rationale="Test model prioritizes unresolved remediation.",
+            roadmap_concept_ids=roadmap,
+            roadmap_coverage_rationale="Test roadmap covers the HSK1 curriculum.",
+        )
+        return SimpleNamespace(output=output), "test-model"
+
+    monkeypatch.setattr("goalcoach.agents.planning_agent.run_with_fallback", run)
 
 
 @pytest.fixture(scope="session", autouse=True)
