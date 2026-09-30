@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.6] - 2026-09-30
+
+### Added
+- **Full Learning Loop Navigation & Mistake Recovery**:
+  - Added direct action controls in `TeachingAgentModal.tsx` on incorrect answer: `"Try again"` (immediate re-attempt without re-teaching overhead), `"Try a new teaching approach"` (targeted remediation), and `"Skip to next lesson"` (advances directly to the next planned lesson).
+  - Added clean finish action `"Finish today's plan"` when `nextAction === 'complete'`, gracefully closing the modal instead of throwing an unhandled completion error.
+  - Added phased loading states (`'planning'` vs `'teaching'`) with dedicated informative status banners (*"Adapting your study plan based on your recent progress..."* vs *"Coach Baobao is crafting your next lesson..."*) so the UI never displays a blank or frozen screen.
+  - Added `hasMorePlannedLessons`, `onSkipToNextLesson`, `onRetryExercise`, and `loadingStage` props to `TeachingAgentModal.tsx` and wired them in `App.tsx`.
+  - Added `needsReplanning?: boolean` to `LearnerState` in `apps/web/src/types.ts`.
+
+### Changed
+- **Teaching Agent Latency Optimization**:
+  - In `src/goalcoach/agents/teaching_agent.py`, pre-injected verified curriculum cards, communicative goal, and grammar/vocabulary focus directly into the initial prompt. This eliminates the intermediate `get_concept_teaching_cards` tool roundtrip to OpenRouter, halving teaching latency from ~35–45s down to ~12–18s.
+- **Flexible Planned Lesson Advancement**:
+  - In `src/goalcoach/application/orchestrator.py`, updated `progress_eligible = not active_item.completed` for planned lessons. Studying any uncompleted planned item in today's active plan now counts toward progress and marks that specific item completed.
+  - In `apps/web/src/components/DailyPlanView.tsx`, unlocked planned items so learners can click any uncompleted item to study without being forced into rigid linear locking.
+  - In `apps/web/src/App.tsx`, preserved selection context (`entrySource`, `conceptId`, `planItemId`) across chained replanning turns and prevented premature UI wiping.
+
+### Fixed
+- **Frontend Hang on "Preparing your lesson"**:
+  - Resolved the 60–95s loading freeze caused by sequential replanning and re-teaching LLM chaining without stage feedback.
+  - Resolved modal context loss where `clearTeachingTurn()` blanked out the modal to a generic placeholder before the new lesson arrived.
+
+---
+
 ## [0.1.5] - 2026-09-30
 
 ### Added

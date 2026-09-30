@@ -187,6 +187,32 @@ class TeachingWorker:
         history_summary = format_agent_history(state)
         interests_str = ", ".join(state.context_interests) if state.context_interests else "general"
 
+        cards = content_service.get_teaching_cards(concept_id)
+        cards_summary = []
+        for card in cards:
+            example = (
+                f" Example: {card.example_zh} ({card.example_pinyin}) - {card.example_en}"
+                if card.example_zh
+                else ""
+            )
+            explanation = f" Note: {card.explanation_en}" if card.explanation_en else ""
+            cards_summary.append(
+                f"- {card.prompt_zh} ({card.pinyin}): {card.meaning_en}.{example}{explanation}"
+            )
+        cards_text = (
+            "\n".join(cards_summary) if cards_summary else "No pre-compiled vocabulary cards."
+        )
+
+        concept = content_service.get_concept(concept_id)
+        concept_info = ""
+        if concept:
+            concept_info = (
+                f"Concept Title: {concept.title_zh} ({concept.title_en})\n"
+                f"Communicative Goal: {concept.communicative_goal}\n"
+                f"Grammar Focus: {concept.grammar_focus}\n"
+                f"Vocabulary Focus: {concept.vocabulary_focus}\n"
+            )
+
         options_hint = ""
         if getattr(candidate_exercise, "options", None):
             options_hint = f"\nUpcoming Practice Options: {candidate_exercise.options}"
@@ -195,9 +221,11 @@ class TeachingWorker:
 
         prompt = (
             f"Active Concept: {concept_id}\n"
+            f"{concept_info}"
             f"Learner Goal: {state.goal.title if state.goal else 'General HSK1 Chinese'}\n"
             f"Failed Attempts on this concept: {failed_attempts}\n"
             f"Recurring Error Codes: {relevant_errors}\n"
+            f"Verified Curriculum Teaching Cards:\n{cards_text}\n"
             f"Target Upcoming Practice Type: {ex_type}\n"
             f"Target Upcoming Practice: {candidate_exercise.instruction or ''} -> {candidate_exercise.prompt}"
             f"{options_hint}\n"

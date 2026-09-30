@@ -1,18 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { BookOpenText, CheckCircle2, HelpCircle, Lightbulb, Send, Sparkles, X } from 'lucide-react';
-import { GradingResult, TeachingAction } from '../types.ts';
+import { GradingResult, NextAction, TeachingAction } from '../types.ts';
 
 interface TeachingAgentModalProps {
   isOpen: boolean;
   action: TeachingAction | null;
   loading: boolean;
+  loadingStage?: 'idle' | 'planning' | 'teaching';
   error: string | null;
   gradingResult: GradingResult | null;
   replanned: boolean;
+  nextAction?: NextAction;
+  hasMorePlannedLessons?: boolean;
   recoveryLabel: string;
   onRecover: () => Promise<void>;
   onClose: () => Promise<void>;
   onContinue: () => Promise<void>;
+  onSkipToNextLesson?: () => Promise<void>;
+  onRetryExercise?: () => void;
   onRequestHelp: (query: string) => Promise<void>;
   onSubmitAnswer: (answer: string) => Promise<void>;
 }
@@ -42,13 +47,18 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
   isOpen,
   action,
   loading,
+  loadingStage = 'idle',
   error,
   gradingResult,
   replanned,
+  nextAction,
+  hasMorePlannedLessons = false,
   recoveryLabel,
   onRecover,
   onClose,
   onContinue,
+  onSkipToNextLesson,
+  onRetryExercise,
   onRequestHelp,
   onSubmitAnswer,
 }) => {
@@ -104,6 +114,12 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
     ? action.metadata.progress_notice
     : null;
 
+  const loadingMessage = loadingStage === 'planning'
+    ? 'Adapting your study plan based on your recent progress…'
+    : loadingStage === 'teaching'
+    ? 'Coach Baobao is crafting your next lesson…'
+    : 'Adapting the lesson to your goal and progress…';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-3 backdrop-blur-sm sm:p-5">
       <div className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-[2rem] border border-white/30 bg-[#f8faf7] p-5 shadow-2xl sm:p-7">
@@ -117,7 +133,12 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
           </button>
         </div>
 
-        {loading && <p className="mt-6 rounded-2xl bg-zinc-100 p-4 text-sm font-bold text-zinc-600">Adapting the lesson to your goal and progress…</p>}
+        {loading && (
+          <div className="mt-4 flex items-center gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/90 px-4 py-3 text-xs font-bold text-indigo-950 shadow-sm animate-pulse">
+            <Sparkles className="h-4 w-4 animate-spin text-indigo-600" />
+            <span>{loadingMessage}</span>
+          </div>
+        )}
         {error && <p role="alert" className="mt-6 rounded-2xl bg-rose-50 p-4 text-sm font-bold text-rose-800">{error}</p>}
         {error && !action && !loading && (
           <button type="button" onClick={() => void onRecover()} className="mt-4 rounded-xl bg-zinc-950 px-4 py-3 font-bold text-white">
@@ -125,8 +146,15 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
           </button>
         )}
 
-        {action && !loading && (
-          <div className="mt-6 space-y-5">
+        {!action && loading && (
+          <div className="mt-6 flex flex-col items-center justify-center space-y-3 py-12 text-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
+            <p className="text-sm font-bold text-zinc-600">{loadingMessage}</p>
+          </div>
+        )}
+
+        {action && (
+          <div className={`mt-6 space-y-5 transition-opacity duration-200 ${loading ? 'opacity-40 pointer-events-none' : ''}`}>
             <div className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-xs font-bold ${countsTowardProgress ? 'bg-emerald-100 text-emerald-900' : 'bg-indigo-100 text-indigo-900'}`}>
               {countsTowardProgress ? <CheckCircle2 className="h-5 w-5" /> : <BookOpenText className="h-5 w-5" />}
               <span>{progressNotice ?? (countsTowardProgress ? 'This planned lesson counts toward progress.' : 'Free practice · progress and study time stay unchanged.')}</span>
@@ -284,10 +312,59 @@ export const TeachingAgentModal: React.FC<TeachingAgentModalProps> = ({
             {gradingResult && (
               <div className={`rounded-2xl p-4 text-sm font-bold ${gradingResult.passedGates ? 'bg-emerald-50 text-emerald-900' : 'bg-amber-50 text-amber-950'}`}>
                 <p>{gradingResult.feedback}</p>
-                {replanned && <p className="mt-2">Your daily plan was adjusted because this error has repeated.</p>}
-                <button type="button" disabled={loading} onClick={() => void onContinue()} className="mt-3 rounded-xl bg-zinc-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50">
-                  {gradingResult.passedGates ? 'Continue to next lesson' : 'Try a new teaching approach'}
-                </button>
+                {(replanned || nextAction === 'plan') && (
+                  <p className="mt-2 text-xs font-bold text-amber-800">
+                    Your daily plan is adjusting because this error has repeated.
+                  </p>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {gradingResult.passedGates ? (
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void (nextAction === 'complete' ? onClose() : onContinue())}
+                      className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-black text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {nextAction === 'complete' ? "Finish today's plan" : 'Continue to next lesson'}
+                    </button>
+                  ) : (
+                    <>
+                      {onRetryExercise && (
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            setAnswer('');
+                            setSelectedLeft(null);
+                            setMatchedPairs({});
+                            onRetryExercise();
+                          }}
+                          className="rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white hover:bg-amber-700 disabled:opacity-50"
+                        >
+                          Try again
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void onContinue()}
+                        className="rounded-xl bg-zinc-950 px-4 py-2.5 text-xs font-black text-white hover:bg-zinc-800 disabled:opacity-50"
+                      >
+                        Try a new teaching approach
+                      </button>
+                      {hasMorePlannedLessons && onSkipToNextLesson && (
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void onSkipToNextLesson()}
+                          className="rounded-xl border-2 border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                        >
+                          Skip to next lesson
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
 

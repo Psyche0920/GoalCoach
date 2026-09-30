@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Sidebar } from './components/Sidebar.tsx';
 import { TopStatusBar } from './components/TopStatusBar.tsx';
 import { BottomNav } from './components/BottomNav.tsx';
@@ -31,6 +31,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [isTeachingOpen, setIsTeachingOpen] = useState(false);
   const [teachingLoading, setTeachingLoading] = useState(false);
+  const [loadingStage, setLoadingStage] = useState<'idle' | 'planning' | 'teaching'>('idle');
   const [teachingAction, setTeachingAction] = useState<TeachingAction | null>(null);
   const [teachingError, setTeachingError] = useState<string | null>(null);
   const [agentGradingResult, setAgentGradingResult] = useState<GradingResult | null>(null);
@@ -250,15 +251,43 @@ export function App() {
     }
   };
 
+  const uncompletedPlanItems = useMemo(() => {
+    return learnerState?.activePlan?.items.filter((item) => !item.completed) ?? [];
+  }, [learnerState?.activePlan?.items]);
+
+  const activePlanItemId = lastLessonSelection.current.planItemId || teachingAction?.metadata?.plan_item_id;
+
+  const nextUncompletedItem = useMemo(() => {
+    if (uncompletedPlanItems.length === 0) return null;
+    const nextItem = uncompletedPlanItems.find((item) => String(item.id) !== String(activePlanItemId));
+    return nextItem ?? (uncompletedPlanItems.length > 1 ? uncompletedPlanItems[0] : null);
+  }, [uncompletedPlanItems, activePlanItemId]);
+
+  const hasMorePlannedLessons = Boolean(nextUncompletedItem);
+
+  const handleSkipToNextLesson = async (): Promise<void> => {
+    if (!nextUncompletedItem) return;
+    await handleStartAgentSession({
+      entrySource: 'planned',
+      planItemId: String(nextUncompletedItem.id),
+      conceptId: nextUncompletedItem.conceptId,
+    });
+  };
+
+  const handleRetryExercise = (): void => {
+    setAgentGradingResult(null);
+    activityStartedAt.current = Date.now();
+  };
+
   const handleStartAgentSession = async (
-    selection: LessonSelection = { entrySource: 'planned' },
+    selection: LessonSelection = lastLessonSelection.current,
   ): Promise<void> => {
     if (teachingRequestInFlight.current) return;
     teachingRequestInFlight.current = true;
     lastLessonSelection.current = selection;
-    clearTeachingTurn();
     setIsTeachingOpen(true);
     setTeachingLoading(true);
+    setLoadingStage(nextAction === 'plan' || learnerState?.needsReplanning ? 'planning' : 'teaching');
     setTeachingError(null);
     setAgentGradingResult(null);
     setAgentReplanned(false);
@@ -273,15 +302,20 @@ export function App() {
       // Planning and teaching remain separate backend events. If this turn
       // regenerated the plan, request the teaching turn only after it finishes.
       if (!data.teachingAction && data.nextAction === 'teach') {
-        data = await dispatchLearningEvent('SESSION_STARTED', { entry_source: 'planned' });
+        setLoadingStage('teaching');
+        data = await dispatchLearningEvent('SESSION_STARTED', {
+          entry_source: selection.entrySource,
+          concept_id: selection.conceptId,
+          plan_item_id: selection.planItemId,
+        });
         await acceptResponse(data);
       }
       if (!data.teachingAction) {
-        throw new Error(
-          data.nextAction === 'complete'
-            ? 'Today’s plan is complete.'
-            : 'No teaching action was returned.',
-        );
+        if (data.nextAction === 'complete') {
+          setIsTeachingOpen(false);
+          return;
+        }
+        throw new Error('No teaching action was returned.');
       }
       setTeachingAction(data.teachingAction);
       setAgentReplanned(replanned || data.replanned);
@@ -291,6 +325,7 @@ export function App() {
     } finally {
       teachingRequestInFlight.current = false;
       setTeachingLoading(false);
+      setLoadingStage('idle');
     }
   };
 
@@ -351,6 +386,7 @@ export function App() {
   const handleCloseAgentSession = async (): Promise<void> => {
     if (teachingRequestInFlight.current) return;
     if (!learnerState?.activeSession) {
+      clearTeachingTurn();
       setIsTeachingOpen(false);
       return;
     }
@@ -364,6 +400,7 @@ export function App() {
           : currentActivitySeconds(),
       });
       await acceptResponse(data, true);
+      clearTeachingTurn();
       activityStartedAt.current = null;
       setIsTeachingOpen(false);
     } catch (error) {
@@ -469,9 +506,12 @@ export function App() {
         isOpen={isTeachingOpen}
         action={teachingAction}
         loading={teachingLoading}
+        loadingStage={loadingStage}
         error={teachingError}
         gradingResult={agentGradingResult}
         replanned={agentReplanned}
+        nextAction={nextAction}
+        hasMorePlannedLessons={hasMorePlannedLessons}
         recoveryLabel={nextAction === 'plan' ? 'Retry planning' : nextAction === 'complete' ? 'Return to plan' : 'Resume lesson'}
         onRecover={() => nextAction === 'complete'
           ? handleCloseAgentSession()
@@ -480,6 +520,8 @@ export function App() {
             : lastLessonSelection.current)}
         onClose={handleCloseAgentSession}
         onContinue={() => handleStartAgentSession()}
+        onSkipToNextLesson={handleSkipToNextLesson}
+        onRetryExercise={handleRetryExercise}
         onRequestHelp={handleTeachingHelp}
         onSubmitAnswer={handleAgentAnswer}
       />

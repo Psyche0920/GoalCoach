@@ -79,7 +79,7 @@ export const DailyPlanView: React.FC<DailyPlanViewProps> = ({
           const concept = concepts.find((candidate) => candidate.conceptId === item.conceptId);
           const style = ITEM_STYLE[item.kind];
           const isCurrent = currentItem?.id === item.id;
-          const canOpen = item.completed || isCurrent;
+          const canOpen = true;
           const reviewOnly = item.completed;
           return (
             <li key={item.id}>
