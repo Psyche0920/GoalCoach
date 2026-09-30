@@ -54,3 +54,24 @@ jobs:
           GOALCOACH_ENVIRONMENT: "testing"
           GOALCOACH_LLM_API_KEY: "ci-mock-token"
         run: uv run pytest tests/integration/ -v
+
+      - name: Run API Tests
+        env:
+          GOALCOACH_ENVIRONMENT: "testing"
+          GOALCOACH_LLM_API_KEY: "ci-mock-token"
+        run: uv run pytest tests/api/ -v
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install Web Dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Check Web Types and Build
+        working-directory: apps/web
+        run: npm run lint && npm run build

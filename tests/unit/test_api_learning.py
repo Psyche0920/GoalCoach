@@ -6,6 +6,8 @@ from httpx import ASGITransport, AsyncClient
 from apps.api.main import create_app
 from goalcoach.infrastructure.config import Settings
 
+pytestmark = pytest.mark.usefixtures("planning_model_stub")
+
 
 @pytest.fixture
 def app():

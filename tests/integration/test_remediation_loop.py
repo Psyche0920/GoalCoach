@@ -45,6 +45,7 @@ from goalcoach.infrastructure.persistence.repositories import (
 )
 
 CONTENT_DB_PATH = Path("data/database1/goalcoach_hsk1_learning.db")
+pytestmark = pytest.mark.usefixtures("planning_model_stub")
 
 
 @pytest.fixture
