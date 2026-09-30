@@ -128,7 +128,6 @@ def get_concept_teaching_cards(
             "example_pinyin": card.example_pinyin,
             "example_en": card.example_en,
             "explanation_en": card.explanation_en,
-            "audio_url": card.audio_url,
         }
         for card in cards
     ]
@@ -359,24 +358,6 @@ class TeachingWorker:
         )
         action.exercise_payload = payload
         return action
-
-    @staticmethod
-    def _attach_curriculum_exercise(
-        action: TeachingAction,
-        content_service: ContentService,
-        state: LearnerState | None = None,
-        is_remedial: bool = False,
-        excluded_exercise_id: str | None = None,
-    ) -> TeachingAction:
-        """Backwards compatibility helper."""
-        selected = TeachingWorker._select_candidate_exercise(
-            action.concept_id,
-            content_service,
-            state=state,
-            is_remedial=is_remedial,
-            excluded_exercise_id=excluded_exercise_id,
-        )
-        return TeachingWorker._attach_selected_exercise(action, selected)
 
     @staticmethod
     def _deterministic_fallback(
