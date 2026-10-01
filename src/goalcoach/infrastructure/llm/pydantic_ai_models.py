@@ -30,11 +30,21 @@ except ImportError:
     from pydantic_ai.models.openai import OpenAIModel  # type: ignore[assignment]
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from goalcoach.domain.telemetry import (
+    AgentLifecycleStage,
+    AgentTelemetryRecord,
+    CostAccountingRecord,
+)
 from goalcoach.infrastructure.config import Settings
+from goalcoach.infrastructure.logging.budget_tracker import BudgetTracker
+from goalcoach.infrastructure.logging.context import get_context
+from goalcoach.infrastructure.logging.cost_calculator import CostCalculator
 from goalcoach.infrastructure.telemetry import (
     AgentTelemetryEvent,
     current_request_id,
     emit_agent_telemetry,
+    emit_cost_record,
+    emit_telemetry_record,
     token_usage,
 )
 
@@ -146,6 +156,9 @@ async def run_with_fallback(
         raise LLMUnavailableError("Offline LLM fallback is enabled for deterministic execution")
     primary_model = get_openrouter_model()
     request_id = current_request_id()
+    ctx = get_context()
+    trace_id = ctx.get("trace_id") or request_id
+    learner_id = ctx.get("learner_id")
     started_at = perf_counter()
     primary_retries = _TransientRetry(settings.llm_max_retries)
 
@@ -184,6 +197,51 @@ async def run_with_fallback(
                 )
                 await sleep(primary_retries.delay_seconds)
         input_tokens, output_tokens = token_usage(result)
+        inp_tok = input_tokens or 0
+        out_tok = output_tokens or 0
+        in_cost, out_cost, tot_cost = CostCalculator.calculate(
+            "openrouter", primary_model.model_name, inp_tok, out_tok
+        )
+        cum_cost, budget_exceeded = BudgetTracker.accumulate(
+            str(learner_id or trace_id), tot_cost, limit_usd=settings.session_cost_limit_usd
+        )
+        emit_cost_record(
+            CostAccountingRecord(
+                trace_id=trace_id,
+                run_id=request_id,
+                learner_id=learner_id,
+                agent_name=component,
+                provider="openrouter",
+                model_name=primary_model.model_name,
+                prompt_tokens=inp_tok,
+                completion_tokens=out_tok,
+                total_tokens=inp_tok + out_tok,
+                input_cost_usd=in_cost,
+                output_cost_usd=out_cost,
+                total_cost_usd=tot_cost,
+                is_fallback=False,
+                budget_exceeded=budget_exceeded,
+                cumulative_session_cost_usd=cum_cost,
+            )
+        )
+        emit_telemetry_record(
+            AgentTelemetryRecord(
+                trace_id=trace_id,
+                run_id=request_id,
+                agent_name=component,
+                stage=AgentLifecycleStage.COMPLETED,
+                learner_id=learner_id,
+                execution_latency_ms=round((perf_counter() - started_at) * 1000, 2),
+                metadata={
+                    "provider": "openrouter",
+                    "model": primary_model.model_name,
+                    "prompt_version": prompt_version,
+                    "total_tokens": inp_tok + out_tok,
+                    "total_cost_usd": tot_cost,
+                    "budget_exceeded": budget_exceeded,
+                },
+            )
+        )
         emit_agent_telemetry(
             AgentTelemetryEvent(
                 request_id=request_id,
@@ -194,7 +252,7 @@ async def run_with_fallback(
                 latency_ms=round((perf_counter() - started_at) * 1000, 2),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                estimated_cost_usd=None,
+                estimated_cost_usd=tot_cost,
                 validation_succeeded=True,
                 fallback_used=False,
             )
@@ -207,6 +265,18 @@ async def run_with_fallback(
             else "connection or provider"
         )
         if not settings.enable_ollama_fallback:
+            emit_telemetry_record(
+                AgentTelemetryRecord(
+                    trace_id=trace_id,
+                    run_id=request_id,
+                    agent_name=component,
+                    stage=AgentLifecycleStage.FAILED,
+                    learner_id=learner_id,
+                    execution_latency_ms=round((perf_counter() - started_at) * 1000, 2),
+                    error_message=str(err),
+                    metadata={"provider": "openrouter", "failure_kind": failure_kind},
+                )
+            )
             emit_agent_telemetry(
                 AgentTelemetryEvent(
                     request_id=request_id,
@@ -265,6 +335,51 @@ async def run_with_fallback(
                         raise
                     await sleep(fallback_retries.delay_seconds)
             input_tokens, output_tokens = token_usage(result)
+            inp_tok = input_tokens or 0
+            out_tok = output_tokens or 0
+            in_cost, out_cost, tot_cost = CostCalculator.calculate(
+                "ollama", fallback_model.model_name, inp_tok, out_tok
+            )
+            cum_cost, budget_exceeded = BudgetTracker.accumulate(
+                str(learner_id or trace_id), tot_cost, limit_usd=settings.session_cost_limit_usd
+            )
+            emit_cost_record(
+                CostAccountingRecord(
+                    trace_id=trace_id,
+                    run_id=request_id,
+                    learner_id=learner_id,
+                    agent_name=component,
+                    provider="ollama",
+                    model_name=fallback_model.model_name,
+                    prompt_tokens=inp_tok,
+                    completion_tokens=out_tok,
+                    total_tokens=inp_tok + out_tok,
+                    input_cost_usd=in_cost,
+                    output_cost_usd=out_cost,
+                    total_cost_usd=tot_cost,
+                    is_fallback=True,
+                    budget_exceeded=budget_exceeded,
+                    cumulative_session_cost_usd=cum_cost,
+                )
+            )
+            emit_telemetry_record(
+                AgentTelemetryRecord(
+                    trace_id=trace_id,
+                    run_id=request_id,
+                    agent_name=component,
+                    stage=AgentLifecycleStage.COMPLETED,
+                    learner_id=learner_id,
+                    execution_latency_ms=round((perf_counter() - fallback_started_at) * 1000, 2),
+                    metadata={
+                        "provider": "ollama",
+                        "model": fallback_model.model_name,
+                        "prompt_version": prompt_version,
+                        "total_tokens": inp_tok + out_tok,
+                        "total_cost_usd": tot_cost,
+                        "fallback_used": True,
+                    },
+                )
+            )
             emit_agent_telemetry(
                 AgentTelemetryEvent(
                     request_id=request_id,
@@ -275,13 +390,33 @@ async def run_with_fallback(
                     latency_ms=round((perf_counter() - fallback_started_at) * 1000, 2),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
-                    estimated_cost_usd=None,
+                    estimated_cost_usd=0.0,
                     validation_succeeded=True,
                     fallback_used=True,
                 )
             )
             return result, f"ollama:{fallback_model.model_name}"
         except (httpx.HTTPError, ModelAPIError, UnexpectedModelBehavior) as fallback_err:
+            emit_telemetry_record(
+                AgentTelemetryRecord(
+                    trace_id=trace_id,
+                    run_id=request_id,
+                    agent_name=component,
+                    stage=AgentLifecycleStage.FAILED,
+                    learner_id=learner_id,
+                    execution_latency_ms=round((perf_counter() - fallback_started_at) * 1000, 2),
+                    error_message=str(fallback_err),
+                    metadata={
+                        "provider": "ollama",
+                        "fallback_used": True,
+                        "failure_kind": (
+                            "output validation"
+                            if isinstance(fallback_err, UnexpectedModelBehavior)
+                            else "connection or provider"
+                        ),
+                    },
+                )
+            )
             emit_agent_telemetry(
                 AgentTelemetryEvent(
                     request_id=request_id,

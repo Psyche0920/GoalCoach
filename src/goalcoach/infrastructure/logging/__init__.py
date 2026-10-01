@@ -20,23 +20,48 @@ from goalcoach.infrastructure.logging.filters import (
     scrub_data,
     scrub_sensitive_text,
 )
-from goalcoach.infrastructure.logging.formatters import DevelopmentFormatter, JSONFormatter
+from goalcoach.infrastructure.logging.formatters import (
+    DevelopmentFormatter,
+    JSONFormatter,
+    NDJSONFormatter,
+)
+from goalcoach.infrastructure.logging.sinks import (
+    BACKEND_LOGGER_NAME,
+    COST_LOGGER_NAME,
+    TELEMETRY_LOGGER_NAME,
+    get_backend_logger,
+    get_cost_logger,
+    get_telemetry_logger,
+    setup_isolated_sinks,
+    start_logging_queue,
+    stop_logging_queue,
+)
 
 __all__ = [
+    "BACKEND_LOGGER_NAME",
+    "COST_LOGGER_NAME",
     "REDACTED_SUBSTITUTION",
+    "TELEMETRY_LOGGER_NAME",
     "ContextFilter",
     "DevelopmentFormatter",
     "JSONFormatter",
+    "NDJSONFormatter",
     "SecretScrubbingFilter",
     "bind_context",
     "bind_request_id",
     "clear_context",
     "configure_logging",
     "current_request_id",
+    "get_backend_logger",
     "get_context",
+    "get_cost_logger",
+    "get_telemetry_logger",
     "reset_context",
     "reset_request_id",
     "scrub_data",
     "scrub_sensitive_text",
     "set_context",
+    "setup_isolated_sinks",
+    "start_logging_queue",
+    "stop_logging_queue",
 ]

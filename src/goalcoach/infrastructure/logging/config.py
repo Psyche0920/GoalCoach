@@ -99,6 +99,11 @@ def configure_logging(
         app_logger.setLevel(log_level)
         app_logger.propagate = True
 
+    # Initialize isolated asynchronous sinks for backend, telemetry, and cost accounting
+    from goalcoach.infrastructure.logging.sinks import setup_isolated_sinks
+
+    setup_isolated_sinks(resolved_settings)
+
     # Quiet external loggers that would duplicate or clutter
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").setLevel(log_level)

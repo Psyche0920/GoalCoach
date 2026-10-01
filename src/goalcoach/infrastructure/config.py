@@ -36,4 +36,21 @@ class Settings(BaseSettings):
     log_format: str = "auto"
     log_to_file: bool = True
     log_file_path: str = "./logs/goalcoach.log"
+    backend_log_path: str = "./logs/backend.jsonl"
+    agent_telemetry_log_path: str = "./logs/agent_telemetry.jsonl"
+    cost_accounting_log_path: str = "./logs/cost_accounting.jsonl"
+    session_cost_limit_usd: float = Field(default=0.50, gt=0.0)
+    enable_agent_telemetry: bool = True
+    async_logging_queue_size: int = Field(default=10000, gt=100)
     log_slow_query_threshold_ms: float = 25.0
+
+    def resolve_log_path(self, path_str: str) -> str:
+        """Resolve log paths relative to repository root to prevent CWD drift under Uvicorn."""
+        from pathlib import Path
+
+        p = Path(path_str)
+        if p.is_absolute():
+            return str(p)
+        # Anchor relative to project root (4 levels up from this file: infrastructure -> goalcoach -> src -> repo root)
+        root_dir = Path(__file__).resolve().parent.parent.parent.parent
+        return str((root_dir / p).resolve())

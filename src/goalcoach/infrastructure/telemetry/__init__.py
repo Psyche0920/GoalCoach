@@ -1,4 +1,4 @@
-"""Privacy-safe structured telemetry for model executions."""
+"""Privacy-safe structured telemetry for model executions and financial ledger events."""
 
 from __future__ import annotations
 
@@ -7,10 +7,19 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from goalcoach.domain.telemetry import (
+    AgentLifecycleStage,
+    AgentTelemetryRecord,
+    CostAccountingRecord,
+)
 from goalcoach.infrastructure.logging.context import (
     bind_request_id,
     current_request_id,
     reset_request_id,
+)
+from goalcoach.infrastructure.logging.sinks import (
+    get_cost_logger,
+    get_telemetry_logger,
 )
 
 logger = logging.getLogger("goalcoach.agent_telemetry")
@@ -18,7 +27,7 @@ logger = logging.getLogger("goalcoach.agent_telemetry")
 
 @dataclass(frozen=True, slots=True)
 class AgentTelemetryEvent:
-    """One model attempt without prompts, answers, credentials, or learner content."""
+    """Legacy model attempt record preserved for backward compatibility."""
 
     request_id: str
     component: str
@@ -44,15 +53,30 @@ def token_usage(result: Any) -> tuple[int | None, int | None]:
 
 
 def emit_agent_telemetry(event: AgentTelemetryEvent) -> None:
-    """Emit a stable JSON record suitable for a log or tracing collector."""
+    """Legacy emitter for AgentTelemetryEvent."""
     logger.info(json.dumps(asdict(event), separators=(",", ":"), sort_keys=True))
 
 
+def emit_telemetry_record(record: AgentTelemetryRecord) -> None:
+    """Emit an AgentTelemetryRecord exclusively to logs/agent_telemetry.jsonl."""
+    get_telemetry_logger().info(record.model_dump_json())
+
+
+def emit_cost_record(record: CostAccountingRecord) -> None:
+    """Emit a CostAccountingRecord exclusively to logs/cost_accounting.jsonl."""
+    get_cost_logger().info(record.model_dump_json())
+
+
 __all__ = [
+    "AgentLifecycleStage",
     "AgentTelemetryEvent",
+    "AgentTelemetryRecord",
+    "CostAccountingRecord",
     "bind_request_id",
     "current_request_id",
     "emit_agent_telemetry",
+    "emit_cost_record",
+    "emit_telemetry_record",
     "reset_request_id",
     "token_usage",
 ]

@@ -97,9 +97,14 @@ class ContextFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         ctx = get_context()
-        record.context = ctx  # type: ignore[attr-defined]
-        for key, value in ctx.items():
-            setattr(record, key, value)
+        if ctx:
+            existing = getattr(record, "context", {}) or {}
+            merged = {**existing, **ctx}
+            record.context = merged
+            for key, value in merged.items():
+                setattr(record, key, value)
+        elif not hasattr(record, "context"):
+            record.context = {}
         return True
 
 

@@ -7,6 +7,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import BaseModel
+
 from goalcoach.infrastructure.logging.context import get_context
 
 # Standard LogRecord attributes that should not be dumped into "extra"
@@ -53,6 +55,16 @@ class JSONFormatter(logging.Formatter):
     """Formats log records as single-line Newline Delimited JSON (NDJSON)."""
 
     def format(self, record: logging.LogRecord) -> str:
+        if isinstance(record.msg, BaseModel):
+            return record.msg.model_dump_json()
+
+        if isinstance(record.msg, str) and record.msg.startswith("{") and record.msg.endswith("}"):
+            try:
+                json.loads(record.msg)
+                return record.msg
+            except Exception:  # noqa: BLE001, S110
+                pass
+
         record_message = record.getMessage()
 
         # Build context from record attribute or contextvars
@@ -116,7 +128,10 @@ class DevelopmentFormatter(logging.Formatter):
         return base_line
 
 
+NDJSONFormatter = JSONFormatter
+
 __all__ = [
     "DevelopmentFormatter",
     "JSONFormatter",
+    "NDJSONFormatter",
 ]
