@@ -1,28 +1,7 @@
 """Unit and integration tests for FastAPI learning endpoints."""
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
-from apps.api.main import create_app
-from goalcoach.infrastructure.config import Settings
-
-pytestmark = pytest.mark.usefixtures("planning_model_stub")
-
-
-@pytest.fixture
-def app():
-    settings = Settings(
-        database_url="sqlite:///:memory:",
-        content_database_url="sqlite:///./data/database1/goalcoach_hsk1_learning.db",
-    )
-    return create_app(settings)
-
-
-@pytest.fixture
-async def client(app):
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
