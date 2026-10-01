@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replaced manual failure navigation buttons (`"Try again"`, `"Try a new teaching approach"`, `"Skip to next lesson"`) in `TeachingAgentModal.tsx` with a single unified, agent-directed button: `"Continue with Coach"` (with `data-testid="continue-lesson-btn"`).
   - Aligned product behavior with autonomous agent-led pedagogy: the learner no longer decides the remediation strategy manually; instead, the Teaching Agent and Orchestrator inspect error history, DSR mastery levels, and attempt count to dynamically provide hints, pedagogical deconstruction, simplified retries, or trigger adaptive replanning.
   - Simplified modal interaction contract by cleaning up deprecated manual skip and retry handlers (`hasMorePlannedLessons`, `onSkipToNextLesson`, `onRetryExercise`, `uncompletedPlanItems`, `nextUncompletedItem`) in `apps/web/src/App.tsx` and `TeachingAgentModal.tsx`.
+- **Desktop Sidebar Pinning & Goal Profile Accessibility**:
+  - Updated `Sidebar.tsx` with `sticky top-0 h-screen` to keep the sidebar pinned while scrolling main page content.
+  - Resolved profile card displacement beyond screen length by bounding sidebar height to viewport (`h-screen`) and tightening component spacing, keeping the Goal Completion card permanently visible in viewport.
+  - Connected the empty state `"Build today’s plan"` button in `DailyPlanView.tsx` to open the Goal Settings drawer (`onOpenGoalSettings`) so learners can configure and save their goal directly.
 
 ### Fixed
 - **Stale Plan Item ID Fallback & Modal Recovery Lock**:
