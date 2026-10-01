@@ -35,12 +35,20 @@ from goalcoach.domain.models import (
     utc_now,
 )
 from goalcoach.domain.retention import calculate_retention, decayed_retention
+from goalcoach.domain.telemetry import (
+    AgentLifecycleStage,
+    AgentTelemetryRecord,
+    CostAccountingRecord,
+)
 
 __all__ = [
     "ActiveLearningSession",
     "AgentHistorySummary",
+    "AgentLifecycleStage",
+    "AgentTelemetryRecord",
     "AnswerSubmittedPayload",
     "ConceptMastery",
+    "CostAccountingRecord",
     "DailyPlan",
     "DomainBaseModel",
     "ErrorRecord",
