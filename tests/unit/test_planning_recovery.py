@@ -110,3 +110,74 @@ async def test_model_failure_does_not_replace_plan_with_heuristic(
             remediation_state(),
             ContentStub(),  # type: ignore[arg-type]
         )
+
+
+def test_model_execution_fields_do_not_enter_new_plan() -> None:
+    output = AgentPlanUpdate.model_validate(
+        {
+            "daily_allocation_minutes": 5,
+            "ordered_items": [
+                {
+                    "concept_id": "c1",
+                    "kind": "new",
+                    "objective": "Practice greetings",
+                    "estimated_minutes": 5,
+                    "id": "model-generated",
+                    "completed": True,
+                    "concept_ids": ["unknown"],
+                }
+            ],
+            "adaptation_rationale": "Practice greetings today.",
+            "roadmap_concept_ids": ["c1", "c2"],
+            "roadmap_coverage_rationale": "Covers greetings and introductions.",
+            "metadata": {"unnecessary_catalog": "ignored"},
+        }
+    )
+    result = output.to_domain()
+    assert str(result.ordered_items[0].id) != "model-generated"
+    assert not result.ordered_items[0].completed
+    assert result.ordered_items[0].concept_ids == []
+    assert result.metadata == {}
+    assert result.roadmap_concept_ids == ["c1", "c2"]
+    assert result.ordered_items[0].objective == "Practice greetings"
+    schema = AgentPlanUpdate.model_json_schema()
+    assert set(schema["$defs"]["AgentPlanItem"]["properties"]) == {
+        "concept_id",
+        "kind",
+        "objective",
+        "estimated_minutes",
+    }
+    assert "metadata" not in schema["properties"]
+
+
+def test_compact_catalog_preserves_goal_selection_evidence() -> None:
+    from goalcoach.agents.planning_agent import get_curriculum_catalog
+
+    concept = SimpleNamespace(
+        concept_id="c1",
+        title_en="Greetings",
+        sequence_no=1,
+        difficulty=1,
+        communicative_goal="Greet a person and introduce yourself.",
+        grammar_focus=["是"],
+        vocabulary_focus=["你好"],
+        hsk_level=1,
+        title_zh="问候",
+        metadata_json={"large_unneeded_data": "ignored"},
+    )
+    service = SimpleNamespace(
+        list_all_concepts=lambda **kwargs: [concept],
+        get_prerequisites=lambda cid: ["c0"],
+    )
+    state = LearnerState(
+        learner_id="catalog-test", goal=LearningGoal(title="Greetings", target_hsk_level=1)
+    )
+    context = SimpleNamespace(deps=PlanningDeps(state, service, False, True))
+    catalog = get_curriculum_catalog(context)  # type: ignore[arg-type]
+    entry = catalog[0].model_dump()
+    assert entry["communicative_goal"] == concept.communicative_goal
+    assert entry["grammar_focus"] == ["是"]
+    assert entry["vocabulary_focus"] == ["你好"]
+    assert entry["prerequisites"] == ["c0"]
+    assert "metadata" not in entry
+    assert "title_zh" not in entry

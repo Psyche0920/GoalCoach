@@ -88,6 +88,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
           </div>
           <button
             onClick={onClose}
+            disabled={saving}
             className="p-2 text-zinc-400 hover:text-zinc-900 rounded-xl hover:bg-zinc-100 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -183,6 +184,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
           <button
             type="button"
             onClick={onClose}
+            disabled={saving}
             className="px-4 py-2.5 text-xs font-black text-zinc-600 hover:text-zinc-900 rounded-xl transition-colors"
           >
             Cancel
@@ -194,7 +196,7 @@ export const LearnerProfileDrawer: React.FC<LearnerProfileDrawerProps> = ({
             className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-2xl border-2 border-zinc-950 font-black text-xs uppercase tracking-wider shadow-[0_3px_0_#15803d] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
           >
             <Save className="w-4 h-4" />
-            <span>{saving ? 'Saving…' : 'Save'}</span>
+            <span>{saving ? 'Planning…' : 'Save'}</span>
           </button>
         </div>
       </div>

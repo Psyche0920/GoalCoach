@@ -7,8 +7,11 @@ from typing import cast
 from fastapi import Request
 
 from goalcoach.agents.grader_component import GraderComponent
+from goalcoach.agents.jev_planning import JevPlanningWorker
+from goalcoach.agents.jev_teaching import JevTeachingWorker
 from goalcoach.agents.planning_agent import PlanningWorker
 from goalcoach.agents.teaching_agent import TeachingWorker
+from goalcoach.agents.worker_factory import create_planning_worker, create_teaching_worker
 from goalcoach.infrastructure.persistence.repositories import (
     ContentRepository,
     SqliteLearnerRepository,
@@ -17,14 +20,14 @@ from goalcoach.infrastructure.persistence.repositories import (
 _default_content_repo: ContentRepository | None = None
 
 
-def get_planning_worker() -> PlanningWorker:
+def get_planning_worker() -> PlanningWorker | JevPlanningWorker:
     """Create the configured Planning Agent application adapter."""
-    return PlanningWorker()
+    return create_planning_worker()
 
 
-def get_teaching_worker() -> TeachingWorker:
+def get_teaching_worker() -> TeachingWorker | JevTeachingWorker:
     """Create the configured Teaching Agent application adapter."""
-    return TeachingWorker()
+    return create_teaching_worker()
 
 
 def get_grader_component() -> GraderComponent:

@@ -20,8 +20,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from goalcoach.agents.grader_component import GraderComponent
-from goalcoach.agents.planning_agent import PlanningWorker
-from goalcoach.agents.teaching_agent import TeachingWorker
+from goalcoach.agents.worker_factory import create_planning_worker, create_teaching_worker
 from goalcoach.application.orchestrator import DeterministicOrchestrator
 from goalcoach.application.progress_service import ProgressService
 from goalcoach.domain.enums import EventType
@@ -101,8 +100,8 @@ async def main(target_level: int = 1) -> None:
     content_service = ContentService(content_repo)
 
     progress_service = ProgressService(learner_repo=learner_repo)
-    planning_worker = PlanningWorker()
-    teaching_worker = TeachingWorker()
+    planning_worker = create_planning_worker()
+    teaching_worker = create_teaching_worker()
     grader_worker = GraderComponent()
 
     orchestrator = DeterministicOrchestrator(

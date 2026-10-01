@@ -225,7 +225,6 @@ export function App() {
   // Handle goal update
   const handleUpdateGoal = async (updatedGoal: Partial<LearningGoal>) => {
     setAppError(null);
-    setIsProfileDrawerOpen(false);
     const title = updatedGoal.title?.trim() || goalForDisplay?.title?.trim();
     const dailyMinutes = updatedGoal.dailyAvailableMinutes ?? goalForDisplay?.dailyAvailableMinutes;
     const timezone = updatedGoal.timezone ?? learnerState?.goal?.timezone

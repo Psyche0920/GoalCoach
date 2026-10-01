@@ -1,6 +1,7 @@
 import os
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Disable third-party telemetry globally for clean offline and test execution
@@ -24,6 +25,7 @@ class Settings(BaseSettings):
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
+    llm_output_mode: Literal["auto", "tool", "text"] = "auto"
     llm_timeout_seconds: float = Field(default=30, gt=0)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
     llm_max_cost_usd_per_week: float = Field(default=50, gt=0)
@@ -31,6 +33,12 @@ class Settings(BaseSettings):
     fallback_llm_base_url: str = "http://localhost:11434/v1"
     fallback_llm_model: str | None = None
     enable_ollama_fallback: bool = False
+
+    jev_enabled: bool = False
+    jev_api_key: SecretStr | None = None
+    jev_base_url: str = "https://openrouter.ai/api/v1"
+    jev_model: str = "typesafe/jev-1.13"
+    jev_timeout_seconds: float = Field(default=10, gt=0)
 
     log_level: str = "INFO"
     log_format: str = "auto"

@@ -29,6 +29,7 @@ from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_output_retries,
     run_with_fallback,
 )
+from goalcoach.infrastructure.llm.structured_output import output_instructions, structured_output
 from goalcoach.infrastructure.persistence.content_service import ContentService
 
 logger = logging.getLogger(__name__)
@@ -105,9 +106,9 @@ Explanation and exercises should be strongly relevant.
 teaching_agent = Agent(
     model=get_openrouter_model(),
     deps_type=TeachingDeps,
-    output_type=TeachingAction,
+    output_type=structured_output(TeachingAction),
     output_retries=get_output_retries(),
-    system_prompt=TEACHING_SYSTEM_PROMPT,
+    system_prompt=TEACHING_SYSTEM_PROMPT + output_instructions(TeachingAction),
 )
 
 
@@ -518,9 +519,9 @@ class TutorResponse(BaseModel):
 
 tutor_agent = Agent(
     model=get_openrouter_model(),
-    output_type=TutorResponse,
+    output_type=structured_output(TutorResponse),
     output_retries=get_output_retries(),
-    system_prompt="You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor.",
+    system_prompt="You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor." + output_instructions(TutorResponse),
 )
 
 

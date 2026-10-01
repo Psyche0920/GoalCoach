@@ -27,18 +27,18 @@ def _maybe_parse_json_str(val: Any) -> Any:
         ):
             try:
                 parsed = json.loads(stripped, strict=False)
-                return _unwrap_nested(parsed)
+                return normalize_json_value(parsed)
             except (json.JSONDecodeError, TypeError):
                 pass
     return val
 
 
-def _unwrap_nested(data: Any) -> Any:
+def normalize_json_value(data: Any) -> Any:
     """Recursively walks dicts and lists, unwrapping stringified JSON children."""
     if isinstance(data, dict):
-        return {k: _unwrap_nested(_maybe_parse_json_str(v)) for k, v in data.items()}
+        return {k: normalize_json_value(_maybe_parse_json_str(v)) for k, v in data.items()}
     if isinstance(data, list):
-        return [_unwrap_nested(_maybe_parse_json_str(item)) for item in data]
+        return [normalize_json_value(_maybe_parse_json_str(item)) for item in data]
     return data
 
 
@@ -58,42 +58,34 @@ def extract_and_sanitize_json(raw_text: str) -> dict[str, Any]:
     if not text:
         raise ValueError("Empty response cannot be parsed as JSON")
 
-    # 1. Extract markdown code block if present
-    code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
-    if code_block_match:
-        text = code_block_match.group(1).strip()
-
-    # 2. Extract outermost { ... }
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = text[start : end + 1]
-    else:
-        candidate = text
-
-    # 3. Attempt JSON parse
+    # Decode the whole document first so valid escapes and top-level strings survive.
     try:
-        data = json.loads(candidate, strict=False)
+        data = json.loads(text, strict=False)
     except json.JSONDecodeError:
-        # Fallback: normalize escaped quotes if the model emitted raw escaped JSON
-        unescaped = candidate.replace(r"\"", '"')
+        code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+        candidate = code_block_match.group(1).strip() if code_block_match else text
+        start, end = candidate.find("{"), candidate.rfind("}")
+        if start != -1 and end > start:
+            candidate = candidate[start : end + 1]
         try:
-            data = json.loads(unescaped, strict=False)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Failed to parse sanitized JSON: {exc}") from exc
+            data = json.loads(candidate, strict=False)
+        except json.JSONDecodeError:
+            try:
+                data = json.loads(candidate.replace(r'\"', '"'), strict=False)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Response does not contain a complete JSON object") from exc
 
-    # 4. Handle double-encoded JSON string (e.g. top-level parsed to a JSON string)
     if isinstance(data, str):
         try:
             data = json.loads(data, strict=False)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Double-encoded string could not be parsed: {exc}") from exc
+            raise ValueError("Double-encoded response is not a complete JSON object") from exc
 
     if not isinstance(data, dict):
         raise TypeError(f"Expected JSON object (dict), got {type(data).__name__}")
 
     # 5. Recursively unwrap stringified nested fields
-    return _unwrap_nested(data)
+    return normalize_json_value(data)
 
 
 __all__ = ["extract_and_sanitize_json"]

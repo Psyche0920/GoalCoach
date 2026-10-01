@@ -7,11 +7,11 @@ Produces a validated PlanUpdate schema strictly bounded by the learner's time bu
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import ModelMessage, RetryPromptPart
 
 from goalcoach.application.agent_history import format_agent_history
@@ -25,6 +25,7 @@ from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_output_retries,
     run_with_fallback,
 )
+from goalcoach.infrastructure.llm.structured_output import output_instructions, structured_output
 from goalcoach.infrastructure.persistence.content_service import ContentService
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,43 @@ class PlanningDeps:
     allow_roadmap_changes: bool
 
 
+class AgentPlanItem(BaseModel):
+    """Only ask the model for scheduling decisions; execution state belongs to the app."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    concept_id: str = Field(min_length=1, max_length=128)
+    kind: PlanItemKind
+    objective: str = Field(
+        min_length=1,
+        max_length=500,
+        description="One short learning objective, ideally under 12 words.",
+    )
+    estimated_minutes: int = Field(gt=0, le=120)
+
+    def to_domain(self) -> PlanItem:
+        return PlanItem(
+            concept_id=self.concept_id,
+            kind=self.kind,
+            objective=self.objective,
+            estimated_minutes=self.estimated_minutes,
+        )
+
+
+class PlanningCatalogEntry(BaseModel):
+    """Goal-selection evidence without teaching material or opaque metadata."""
+
+    concept_id: str
+    title_en: str
+    sequence_no: int
+    difficulty: int
+    communicative_goal: str
+    grammar_focus: list[str]
+    vocabulary_focus: list[str]
+    prerequisites: list[str]
+    hsk_level: int
+
+
 @dataclass(frozen=True, slots=True)
 class RemediationPolicy:
     """Keep mandatory remediation consistent across generation and validation."""
@@ -86,10 +124,10 @@ class RemediationPolicy:
             )
         )
 
-    def permits_repeat(self, item: PlanItem) -> bool:
+    def permits_repeat(self, item: PlanItem | AgentPlanItem) -> bool:
         return item.kind == PlanItemKind.REMEDIAL and item.concept_id in self.required_concept_ids
 
-    def has_required_first_item(self, items: list[PlanItem]) -> bool:
+    def has_required_first_item(self, items: Sequence[PlanItem | AgentPlanItem]) -> bool:
         return not self.required_concept_ids or bool(
             items
             and items[0].kind == PlanItemKind.REMEDIAL
@@ -101,8 +139,10 @@ class AgentPlanUpdate(BaseModel):
     """Strict model-facing output contract; persisted state retains safe defaults."""
 
     daily_allocation_minutes: int = Field(gt=0, le=240)
-    ordered_items: list[PlanItem] = Field(min_length=1)
-    adaptation_rationale: str = Field(min_length=1)
+    ordered_items: list[AgentPlanItem] = Field(min_length=1)
+    adaptation_rationale: str = Field(
+        min_length=1, description="Explain today's choice in one or two short sentences."
+    )
     roadmap_adjustments: list[str] = Field(default_factory=list)
     roadmap_concept_ids: list[str] = Field(
         min_length=1,
@@ -115,10 +155,20 @@ class AgentPlanUpdate(BaseModel):
         min_length=1,
         description=(
             "Name the capabilities required by the goal and explain why the selected roadmap "
-            "covers them without material gaps."
+            "covers them without material gaps in one or two short sentences."
         ),
     )
-    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def to_domain(self) -> PlanUpdate:
+        """Create IDs and fresh execution state after model validation."""
+        return PlanUpdate(
+            daily_allocation_minutes=self.daily_allocation_minutes,
+            ordered_items=[item.to_domain() for item in self.ordered_items],
+            adaptation_rationale=self.adaptation_rationale,
+            roadmap_adjustments=self.roadmap_adjustments,
+            roadmap_concept_ids=self.roadmap_concept_ids,
+            roadmap_coverage_rationale=self.roadmap_coverage_rationale,
+        )
 
 
 PLANNING_SYSTEM_PROMPT = """You are the GoalCoach Adaptive Curriculum Planner for Mandarin Chinese learners.
@@ -157,7 +207,13 @@ Key Pedagogical Rules:
    - Reason directly from the goal and each concept's communicative purpose; do not use fixed goal categories.
    - `ordered_items` is only today's budget-bounded subset of this roadmap. Every daily item must
      also appear in `roadmap_concept_ids`.
-7. Cross-Session Continuity:
+7. Concise Output:
+   - Keep each objective under 12 words and each rationale to one or two short sentences.
+   - Output only schema fields. Keep canonical concept IDs, but do not add metadata, execution IDs, execution state, duplicated catalogs,
+     teaching content, or reasoning transcripts. The application creates IDs and execution defaults.
+   - Return an empty roadmap_adjustments list unless an actual adjustment needs explaining.
+   - Concision must not reduce the roadmap's coverage or remove necessary daily work.
+8. Cross-Session Continuity:
    - Use the compact learning history as evidence when choosing review, remediation, and new work.
    - Avoid needless immediate repetition, but repeat a concept when its outcome or error evidence justifies it.
 """
@@ -165,7 +221,7 @@ Key Pedagogical Rules:
 planning_agent = Agent(
     model=get_openrouter_model(),
     deps_type=PlanningDeps,
-    output_type=ToolOutput(
+    output_type=structured_output(
         AgentPlanUpdate,
         name="goalcoach_plan_update",
         description=(
@@ -175,7 +231,7 @@ planning_agent = Agent(
         ),
     ),
     output_retries=get_output_retries(),
-    system_prompt=PLANNING_SYSTEM_PROMPT,
+    system_prompt=PLANNING_SYSTEM_PROMPT + output_instructions(AgentPlanUpdate),
 )
 
 
@@ -250,24 +306,22 @@ def resolve_active_level(state: LearnerState, content_service: ContentService) -
 
 
 @planning_agent.tool
-def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]]:
-    """List available curriculum concepts up to the learner's active reachable HSK level window."""
+def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[PlanningCatalogEntry]:
+    """Retain goal coverage and sequencing evidence without duplicating teaching content."""
     active_level = resolve_active_level(ctx.deps.state, ctx.deps.content_service)
     concepts = ctx.deps.content_service.list_all_concepts(max_hsk_level=active_level)
     return [
-        {
-            "concept_id": c.concept_id,
-            "title_zh": c.title_zh,
-            "title_en": c.title_en,
-            "sequence_no": c.sequence_no,
-            "difficulty": c.difficulty,
-            "communicative_goal": c.communicative_goal,
-            "grammar_focus": c.grammar_focus,
-            "vocabulary_focus": c.vocabulary_focus,
-            "metadata": c.metadata_json or {},
-            "prerequisites": ctx.deps.content_service.get_prerequisites(c.concept_id),
-            "hsk_level": c.hsk_level,
-        }
+        PlanningCatalogEntry(
+            concept_id=c.concept_id,
+            title_en=c.title_en,
+            sequence_no=c.sequence_no,
+            difficulty=c.difficulty,
+            communicative_goal=c.communicative_goal,
+            grammar_focus=c.grammar_focus or [],
+            vocabulary_focus=c.vocabulary_focus or [],
+            prerequisites=ctx.deps.content_service.get_prerequisites(c.concept_id),
+            hsk_level=c.hsk_level,
+        )
         for c in concepts
     ]
 
@@ -330,8 +384,6 @@ class PlanningWorker:
             for err in state.error_profile
         ]
 
-        remediated_summary = ", ".join(state.today_remediated_concept_ids) or "None"
-        studied_summary = ", ".join(state.today_studied_concept_ids) or "None"
         history_summary = format_agent_history(state)
         active_level = resolve_active_level(state, content_service)
         roadmap_ids = (
@@ -350,8 +402,6 @@ class PlanningWorker:
             f"Roadmap Changes Allowed: {allow_roadmap_changes}\n"
             f"Persisted Roadmap: {state.roadmap_concept_ids}\n"
             f"Mandatory REMEDIAL concepts in priority order: {remediation_policy.required_concept_ids}\n"
-            f"Remediated Today: {remediated_summary}\n"
-            f"Studied Today: {studied_summary}\n"
             f"Current Mastery: {mastery_summary}\n"
             f"Unresolved Remediation Counters: {state.remediation_counters}\n"
             f"Historical Errors (may already be resolved): {error_summary}\n"
@@ -376,7 +426,11 @@ class PlanningWorker:
                 component="planning_agent",
             )
             log_validation_retries(result.all_messages() if hasattr(result, "all_messages") else [])
-            plan_update = PlanUpdate.model_validate(result.output.model_dump(), strict=False)
+            plan_update = (
+                result.output.to_domain()
+                if isinstance(result.output, AgentPlanUpdate)
+                else PlanUpdate.model_validate(result.output.model_dump(), strict=False)
+            )
             plan_update.metadata.update(
                 {
                     "provider": provider,

@@ -32,6 +32,7 @@ from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_output_retries,
     run_with_fallback,
 )
+from goalcoach.infrastructure.llm.structured_output import output_instructions, structured_output
 
 GRADER_SYSTEM_PROMPT = """You are the GoalCoach Chinese Grading Evaluator.
 Assess the learner's submission against the exercise prompt, instruction, and reference answers.
@@ -84,9 +85,9 @@ Do not include any conversational filler outside the JSON object.
 
 grader_agent = Agent(
     model=get_openrouter_model(),
-    output_type=str,
+    output_type=structured_output(GradingResult),
     output_retries=get_output_retries(),
-    system_prompt=GRADER_SYSTEM_PROMPT,
+    system_prompt=GRADER_SYSTEM_PROMPT + output_instructions(GradingResult),
 )
 
 
@@ -285,6 +286,7 @@ class GraderComponent:
 
         # 2. Heuristic check for common known errors if LLM fails
         prompt = (
+            f"Exercise ID: {exercise_id}\n"
             f"Exercise Prompt: {exercise.prompt}\n"
             f"Target Concept: {exercise.concept_id}\n"
             f"Instruction: {exercise.target_instruction}\n"
@@ -293,50 +295,24 @@ class GraderComponent:
             "Grade this response adhering strictly to the rubric and gating rules."
         )
 
-        max_validation_retries = get_output_retries()
-        current_prompt = prompt
-        llm_result: GradingResult | None = None
-        last_error: Exception | None = None
-        provider = "unknown"
-
-        for attempt in range(max_validation_retries + 1):
-            try:
-                result, provider = await run_with_fallback(
-                    self.agent,
-                    current_prompt,
-                    deps=None,
-                    component="grader_component",
-                )
-                if isinstance(result.output, GradingResult):
-                    llm_result = result.output
-                else:
-                    data = extract_and_sanitize_json(str(result.output))
-                    data.setdefault("exercise_id", exercise_id)
-                    llm_result = GradingResult.model_validate(data)
-                break
-            except LLMUnavailableError as exc:
-                return self._deterministic_fallback(
-                    exercise_id,
-                    notice=f"LLM unavailable; conservative deterministic grading fallback used: {exc}",
-                )
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                logger.warning(
-                    "Grader output validation attempt %d/%d failed (%s); retrying...",
-                    attempt + 1,
-                    max_validation_retries + 1,
-                    exc,
-                )
-                current_prompt = (
-                    f"{prompt}\n\n"
-                    f"CRITICAL: Your previous response was invalid: {exc}. "
-                    "You must output ONLY a valid JSON object matching the requested schema."
-                )
-
-        if llm_result is None:
+        try:
+            result, provider = await run_with_fallback(
+                self.agent, prompt, deps=None, component="grader_component"
+            )
+            # Injected agents may still return text; normalize at this boundary too.
+            llm_result = (
+                result.output if isinstance(result.output, GradingResult)
+                else GradingResult.model_validate(extract_and_sanitize_json(str(result.output)))
+            )
+        except LLMUnavailableError as exc:
             return self._deterministic_fallback(
                 exercise_id,
-                notice=f"Grader returned an invalid rubric result; deterministic fallback used: {last_error}",
+                notice=f"LLM unavailable; conservative deterministic grading fallback used: {exc}",
+            )
+        except (ValueError, TypeError) as exc:
+            logger.warning("Grader returned invalid rubric output (%s)", type(exc).__name__)
+            return self._deterministic_fallback(
+                exercise_id, notice="Grader returned an invalid rubric result; retry grading."
             )
 
         llm_result.exercise_id = exercise_id
