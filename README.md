@@ -6,7 +6,7 @@
 ![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-![Tests](https://img.shields.io/badge/Tests-100%20passed-success)
+![Tests](https://img.shields.io/badge/Tests-157%20passed-success)
 ![Architecture](https://img.shields.io/badge/Architecture-State--Driven%20Closed%20Loop-teal)
 
 **An adaptive, closed state-driven agentic learning coach for Chinese as a second language.**
@@ -213,7 +213,11 @@ GOALCOACH_FALLBACK_LLM_MODEL=hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M
 The fastest way to test the full teaching and grading loop without spinning up a browser:
 
 ```bash
-uv run python -m src.goalcoach.agents.terminal_harness
+uv run goalcoach
+```
+Or run directly as a module:
+```bash
+uv run python -m goalcoach.agents.terminal_harness
 ```
 
 ### Option B: FastAPI Backend Server
@@ -233,7 +237,7 @@ cd apps/web
 npm install
 npm run dev
 ```
-Open `http://localhost:5173` to interact with the responsive visual learning dashboard.
+Open `http://localhost:3000` to interact with the responsive visual learning dashboard.
 
 ---
 
@@ -251,10 +255,13 @@ uv run ruff format --check src/ apps/ tests/
 # 3. Ruff linter check (0 errors)
 uv run ruff check src/ apps/ tests/
 
-# 4. Fast Unit Tests (67 tests: domain models, math reducers, API routes)
+# 4. Fast Unit Tests (101 tests: domain models, math reducers, state transitions)
 uv run pytest tests/unit/ -v
 
-# 5. End-to-End Closed Loop Integration Tests
+# 5. API Route & Contract Tests (27 tests: events, routing, and lifecycle)
+uv run pytest tests/api/ -v
+
+# 6. End-to-End Closed Loop Integration Tests (29 tests)
 GOALCOACH_ENVIRONMENT="testing" \
 GOALCOACH_LLM_API_KEY="ci-mock-token" \
 uv run pytest tests/integration/ -v
@@ -277,6 +284,7 @@ Deterministic unit and API tests run offline. Tests that exercise a configured r
 ├── docs/
 │   ├── GOALCOACH_MVP_PRD.md       # Core MVP Product Requirements Document
 │   └── dev/                       # Technical designs, remediation plans, and architecture audits
+├── scripts/                       # CLI utility and analytics tools
 ├── src/goalcoach/
 │   ├── agents/                    # PydanticAI workers (Planning, Teaching, Grader, Terminal CLI)
 │   ├── application/               # Deterministic Orchestrator & Progress Service (40/40/20 Reducer)
@@ -284,6 +292,7 @@ Deterministic unit and API tests run offline. Tests that exercise a configured r
 │   └── infrastructure/            # Dual-layer SQLite persistence, LLM gateway, and retrieval
 ├── tests/
 │   ├── conftest.py                # Automated SQLite DB bootstrapping & test fixtures
+│   ├── api/                       # API route integration and contract tests
 │   ├── unit/                      # Fast unit tests for math, logic, and reducers
 │   └── integration/               # End-to-end closed loop tests (AC1-AC11, remediation stress tests)
 ├── pyproject.toml                 # Project metadata, dependencies, and Ruff configuration

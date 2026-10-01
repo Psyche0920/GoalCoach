@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.9] - 2026-10-02
+
+### Added
+- **Multi-Model Precision Cost Accounting & Rate Cards**:
+  - Implemented `src/goalcoach/infrastructure/logging/cost_calculator.py` with grounded token cost calculation for prompt tokens, completion tokens, cached tokens, and reasoning tokens.
+  - Added built-in static rate cards for `inclusionai/ling-3.0-flash-fin`, `openai/gpt-4o-mini`, `anthropic/claude-3-5-sonnet`, `deepseek/deepseek-chat`, and free local Ollama instances (`$0.00`).
+  - Added cumulative session budget tracker (`src/goalcoach/infrastructure/logging/budget_tracker.py`) with configurable warning and critical spend thresholds via `GOALCOACH_SESSION_BUDGET_USD`.
+- **Deep Agent Telemetry & Span Tracing**:
+  - Defined typed telemetry contracts in `src/goalcoach/domain/telemetry.py` (`AgentTelemetryRecord`, `LLMCallSpan`, `ToolExecutionSpan`, `CostAccountingRecord`, `ErrorRecord`).
+  - Instrumented `PlanningWorker` (`create_plan`, `_deterministic_fallback`, `plan_curriculum_budget` tool calls) and `TeachingWorker` (`teach_concept`, `_deterministic_fallback`, pedagogical tool calls) with end-to-end span duration and token tracking.
+- **Dedicated Log Sinks & Flushing Handlers**:
+  - Implemented isolated logging sinks in `src/goalcoach/infrastructure/logging/sinks.py` with `FlushingRotatingFileHandler` writing real-time line-delimited JSON (`logs/backend.jsonl`, `logs/agent_telemetry.jsonl`, `logs/cost_accounting.jsonl`).
+  - Added strict single-destination file isolation with `ZeroCrossSinkFilter` and propagation control.
+- **Terminal Harness Non-Interactive Test Mode & Windows Unicode Support**:
+  - Added `--test-mode` / `--smoke-test` flags to `src/goalcoach/agents/terminal_harness.py` for headless automated CLI verification without blocking on `stdin`.
+  - Added robust deterministic recovery handling in the terminal harness when model planning is unavailable.
+  - Configured automated UTF-8 stream re-wrapping on Windows consoles to prevent `cp1252` encoding crashes on Chinese characters and pinyin tones.
+- **Dual-Engine Analytics CLI Utilities**:
+  - Created `scripts/analyze_agent_costs.py` and `scripts/analyze_agent_telemetry.py` supporting fast DuckDB analytical SQL queries with automatic fallback to Python's standard library.
+  - Added optional `analytics = ["duckdb>=1.0.0"]` dependency group in `pyproject.toml`.
+- **Automated Verification Suite Expansion**:
+  - Added `tests/unit/test_logging_isolation.py` verifying sink isolation, PII scrubbing, context inheritance, and thread safety.
+  - Added `tests/unit/test_cost_accounting.py` verifying pricing formulas, token cache discounts, and budget thresholds.
+  - Added `tests/api/test_web_logging_pipeline.py` verifying end-to-end FastAPI event lifecycle logging across all three sinks with realistic request headers.
+  - Expanded test suite to 157 passing tests across unit, API, and integration suites.
+- **Documentation**:
+  - Added comprehensive `docs/OBSERVABILITY_AND_LOGGING_GUIDE.md` detailing operational mechanics, log sink schemas, web application verification, and CLI analytics workflows.
+
+### Fixed
+- **QueueListener Restart Deadlock**:
+  - In `src/goalcoach/infrastructure/logging/config.py`, guarded `CompoundListener.start()` with an atomic `_started: bool` flag to prevent thread deadlocks on repeated logging configuration calls.
+- **Producer ContextVar Inheritance Across Async Workers**:
+  - In `src/goalcoach/infrastructure/logging/filters.py`, enhanced `ContextFilter` to extract and preserve producer `request_id` and `trace_id` when records are emitted from background async worker threads.
+- **Development File Log Lag**:
+  - Replaced standard buffered file handlers with `FlushingRotatingFileHandler` ensuring every log entry is immediately flushed to disk upon write.
+
+---
+
 ## [0.1.8] - 2026-10-01
 
 ### Added
