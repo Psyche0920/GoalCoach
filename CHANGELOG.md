@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.8] - 2026-10-01
+
+### Added
+- **Direct Learner Question Answering & Clarification Support**:
+  - In `src/goalcoach/agents/teaching_agent.py`, updated `TEACHING_SYSTEM_PROMPT` Rule 2 to establish clear pedagogical policy for student questions: when `learner_query` is provided, Coach Baobao must prioritize directly, warmly, and accurately answering their specific question (e.g. word distinctions, pronunciation nuances, or grammar particles) before bridging to the practice task.
+  - In `teach_concept`, added dedicated prompt guidance for `learner_query` and relaxed output length constraint to 100 words (up from 40 words) so the agent can provide thorough, actionable answers.
+  - In `TeachingWorker._deterministic_fallback`, added targeted clarification logic acknowledging and answering student queries directly (*"You asked: '...' — Here is a key clarification on..."*) grounded in curriculum cards, ensuring questions are never discarded if the LLM provider fails or times out.
+  - Added `learner_query` tracking to `TeachingAction.metadata` across live agent runs, fallback generation, and orchestrator dispatch.
+  - Added automated integration test `test_help_event_with_learner_query_preserves_exercise_and_addresses_question` in `tests/api/test_api.py`.
+
+### Changed
+- **Exercise Preservation During Clarification Turns**:
+  - In `src/goalcoach/agents/teaching_agent.py`, updated `TeachingWorker._select_candidate_exercise` and `teach_concept` with `target_exercise_id` support.
+  - In `src/goalcoach/application/orchestrator.py` (`_handle_help_requested`), preserved the active practice exercise (`target_exercise_id=current_exercise_id`) when a learner asks a question, preventing the system from prematurely swapping out the exercise the student is trying to understand.
+- **Interactive Help Modal UX & Visual Clarification Badge**:
+  - In `apps/web/src/components/TeachingAgentModal.tsx`, cleared the rigid pre-filled query string and added a descriptive question placeholder: *"Ask what you didn't understand or need clarified (e.g. 'What is the difference between 你 and 您?')..."*.
+  - Added dynamic action button text: toggles between `"Ask Coach Baobao"` when a query is entered and `"Explain another way"` when empty.
+  - Added a visual clarification card in the modal displaying `"Coach's Clarification"` and highlighting the learner's submitted question (*"Your Question: '...' "*), providing immediate visual confirmation that their inquiry was captured and resolved.
+- **LLM Transient Error Resilience**:
+  - In `src/goalcoach/infrastructure/llm/pydantic_ai_models.py`, added `UnexpectedModelBehavior` to `_TransientRetry.should_retry` to recover from momentary upstream OpenRouter tool-calling schema hiccups before aborting to fallback.
+
+---
+
 ## [0.1.7] - 2026-10-01
 
 ### Changed
