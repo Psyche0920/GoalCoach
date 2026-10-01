@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
@@ -17,6 +19,7 @@ from pydantic_ai.messages import ModelMessage, RetryPromptPart
 from goalcoach.application.agent_history import format_agent_history
 from goalcoach.domain.enums import PlanItemKind
 from goalcoach.domain.models import LearnerState, PlanItem, PlanUpdate
+from goalcoach.domain.telemetry import AgentLifecycleStage, AgentTelemetryRecord
 from goalcoach.infrastructure.config import Settings
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     AgentOutputError,
@@ -25,7 +28,9 @@ from goalcoach.infrastructure.llm.pydantic_ai_models import (
     get_output_retries,
     run_with_fallback,
 )
+from goalcoach.infrastructure.logging.context import current_request_id, get_context
 from goalcoach.infrastructure.persistence.content_service import ContentService
+from goalcoach.infrastructure.telemetry import emit_telemetry_record
 
 logger = logging.getLogger(__name__)
 
@@ -252,8 +257,37 @@ def resolve_active_level(state: LearnerState, content_service: ContentService) -
 @planning_agent.tool
 def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]]:
     """List available curriculum concepts up to the learner's active reachable HSK level window."""
+    req_context = get_context()
+    trace_id = req_context.get("trace_id") or current_request_id()
+    run_id = current_request_id()
+    learner_id = getattr(ctx.deps.state, "learner_id", None)
+
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="planning_agent",
+            stage=AgentLifecycleStage.TOOL_CALLED,
+            learner_id=str(learner_id) if learner_id else None,
+            tool_name="get_curriculum_catalog",
+        )
+    )
+    t0 = perf_counter()
     active_level = resolve_active_level(ctx.deps.state, ctx.deps.content_service)
     concepts = ctx.deps.content_service.list_all_concepts(max_hsk_level=active_level)
+    latency_ms = round((perf_counter() - t0) * 1000, 2)
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="planning_agent",
+            stage=AgentLifecycleStage.TOOL_RETURNED,
+            learner_id=str(learner_id) if learner_id else None,
+            tool_name="get_curriculum_catalog",
+            tool_latency_ms=latency_ms,
+            metadata={"concept_count": len(concepts), "active_level": active_level},
+        )
+    )
     return [
         {
             "concept_id": c.concept_id,
@@ -275,9 +309,42 @@ def get_curriculum_catalog(ctx: RunContext[PlanningDeps]) -> list[dict[str, Any]
 @planning_agent.tool
 def get_concept_prerequisites(ctx: RunContext[PlanningDeps], concept_id: str) -> list[str]:
     """Fetch prerequisite concept IDs that must be mastered before studying this concept."""
+    req_context = get_context()
+    trace_id = req_context.get("trace_id") or current_request_id()
+    run_id = current_request_id()
+    learner_id = getattr(ctx.deps.state, "learner_id", None)
+
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="planning_agent",
+            stage=AgentLifecycleStage.TOOL_CALLED,
+            learner_id=str(learner_id) if learner_id else None,
+            concept_id=concept_id,
+            tool_name="get_concept_prerequisites",
+        )
+    )
+    t0 = perf_counter()
     if not ctx.deps.enable_prerequisites:
-        return []
-    return ctx.deps.content_service.get_prerequisites(concept_id)
+        res: list[str] = []
+    else:
+        res = ctx.deps.content_service.get_prerequisites(concept_id)
+    latency_ms = round((perf_counter() - t0) * 1000, 2)
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="planning_agent",
+            stage=AgentLifecycleStage.TOOL_RETURNED,
+            learner_id=str(learner_id) if learner_id else None,
+            concept_id=concept_id,
+            tool_name="get_concept_prerequisites",
+            tool_latency_ms=latency_ms,
+            metadata={"prereq_count": len(res)},
+        )
+    )
+    return res
 
 
 class PlanningWorker:
@@ -304,16 +371,37 @@ class PlanningWorker:
         allow_roadmap_changes: bool = False,
     ) -> PlanUpdate:
         """Request a valid Agent plan or leave the current plan unchanged on failure."""
+        start_time = perf_counter()
+        req_context = get_context()
+        trace_id = req_context.get("trace_id") or current_request_id() or uuid4().hex
+        run_id = current_request_id() or trace_id
+        learner_id = getattr(state, "learner_id", None)
+
+        available_minutes = (
+            state.active_session.planned_minutes
+            if state.active_session is not None
+            else (state.goal.daily_available_minutes if state.goal else 20)
+        )
+
+        emit_telemetry_record(
+            AgentTelemetryRecord(
+                trace_id=trace_id,
+                run_id=run_id,
+                agent_name="planning_agent",
+                stage=AgentLifecycleStage.STARTED,
+                learner_id=str(learner_id) if learner_id else None,
+                metadata={
+                    "available_minutes": available_minutes,
+                    "allow_roadmap_changes": allow_roadmap_changes,
+                },
+            )
+        )
+
         deps = PlanningDeps(
             state=state,
             content_service=content_service,
             enable_prerequisites=self.enable_prerequisites,
             allow_roadmap_changes=allow_roadmap_changes,
-        )
-        available_minutes = (
-            state.active_session.planned_minutes
-            if state.active_session is not None
-            else (state.goal.daily_available_minutes if state.goal else 20)
         )
 
         # Construct concise prompt summarizing learner context
@@ -495,12 +583,63 @@ class PlanningWorker:
                         plan_update.daily_allocation_minutes = sum(
                             it.estimated_minutes for it in validated_budgeted
                         )
+                        emit_telemetry_record(
+                            AgentTelemetryRecord(
+                                trace_id=trace_id,
+                                run_id=run_id,
+                                agent_name="planning_agent",
+                                stage=AgentLifecycleStage.COMPLETED,
+                                learner_id=str(learner_id) if learner_id else None,
+                                execution_latency_ms=round((perf_counter() - start_time) * 1000, 2),
+                                metadata={
+                                    "item_count": len(plan_update.ordered_items),
+                                    "daily_allocation_minutes": plan_update.daily_allocation_minutes,
+                                    "provider": plan_update.metadata.get("provider"),
+                                },
+                            )
+                        )
                         return plan_update
 
         except LLMUnavailableError as exc:
+            emit_telemetry_record(
+                AgentTelemetryRecord(
+                    trace_id=trace_id,
+                    run_id=run_id,
+                    agent_name="planning_agent",
+                    stage=AgentLifecycleStage.FAILED,
+                    learner_id=str(learner_id) if learner_id else None,
+                    execution_latency_ms=round((perf_counter() - start_time) * 1000, 2),
+                    error_message=str(exc),
+                )
+            )
             raise AgentOutputError(
                 "Planning Agent could not produce a valid plan. Retry planning."
             ) from exc
+        except Exception as exc:
+            emit_telemetry_record(
+                AgentTelemetryRecord(
+                    trace_id=trace_id,
+                    run_id=run_id,
+                    agent_name="planning_agent",
+                    stage=AgentLifecycleStage.FAILED,
+                    learner_id=str(learner_id) if learner_id else None,
+                    execution_latency_ms=round((perf_counter() - start_time) * 1000, 2),
+                    error_message=str(exc),
+                )
+            )
+            raise
+
+        emit_telemetry_record(
+            AgentTelemetryRecord(
+                trace_id=trace_id,
+                run_id=run_id,
+                agent_name="planning_agent",
+                stage=AgentLifecycleStage.FAILED,
+                learner_id=str(learner_id) if learner_id else None,
+                execution_latency_ms=round((perf_counter() - start_time) * 1000, 2),
+                error_message="Planning Agent returned no valid daily items.",
+            )
+        )
         raise AgentOutputError("Planning Agent returned no valid daily items. Retry planning.")
 
     def _deterministic_fallback(
@@ -512,6 +651,21 @@ class PlanningWorker:
         notice: str,
     ) -> PlanUpdate:
         """Create a conservative, curriculum-grounded plan when model reasoning is unavailable."""
+        req_context = get_context()
+        trace_id = req_context.get("trace_id") or current_request_id() or uuid4().hex
+        run_id = current_request_id() or trace_id
+        learner_id = getattr(state, "learner_id", None)
+        emit_telemetry_record(
+            AgentTelemetryRecord(
+                trace_id=trace_id,
+                run_id=run_id,
+                agent_name="planning_agent",
+                stage=AgentLifecycleStage.COMPLETED,
+                learner_id=str(learner_id) if learner_id else None,
+                execution_latency_ms=0.0,
+                metadata={"provider": "deterministic", "notice": notice},
+            )
+        )
         active_level = resolve_active_level(state, content_service)
         try:
             concepts = content_service.list_all_concepts(max_hsk_level=active_level)

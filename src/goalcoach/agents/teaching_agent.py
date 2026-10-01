@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
@@ -23,13 +25,16 @@ from pydantic_ai import Agent, RunContext
 from goalcoach.application.agent_history import format_agent_history
 from goalcoach.domain.enums import TeachingActionKind
 from goalcoach.domain.models import LearnerState, TeachingAction
+from goalcoach.domain.telemetry import AgentLifecycleStage, AgentTelemetryRecord
 from goalcoach.infrastructure.llm.pydantic_ai_models import (
     LLMUnavailableError,
     get_openrouter_model,
     get_output_retries,
     run_with_fallback,
 )
+from goalcoach.infrastructure.logging.context import current_request_id, get_context
 from goalcoach.infrastructure.persistence.content_service import ContentService
+from goalcoach.infrastructure.telemetry import emit_telemetry_record
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +121,38 @@ def get_concept_teaching_cards(
     ctx: RunContext[TeachingDeps], concept_id: str
 ) -> list[dict[str, Any]]:
     """Fetch verified vocabulary/grammar cards for the active concept from SQLite Database #1."""
+    req_context = get_context()
+    trace_id = req_context.get("trace_id") or current_request_id() or uuid4().hex
+    learner_id = getattr(ctx.deps.state, "learner_id", None)
+    run_id = current_request_id() or trace_id
+
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="teaching_agent",
+            stage=AgentLifecycleStage.TOOL_CALLED,
+            learner_id=str(learner_id) if learner_id else None,
+            concept_id=concept_id,
+            tool_name="get_concept_teaching_cards",
+        )
+    )
+    t0 = perf_counter()
     cards = ctx.deps.content_service.get_teaching_cards(concept_id)
+    latency_ms = round((perf_counter() - t0) * 1000, 2)
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="teaching_agent",
+            stage=AgentLifecycleStage.TOOL_RETURNED,
+            learner_id=str(learner_id) if learner_id else None,
+            concept_id=concept_id,
+            tool_name="get_concept_teaching_cards",
+            tool_latency_ms=latency_ms,
+            metadata={"cards_count": len(cards)},
+        )
+    )
     return [
         {
             "card_id": card.card_id,
@@ -136,7 +172,38 @@ def get_concept_teaching_cards(
 @teaching_agent.tool
 def get_concept_details(ctx: RunContext[TeachingDeps], concept_id: str) -> dict[str, Any]:
     """Fetch metadata and curriculum sequencing for the active concept."""
+    req_context = get_context()
+    trace_id = req_context.get("trace_id") or current_request_id() or uuid4().hex
+    learner_id = getattr(ctx.deps.state, "learner_id", None)
+    run_id = current_request_id() or trace_id
+
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="teaching_agent",
+            stage=AgentLifecycleStage.TOOL_CALLED,
+            learner_id=str(learner_id) if learner_id else None,
+            concept_id=concept_id,
+            tool_name="get_concept_details",
+        )
+    )
+    t0 = perf_counter()
     concept = ctx.deps.content_service.get_concept(concept_id)
+    latency_ms = round((perf_counter() - t0) * 1000, 2)
+    emit_telemetry_record(
+        AgentTelemetryRecord(
+            trace_id=trace_id,
+            run_id=run_id,
+            agent_name="teaching_agent",
+            stage=AgentLifecycleStage.TOOL_RETURNED,
+            learner_id=str(learner_id) if learner_id else None,
+            concept_id=concept_id,
+            tool_name="get_concept_details",
+            tool_latency_ms=latency_ms,
+            metadata={"found": concept is not None},
+        )
+    )
     if not concept:
         return {}
     return {
@@ -167,6 +234,24 @@ class TeachingWorker:
         target_exercise_id: str | None = None,
     ) -> TeachingAction:
         """Invokes the Teaching Agent with deterministic heuristic fallback."""
+        start_time = perf_counter()
+        req_context = get_context()
+        trace_id = req_context.get("trace_id") or current_request_id() or uuid4().hex
+        run_id = current_request_id() or trace_id
+        learner_id = getattr(state, "learner_id", None)
+
+        emit_telemetry_record(
+            AgentTelemetryRecord(
+                trace_id=trace_id,
+                run_id=run_id,
+                agent_name="teaching_agent",
+                stage=AgentLifecycleStage.STARTED,
+                learner_id=str(learner_id) if learner_id else None,
+                concept_id=concept_id,
+                metadata={"failed_attempts": failed_attempts, "has_query": bool(learner_query)},
+            )
+        )
+
         candidate_exercise = self._select_candidate_exercise(
             concept_id,
             content_service,
@@ -277,8 +362,32 @@ class TeachingWorker:
             if learner_query:
                 action.metadata["learner_query"] = learner_query
             if action.concept_id == concept_id and action.content:
+                emit_telemetry_record(
+                    AgentTelemetryRecord(
+                        trace_id=trace_id,
+                        run_id=run_id,
+                        agent_name="teaching_agent",
+                        stage=AgentLifecycleStage.COMPLETED,
+                        learner_id=str(learner_id) if learner_id else None,
+                        concept_id=concept_id,
+                        execution_latency_ms=round((perf_counter() - start_time) * 1000, 2),
+                        metadata={"action_kind": action.action_kind.value},
+                    )
+                )
                 return self._attach_selected_exercise(action, candidate_exercise)
         except LLMUnavailableError as exc:
+            emit_telemetry_record(
+                AgentTelemetryRecord(
+                    trace_id=trace_id,
+                    run_id=run_id,
+                    agent_name="teaching_agent",
+                    stage=AgentLifecycleStage.COMPLETED,
+                    learner_id=str(learner_id) if learner_id else None,
+                    concept_id=concept_id,
+                    execution_latency_ms=round((perf_counter() - start_time) * 1000, 2),
+                    metadata={"fallback_used": True, "notice": str(exc)},
+                )
+            )
             action = self._deterministic_fallback(
                 concept_id,
                 state,
@@ -292,6 +401,18 @@ class TeachingWorker:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "TeachingAgent LLM execution failed (%s); using heuristic fallback.", exc
+            )
+            emit_telemetry_record(
+                AgentTelemetryRecord(
+                    trace_id=trace_id,
+                    run_id=run_id,
+                    agent_name="teaching_agent",
+                    stage=AgentLifecycleStage.COMPLETED,
+                    learner_id=str(learner_id) if learner_id else None,
+                    concept_id=concept_id,
+                    execution_latency_ms=round((perf_counter() - start_time) * 1000, 2),
+                    metadata={"fallback_used": True, "error": str(exc)},
+                )
             )
             action = self._deterministic_fallback(
                 concept_id,
