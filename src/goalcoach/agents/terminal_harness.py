@@ -13,6 +13,14 @@ Runs the complete closed-loop lifecycle:
 from __future__ import annotations
 
 import asyncio
+import sys
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001, S110
+        pass
 
 from rich.console import Console
 from rich.panel import Panel
@@ -24,8 +32,10 @@ from goalcoach.agents.planning_agent import PlanningWorker
 from goalcoach.agents.teaching_agent import TeachingWorker
 from goalcoach.application.orchestrator import DeterministicOrchestrator
 from goalcoach.application.progress_service import ProgressService
-from goalcoach.domain.enums import EventType
+from goalcoach.domain.enums import EventType, PlanStatus
+from goalcoach.domain.models import DailyPlan, LearnerState, LearningGoal, utc_now
 from goalcoach.infrastructure.config import Settings
+from goalcoach.infrastructure.llm.pydantic_ai_models import AgentOutputError
 from goalcoach.infrastructure.persistence.content_service import ContentService
 from goalcoach.infrastructure.persistence.database import (
     create_learner_schema,
@@ -36,7 +46,7 @@ from goalcoach.infrastructure.persistence.repositories import (
     SqliteLearnerRepository,
 )
 
-console = Console()
+console = Console(legacy_windows=False)
 
 
 def render_state_table(state) -> Table:
@@ -82,7 +92,7 @@ def render_error_table(state) -> Table | None:
     return table
 
 
-async def main(target_level: int = 1) -> None:
+async def main(target_level: int = 1, smoke_test: bool = False) -> None:
     console.print(
         Panel.fit(
             "[bold green]GoalCoach: Closed State-Driven Agentic System[/bold green]\n"
@@ -116,19 +126,48 @@ async def main(target_level: int = 1) -> None:
 
     learner_id = "terminal_learner_001"
 
-    # Step 1: GOAL_CREATED
-    with console.status(
-        f"[bold cyan]Configuring Goal & Planning Curriculum for HSK {target_level}...[/bold cyan]"
-    ):
-        goal_response = await orchestrator.handle_event(
-            event_type=EventType.GOAL_CREATED,
-            learner_id=learner_id,
-            payload={
-                "title": f"HSK {target_level} Complete Goal",
-                "target_hsk_level": target_level,
-                "daily_available_minutes": 20,
-            },
+    try:
+        with console.status(
+            f"[bold cyan]Configuring Goal & Planning Curriculum for HSK {target_level}...[/bold cyan]"
+        ):
+            goal_response = await orchestrator.handle_event(
+                event_type=EventType.GOAL_CREATED,
+                learner_id=learner_id,
+                payload={
+                    "title": f"HSK {target_level} Complete Goal",
+                    "target_hsk_level": target_level,
+                    "daily_available_minutes": 20,
+                },
+            )
+    except AgentOutputError:
+        console.print(
+            "[dim yellow]Planning model unavailable; activating deterministic curriculum plan.[/dim yellow]"
         )
+        state = await learner_repo.get(learner_id)
+        if state is None:
+            state = LearnerState(learner_id=learner_id)
+        state.goal = LearningGoal(
+            title=f"HSK {target_level} Complete Goal",
+            target_hsk_level=target_level,
+            daily_available_minutes=20,
+        )
+        fallback_plan = planning_worker._deterministic_fallback(
+            state, content_service, 20, notice="Deterministic fallback plan used."
+        )
+        daily_plan = DailyPlan(
+            learner_id=state.learner_id,
+            date=utc_now(),
+            status=PlanStatus.ACTIVE,
+            items=fallback_plan.ordered_items,
+            rationale=fallback_plan.adaptation_rationale,
+            generated_at=utc_now(),
+        )
+        state.active_plan = daily_plan
+        state.roadmap_concept_ids = fallback_plan.roadmap_concept_ids
+        await learner_repo.save(state)
+        from types import SimpleNamespace
+
+        goal_response = SimpleNamespace(daily_plan=daily_plan)
 
     console.print(
         Panel(
@@ -219,7 +258,16 @@ async def main(target_level: int = 1) -> None:
             console.print(
                 "[dim]Commands: Type your Chinese answer, or 'help' for guidance, or 'exit' to quit.[/dim]"
             )
-        user_input = Prompt.ask("\n[bold green]Your Input[/bold green]").strip()
+        if smoke_test:
+            if is_matching:
+                user_input = "1A 2B 3C"
+            elif options:
+                user_input = "1"
+            else:
+                user_input = "ni hao"
+            console.print(f"\n[bold green]Smoke Test Simulated Input:[/bold green] {user_input}")
+        else:
+            user_input = Prompt.ask("\n[bold green]Your Input[/bold green]").strip()
 
         if user_input.lower() in ("exit", "quit"):
             console.print(
@@ -327,12 +375,25 @@ async def main(target_level: int = 1) -> None:
         if err_table:
             console.print(err_table)
 
+        if smoke_test:
+            console.print(
+                Panel(
+                    "[bold green]Smoke test cycle completed successfully.[/bold green]",
+                    border_style="green",
+                )
+            )
+            break
+
 
 def run_cli() -> None:
     """CLI entrypoint for GoalCoach interactive terminal harness."""
     import argparse
 
-    from goalcoach.infrastructure.logging import configure_logging
+    from goalcoach.infrastructure.logging import (
+        configure_logging,
+        start_logging_queue,
+        stop_logging_queue,
+    )
 
     parser = argparse.ArgumentParser(description="GoalCoach Interactive Terminal Study Harness")
     parser.add_argument(
@@ -350,20 +411,35 @@ def run_cli() -> None:
         default=False,
         help="Display live development log stream in console",
     )
+    parser.add_argument(
+        "--test-mode",
+        "--smoke-test",
+        dest="test_mode",
+        action="store_true",
+        default=False,
+        help="Run 1 non-interactive cycle and generate sample logs without prompt blocking",
+    )
     args, _ = parser.parse_known_args()
 
     configure_logging(log_to_file=True, log_to_stream=args.verbose)
+    start_logging_queue()
 
     target_level = args.level
     if target_level is None:
-        level_input = Prompt.ask(
-            "[bold cyan]Select Target HSK Level (1-6)[/bold cyan]",
-            choices=["1", "2", "3", "4", "5", "6"],
-            default="1",
-        )
-        target_level = int(level_input)
+        if args.test_mode:
+            target_level = 1
+        else:
+            level_input = Prompt.ask(
+                "[bold cyan]Select Target HSK Level (1-6)[/bold cyan]",
+                choices=["1", "2", "3", "4", "5", "6"],
+                default="1",
+            )
+            target_level = int(level_input)
 
-    asyncio.run(main(target_level=target_level))
+    try:
+        asyncio.run(main(target_level=target_level, smoke_test=args.test_mode))
+    finally:
+        stop_logging_queue()
 
 
 if __name__ == "__main__":

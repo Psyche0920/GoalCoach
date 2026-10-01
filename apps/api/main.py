@@ -11,7 +11,11 @@ from apps.api.routes.learning import router as learning_router
 from apps.api.routes.learning_loop import router as learning_loop_router
 from goalcoach.infrastructure.config import Settings
 from goalcoach.infrastructure.llm.pydantic_ai_models import AgentOutputError, LLMUnavailableError
-from goalcoach.infrastructure.logging import configure_logging
+from goalcoach.infrastructure.logging import (
+    configure_logging,
+    start_logging_queue,
+    stop_logging_queue,
+)
 from goalcoach.infrastructure.persistence.database import (
     create_learner_schema,
     create_session_factory,
@@ -28,10 +32,12 @@ logger = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the API with explicitly configured persistence dependencies."""
     resolved_settings = settings or Settings()
+    configure_logging(resolved_settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         configure_logging(resolved_settings)
+        start_logging_queue()
         session_factory = create_session_factory(resolved_settings.database_url)
         content_session_factory = create_session_factory(resolved_settings.content_database_url)
         try:
@@ -43,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             get_engine(session_factory).dispose()
             get_engine(content_session_factory).dispose()
+            stop_logging_queue()
 
     application = FastAPI(title="GoalCoach API", version="0.1.0", lifespan=lifespan)
     application.add_middleware(ObservabilityMiddleware)
