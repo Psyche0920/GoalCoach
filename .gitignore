@@ -22,3 +22,9 @@ apps/web/.vite/
 # Logs
 logs/
 *.log
+# Independent teaching-material production artifacts
+materials-workspace/
+
+# Materials model configuration and type-check cache
+.materials.env
+.mypy_cache/

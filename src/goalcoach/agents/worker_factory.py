@@ -13,18 +13,10 @@ from goalcoach.infrastructure.llm.jev_client import JevClient
 def create_planning_worker() -> PlanningWorker | JevPlanningWorker:
     settings = Settings()
     fallback = PlanningWorker()
-    return (
-        JevPlanningWorker(JevClient(settings), fallback)
-        if settings.jev_enabled
-        else fallback
-    )
+    return JevPlanningWorker(JevClient(settings), fallback) if settings.jev_enabled else fallback
 
 
 def create_teaching_worker() -> TeachingWorker | JevTeachingWorker:
     settings = Settings()
     fallback = TeachingWorker()
-    return (
-        JevTeachingWorker(JevClient(settings), fallback)
-        if settings.jev_enabled
-        else fallback
-    )
+    return JevTeachingWorker(JevClient(settings), fallback) if settings.jev_enabled else fallback

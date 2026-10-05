@@ -1,0 +1,5 @@
+Demonstration notes, written for testing the material-production workflow.
+你好 is a basic Mandarin greeting, conventionally translated as Hello.
+The dictionary-tone pinyin is nǐ hǎo. Spoken third-tone sandhi changes the first syllable in connected speech.
+A short example exchange is A: 你好！ B: 你好！
+These notes do not define an official syllabus or claim educational accreditation.

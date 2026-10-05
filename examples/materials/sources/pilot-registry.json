@@ -1,0 +1,59 @@
+{
+  "verified_on": "2026-10-02",
+  "purpose": "Adult beginner Mandarin source selection and isolated acquisition validation",
+  "entries": [
+    {
+      "name": "MIT Learning Chinese: A Foundation Course in Mandarin",
+      "kind": "official_university_textbook",
+      "edition": "Unit 1 dated April 2007, published in Spring 2011 OCW resource",
+      "url": "https://ocw.mit.edu/courses/res-21g-003-learning-chinese-a-foundation-course-in-mandarin-spring-2011/",
+      "access": "Verified course, unit resource, PDF and license HTTP 200",
+      "rights": "CC BY-NC-SA 4.0, subject to MIT terms and third-party exclusions",
+      "decision": "Use one attributed page for local noncommercial acquisition analysis only; no commercial publication, adaptation, redistribution or model training approval"
+    },
+    {
+      "name": "ChineseTest HSK",
+      "kind": "official_test_framework",
+      "url": "https://www.chinesetest.cn/HSK",
+      "access": "Official public HSK page HTTP 200",
+      "rights": "No textbook or syllabus reproduction permission verified",
+      "decision": "Framework discovery only; no approved syllabus corpus or HSK Standard Course book is claimed"
+    },
+    {
+      "name": "Standard Chinese: A Modular Approach",
+      "kind": "official_historical_textbook_candidate",
+      "edition": "Student Text, Modules 1-2, August 1979, ERIC ED187091",
+      "url": "https://eric.ed.gov/?id=ED187091",
+      "access": "Official ERIC catalog HTTP 200 identifies Defense Language Institute, Monterey, CA",
+      "rights": "Government provenance alone is not recorded as proof that every element is public domain",
+      "decision": "Verified catalog candidate only; no textbook download or rights approval"
+    },
+    {
+      "name": "Wikibooks Chinese (Mandarin)/Greetings",
+      "kind": "open_community_reference",
+      "edition": "Revision 3967819",
+      "url": "https://en.wikibooks.org/w/index.php?title=Chinese_(Mandarin)/Greetings&oldid=3967819",
+      "access": "Live public HTML and license footer verified",
+      "rights": "CC BY-SA 4.0, attribution and ShareAlike conditions",
+      "decision": "Collect as an analysis-only supplemental reference; do not label as an official curriculum"
+    },
+    {
+      "name": "Mandarin Corner",
+      "kind": "foreign_mainstream_social_channel",
+      "url": "https://www.youtube.com/@MandarinCorner2",
+      "verified_video": "https://www.youtube.com/watch?v=vTVuuJ5xBco",
+      "access": "Live official YouTube oEmbed returns Mandarin Corner author and public video title",
+      "rights": "Metadata response does not grant transcript, video or reuse rights; official captions download requires editor permission",
+      "decision": "Metadata integration verified with a current affairs video; that video is not beginner curriculum evidence. Import a creator-authorized beginner transcript when supplied. No transcript has been acquired."
+    },
+    {
+      "name": "Bilibili",
+      "kind": "domestic_mainstream_social_platform",
+      "url": "https://open.bilibili.com/doc",
+      "candidate_channel_url": "https://space.bilibili.com/456664753",
+      "access": "Developer portal HTTP 200; selected public channel URL returned HTTP 200 CAPTCHA titled 验证码_哔哩哔哩",
+      "rights": "No platform API credentials, creator authorization or subtitle reuse permission supplied",
+      "decision": "No channel identity or transcript claimed verified behind the CAPTCHA. Accept authorized creator JSON/SRT/VTT exports; do not bypass the access control."
+    }
+  ]
+}

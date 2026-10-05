@@ -40,6 +40,9 @@ jobs:
       - name: Code Formatting Check (Ruff)
         run: uv run ruff format --check src/ apps/ tests/
 
+      - name: Strict Materials Type Check
+        run: uv run mypy --strict src/goalcoach/materials/
+
       - name: Initialize Curriculum SQLite Database
         run: |
           mkdir -p data/database1
@@ -54,6 +57,12 @@ jobs:
           GOALCOACH_ENVIRONMENT: "testing"
           GOALCOACH_LLM_API_KEY: "ci-mock-token"
         run: uv run pytest tests/integration/ -v
+
+      - name: Run Materials Pipeline Tests
+        env:
+          GOALCOACH_ENVIRONMENT: "testing"
+          GOALCOACH_LLM_API_KEY: "ci-mock-token"
+        run: uv run pytest tests/materials/ -v
 
       - name: Run API Tests
         env:

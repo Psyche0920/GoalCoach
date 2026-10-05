@@ -1,0 +1,12 @@
+{
+  "source_id": "original-demo",
+  "title": "Original demonstration notes: greetings",
+  "category": "textbook",
+  "publisher": "Teaching Materials Workbench demonstration",
+  "edition": "Demo v1 — not an official textbook",
+  "url": "",
+  "rights_evidence": "Original example text distributed with this repository under its MIT license.",
+  "allowed_uses": ["analysis", "adaptation", "redistribution"],
+  "approved_by": "Repository demonstration fixture",
+  "status": "approved"
+}

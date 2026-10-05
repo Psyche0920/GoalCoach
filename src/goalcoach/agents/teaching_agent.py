@@ -521,7 +521,8 @@ tutor_agent = Agent(
     model=get_openrouter_model(),
     output_type=structured_output(TutorResponse),
     output_retries=get_output_retries(),
-    system_prompt="You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor." + output_instructions(TutorResponse),
+    system_prompt="You are the GoalCoach Chinese Teacher, an adaptive HSK1 Chinese tutor."
+    + output_instructions(TutorResponse),
 )
 
 

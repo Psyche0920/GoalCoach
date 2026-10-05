@@ -301,7 +301,8 @@ class GraderComponent:
             )
             # Injected agents may still return text; normalize at this boundary too.
             llm_result = (
-                result.output if isinstance(result.output, GradingResult)
+                result.output
+                if isinstance(result.output, GradingResult)
                 else GradingResult.model_validate(extract_and_sanitize_json(str(result.output)))
             )
         except LLMUnavailableError as exc:

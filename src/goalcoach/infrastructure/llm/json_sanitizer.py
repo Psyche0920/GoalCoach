@@ -71,7 +71,7 @@ def extract_and_sanitize_json(raw_text: str) -> dict[str, Any]:
             data = json.loads(candidate, strict=False)
         except json.JSONDecodeError:
             try:
-                data = json.loads(candidate.replace(r'\"', '"'), strict=False)
+                data = json.loads(candidate.replace(r"\"", '"'), strict=False)
             except json.JSONDecodeError as exc:
                 raise ValueError("Response does not contain a complete JSON object") from exc
 
