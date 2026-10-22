@@ -1,3 +1,17 @@
+<div align="center">
+
+![GoalCoach — ADAPTIVE LEARNING / AGENTIC SYSTEMS](docs/showcase/hero.svg)
+
+**An adaptive Chinese-learning coach connecting agent reasoning with persistent learner state.**
+
+[Website & demo entry](https://goalcoach.ai.studio/) · [Explore the documentation](#project-documentation) · [Browse source](https://github.com/Psyche0920/GoalCoach/tree/main)
+
+</div>
+
+![GoalCoach conceptual workflow](docs/showcase/workflow.svg)
+
+<a id="project-documentation"></a>
+
 # GoalCoach
 
 <div align="center">
