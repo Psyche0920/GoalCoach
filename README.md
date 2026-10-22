@@ -1,15 +1,4 @@
-<!-- repository-badges:start -->
-<div align="center">
-
-[![Contributors](https://img.shields.io/github/contributors/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/graphs/contributors)
-[![Forks](https://img.shields.io/github/forks/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/forks)
-[![Stars](https://img.shields.io/github/stars/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/stargazers)
-[![Issues](https://img.shields.io/github/issues/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/issues)
-[![License](https://img.shields.io/github/license/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Weijia_Han-0A66C2?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/weijia-han-6162581b5/)
-
-</div>
-<!-- repository-badges:end -->
+[![License: MIT](https://img.shields.io/badge/License-MIT-78C943?style=for-the-badge)](LICENSE)
 
 <div align="center">
 
@@ -338,3 +327,8 @@ We welcome contributions! Please consult [CONTRIBUTING.md](CONTRIBUTING.md) for 
 ## License
 
 This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details.
+
+
+## Licensing
+
+Project code is available under the [MIT License](LICENSE). Third-party assets retain their original licenses and attribution requirements; this license does not relicense third-party media, datasets, model weights, or trademarks.
