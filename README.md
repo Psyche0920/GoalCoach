@@ -1,3 +1,16 @@
+<!-- repository-badges:start -->
+<div align="center">
+
+[![Contributors](https://img.shields.io/github/contributors/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/graphs/contributors)
+[![Forks](https://img.shields.io/github/forks/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/forks)
+[![Stars](https://img.shields.io/github/stars/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/stargazers)
+[![Issues](https://img.shields.io/github/issues/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach/issues)
+[![License](https://img.shields.io/github/license/Psyche0920/GoalCoach?style=for-the-badge)](https://github.com/Psyche0920/GoalCoach)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Weijia_Han-0A66C2?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/weijia-han-6162581b5/)
+
+</div>
+<!-- repository-badges:end -->
+
 <div align="center">
 
 ![GoalCoach — ADAPTIVE LEARNING / AGENTIC SYSTEMS](docs/showcase/hero.svg)
@@ -20,7 +33,6 @@
 ![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-![Tests](https://img.shields.io/badge/Tests-100%20passed-success)
 ![Architecture](https://img.shields.io/badge/Architecture-State--Driven%20Closed%20Loop-teal)
 
 **An adaptive, closed state-driven agentic learning coach for Chinese as a second language.**
