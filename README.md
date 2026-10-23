@@ -6,9 +6,17 @@
 
 **An adaptive Chinese-learning coach connecting agent reasoning with persistent learner state.**
 
-[Website & demo entry](https://goalcoach.ai.studio/) · [Explore the documentation](#project-documentation) · [Browse source](https://github.com/Psyche0920/GoalCoach/tree/main)
+[Watch demo](#watch-goalcoach-in-action) · [Website](https://goalcoach.ai.studio/) · [Explore the documentation](#project-documentation) · [Browse source](https://github.com/Psyche0920/GoalCoach/tree/main)
 
 </div>
+
+## Watch GoalCoach in action
+
+[![Watch the GoalCoach product demo on YouTube](https://i.ytimg.com/vi/Vg15X5R_-MA/maxresdefault.jpg)](https://www.youtube.com/watch?v=Vg15X5R_-MA&vq=hd1440)
+
+**[▶ Watch the full demo on YouTube · 1440p](https://www.youtube.com/watch?v=Vg15X5R_-MA&vq=hd1440)**
+
+For the clearest interface text, select **Settings → Quality → 1440p** in YouTube. Playback quality depends on YouTube and your device.
 
 ![GoalCoach conceptual workflow](docs/showcase/workflow.svg)
 
